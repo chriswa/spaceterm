@@ -20,9 +20,10 @@
  * be taken down; `dictationEnd`, two notes down, as they are sent; and
  * `conversationClosed`, three soft steps down, as the conversation window
  * runs out and "Control" is needed again; and `controlShutdown`, an octave
- * dropping into a long low note, for "Control, shutdown". While it decides
- * whether what it hears is words, a beep repeats (`playPendingTone`), its
- * pitch saying whether "Control" is needed.
+ * dropping into a long low note, for "Control, shutdown"; and `notWakeWord`,
+ * a sad slide down from G5, as speech that needed "Control" turns out not to
+ * start with it and is thrown away. While it decides whether such speech
+ * starts with "Control", a beep repeats (`playPendingTone`).
  *
  * `heardUnattached`, a short odd little tune, plays the same way when the
  * microphone button's words reached Control while nobody holds it: taken,
@@ -44,7 +45,7 @@ import { controlMode, useReceptionistStore } from '@/stores/receptionistStore'
 import { recordMobileEvent } from './mobile-events'
 import { nativeCues } from './native-microphone'
 
-export type Cue = 'error' | 'nothingToSay' | 'handsFreeReady' | 'conversationClosed' | 'dictationStart' | 'dictationEnd' | 'controlShutdown' | 'heardUnattached'
+export type Cue = 'error' | 'nothingToSay' | 'handsFreeReady' | 'conversationClosed' | 'dictationStart' | 'dictationEnd' | 'controlShutdown' | 'notWakeWord' | 'heardUnattached'
 
 /**
  * Hands-free's tones (`playHandsFreeCue`), beside its haptics: ready to
@@ -55,7 +56,7 @@ export type Cue = 'error' | 'nothingToSay' | 'handsFreeReady' | 'conversationClo
  * October 2026, to be heard whatever Replies is set to and whatever the
  * Ring/Silent switch says.
  */
-export type HandsFreeCue = 'handsFreeReady' | 'dictationStart' | 'dictationEnd' | 'conversationClosed' | 'controlShutdown'
+export type HandsFreeCue = 'handsFreeReady' | 'dictationStart' | 'dictationEnd' | 'conversationClosed' | 'controlShutdown' | 'notWakeWord'
 
 /** (frequency Hz, duration s) at natural speed; frequency 0 is a rest. */
 const SEGMENTS: Record<Cue, Array<[number, number]>> = {
@@ -66,12 +67,14 @@ const SEGMENTS: Record<Cue, Array<[number, number]>> = {
   dictationStart: [[659, 0.08], [0, 0.03], [988, 0.12]],
   dictationEnd: [[988, 0.08], [0, 0.03], [659, 0.12]],
   controlShutdown: [[523, 0.10], [262, 0.36]],
+  // From the pending beep's G5, sliding sadly down a semitone at a time, then dropping to a long D5.
+  notWakeWord: [[784, 0.16], [740, 0.16], [698, 0.16], [587, 0.56]],
   // G5, C#6, A#5 A#5, D#5 — pause — G#5, D#6.
   heardUnattached: [[784, 0.12], [0, 0.04], [1109, 0.12], [0, 0.04], [932, 0.08], [0, 0.03], [932, 0.08], [0, 0.04], [622, 0.22], [0, 0.10], [831, 0.12], [0, 0.04], [1245, 0.36]],
 }
 
 /** Each cue's volume. Voice Operator plays at 0.35; the phone's are quieter, being heard in an ear. */
-const GAINS: Record<Cue, number> = { error: 0.3, nothingToSay: 0.2, handsFreeReady: 0.2, conversationClosed: 0.2, dictationStart: 0.2, dictationEnd: 0.2, controlShutdown: 0.2, heardUnattached: 0.2 }
+const GAINS: Record<Cue, number> = { error: 0.3, nothingToSay: 0.2, handsFreeReady: 0.2, conversationClosed: 0.2, dictationStart: 0.2, dictationEnd: 0.2, controlShutdown: 0.2, notWakeWord: 0.2, heardUnattached: 0.2 }
 
 /** Replies are Aloud here: this phone holds Control, unmuted. The only time it makes a sound of its own. */
 export function cuesAudible(): boolean {
@@ -242,29 +245,24 @@ export function playHandsFreeCue(cue: HandsFreeCue): void {
 }
 
 /**
- * Hands-free's tone while it hears what may be speech — perhaps only a cough
- * — and has not yet decided: a soft beep, repeating, until the
+ * Hands-free's tone while, outside the conversation window, it hears what may
+ * be speech — perhaps only a cough — and has not yet decided whether it
+ * starts with "Control": a soft medium-high beep (G5), repeating, until the
  * `dictationStart` chirp says the words are being taken down (from their
- * first syllable), or until it turns out they were nothing. Its pitch says
- * whether they can be: `window`, medium-high (G5), the conversation window is
- * open and any words will do; `wakeWord`, low (D4), only words that start
- * with "Control" count — heard as you start talking, it says to stop, say
- * "Control", and start over. Asked for in October 2026.
+ * first syllable), or until they turn out to be nothing — or not to start
+ * with "Control", which `notWakeWord` then says. In the window, where any
+ * words will do, there is none. Asked for in October 2026.
+ *
+ * One beep and the rest after it, repeated: four a second. Seconds as played, not before `SPEEDUP`.
  */
-export type PendingTone = 'window' | 'wakeWord'
+const PENDING_TONE: Array<[number, number]> = [[784, 0.09], [0, 0.16]]
+/** Quieter than a cue, being repeated. */
+const PENDING_GAIN = 0.12
 
-/** One beep and the rest after it, repeated: four a second. Seconds as played, not before `SPEEDUP`. */
-const PENDING_TONES: Record<PendingTone, Array<[number, number]>> = {
-  window: [[784, 0.09], [0, 0.16]],
-  wakeWord: [[294, 0.09], [0, 0.16]],
-}
-/** Quieter than a cue, being repeated; the low one a little louder, a phone's speaker being weak down there. */
-const PENDING_GAINS: Record<PendingTone, number> = { window: 0.12, wakeWord: 0.16 }
-
-let pendingTone: PendingTone | null = null
+let pendingTone = false
 
 /**
- * Start hands-free's pending tone, change its pitch, or stop it (`null`).
+ * Start hands-free's pending tone, or stop it.
  * Only the app plays it, through Control's voice player and only where
  * nothing played leaks into the microphone — so hands-free goes on hearing
  * the speech it is about. Nowhere else: the page's own sound would make
@@ -272,19 +270,11 @@ let pendingTone: PendingTone | null = null
  * Control's voice plays the app does not start it, its one player being
  * busy, and Control's voice arriving stops it.
  */
-export function playPendingTone(tone: PendingTone | null): void {
-  if (tone === pendingTone) return
-  const was = pendingTone
-  pendingTone = tone
-  if (tone === null) {
-    nativeCues.stopRepeating()
-    return
-  }
-  if (!nativeCues.canRepeat()) {
-    if (was !== null) nativeCues.stopRepeating()
-    return
-  }
-  nativeCues.repeat(tone, PENDING_TONES[tone], PENDING_GAINS[tone])
+export function playPendingTone(on: boolean): void {
+  if (on === pendingTone) return
+  pendingTone = on
+  if (!on) nativeCues.stopRepeating()
+  else if (nativeCues.canRepeat()) nativeCues.repeat('pending', PENDING_TONE, PENDING_GAIN)
 }
 
 /**

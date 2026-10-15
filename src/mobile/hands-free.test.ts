@@ -64,7 +64,7 @@ function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, 
   const cues: string[] = []
   /** Hands-free's own tones, apart from the page's cues. */
   const tones: string[] = []
-  /** Hands-free's tones and its pending tone together, in order: the pending tone as `pending:<tone>`, or `pending:off`. */
+  /** Hands-free's tones and its pending tone together, in order: the pending tone as `pending:on` and `pending:off`. */
   const sounds: string[] = []
   const haptics: string[] = []
   const dictations: Array<{ backlogSeconds: number; finished: boolean; cancelled: boolean; turnChecks: number }> = []
@@ -107,7 +107,7 @@ function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, 
     quietForMs: () => quietFor,
     playCue: (cue) => { cues.push(cue) },
     handsFreeCue: (cue) => { tones.push(cue); sounds.push(cue) },
-    pendingTone: (tone) => { sounds.push(`pending:${tone ?? 'off'}`) },
+    pendingTone: (on) => { sounds.push(`pending:${on ? 'on' : 'off'}`) },
     haptic: (pattern) => { haptics.push(pattern) },
     beginDictation: async (options: DictationOptions) => {
       const d = {
@@ -673,12 +673,12 @@ describe('hands-free mode', () => {
       expect(h.sayCalls).toEqual([{ text: 'let me turn this off', interrupted: false }])
     })
 
-    it('does nothing when the whole of it was something else', async () => {
+    it('sends nothing when the whole of it was something else — without "Control", so the sad tune', async () => {
       h = harness({ isWakeWord: false, heardShutdown: startThen(undefined) })
       await h.hear(quiet(1500), speech(1500), quiet(1000))
       expect(h.modes).toEqual(['wake-word', 'speech'])
       expect(h.sayCalls).toEqual([])
-      expect(h.tones).toEqual([])
+      expect(h.tones).toEqual(['notWakeWord'])
     })
 
     it('lets go of speech that runs on, unchecked', async () => {
@@ -686,6 +686,7 @@ describe('hands-free mode', () => {
       await h.hear(quiet(1500), speech(6000), quiet(1000))
       expect(h.modes).toEqual(['wake-word'])
       expect(h.sayCalls).toEqual([])
+      expect(h.tones).toEqual(['notWakeWord'])
     })
 
     it('is not watched for at all when its start is not heard as the phrase', async () => {
@@ -695,36 +696,43 @@ describe('hands-free mode', () => {
     })
   })
 
-  describe('the pending tone', () => {
-    it('beeps low while it decides about speech that needs "Control", and stops before the chirp', async () => {
+  describe('the pending tone, and the tune for speech thrown away', () => {
+    it('beeps while it decides whether speech starts with "Control", and stops before the chirp', async () => {
       h = harness()
       await h.hear(quiet(1500), speech(1500), quiet(3500))
       expect(h.said).toHaveLength(1)
-      expect(h.sounds).toEqual(['pending:wakeWord', 'pending:off', 'dictationStart', 'dictationEnd'])
+      expect(h.sounds).toEqual(['pending:on', 'pending:off', 'dictationStart', 'dictationEnd'])
     })
 
-    it('beeps medium-high in the conversation window, where any words will do', async () => {
+    it('is silent in the conversation window, where any words will do', async () => {
       h = harness({ justTurnedOn: true, transcript: 'What is Kevin doing?' })
       await h.hear(quiet(1000), speech(1500), quiet(3500))
-      expect(h.sounds).toEqual(['pending:window', 'pending:off', 'dictationStart', 'dictationEnd'])
+      expect(h.sounds).toEqual(['dictationStart', 'dictationEnd'])
     })
 
-    it('goes on through the check, and stops when the Mac says it was not the wake word', async () => {
+    it('goes on through the check, and when the Mac says it was not "Control", stops for the sad tune', async () => {
       h = harness({ slowChecks: true, isWakeWord: false })
       await h.hear(quiet(1500), speech(1500), quiet(800))
       expect(h.checked).toHaveLength(1)
-      expect(h.sounds).toEqual(['pending:wakeWord'])
+      expect(h.sounds).toEqual(['pending:on'])
       await h.answerChecks()
       await h.hear(quiet(100))
-      expect(h.sounds).toEqual(['pending:wakeWord', 'pending:off'])
+      expect(h.sounds).toEqual(['pending:on', 'pending:off', 'notWakeWord'])
       expect(h.dictations).toHaveLength(0)
     })
 
-    it('stops as soon as a cough turns out too short to be words, unchecked', async () => {
+    it('plays no sad tune for words in the window that were not words', async () => {
+      h = harness({ justTurnedOn: true, isWords: false })
+      await h.hear(quiet(1000), speech(400), quiet(2000))
+      expect(h.modes).toEqual(['speech'])
+      expect(h.sounds).toEqual([])
+    })
+
+    it('stops as soon as a cough turns out too short to be words, unchecked, with no tune', async () => {
       h = harness()
       await h.hear(quiet(1500), speech(150), quiet(1000))
       expect(h.checked).toHaveLength(0)
-      expect(h.sounds).toEqual(['pending:wakeWord', 'pending:off'])
+      expect(h.sounds).toEqual(['pending:on', 'pending:off'])
     })
 
     it('does not beep for speech straight after other speech, which is never checked', async () => {
@@ -739,9 +747,9 @@ describe('hands-free mode', () => {
     it('stops when the microphone goes mid-speech', async () => {
       h = harness()
       await h.hear(quiet(1500), speech(300))
-      expect(h.sounds).toEqual(['pending:wakeWord'])
+      expect(h.sounds).toEqual(['pending:on'])
       h.dropHold()
-      expect(h.sounds).toEqual(['pending:wakeWord', 'pending:off'])
+      expect(h.sounds).toEqual(['pending:on', 'pending:off'])
     })
   })
 

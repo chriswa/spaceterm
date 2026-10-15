@@ -54,25 +54,25 @@ describe('a cue asked for as the app\'s microphone stops', () => {
 })
 
 describe('hands-free\'s pending tone', () => {
-  const pending = (posted: Array<{ action: string; name?: string; on?: boolean }>) =>
-    posted.filter((m) => m.action === 'pending-tone').map((m) => (m.on ? m.name : 'off'))
+  const pending = (posted: Array<{ action: string; on?: boolean }>) =>
+    posted.filter((m) => m.action === 'pending-tone').map((m) => (m.on ? 'on' : 'off'))
 
   it('is repeated by the app where nothing it plays reaches the microphone, and stopped by it', async () => {
     const { cues, posted, report } = await app()
     report({ running: true, cues: true, speech: true, voiceProcessing: true, pendingTone: true })
-    cues.playPendingTone('wakeWord')
-    cues.playPendingTone('wakeWord')
-    cues.playPendingTone('window')
-    cues.playPendingTone(null)
-    expect(pending(posted as never)).toEqual(['wakeWord', 'window', 'off'])
+    cues.playPendingTone(true)
+    cues.playPendingTone(true)
+    cues.playPendingTone(false)
+    expect(pending(posted as never)).toEqual(['on', 'off'])
   })
 
   it('is not played on the speaker without echo cancellation, nor by an app too old to repeat it', async () => {
     const { cues, posted, report } = await app()
     report({ running: true, cues: true, speech: true, voiceProcessing: false, pendingTone: true })
-    cues.playPendingTone('wakeWord')
+    cues.playPendingTone(true)
+    cues.playPendingTone(false)
     report({ running: true, cues: true, speech: true, voiceProcessing: true })
-    cues.playPendingTone('window')
+    cues.playPendingTone(true)
     expect(pending(posted as never).filter((t) => t !== 'off')).toEqual([])
   })
 })

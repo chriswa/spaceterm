@@ -518,19 +518,21 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   that the server needs restarting; "Control" works as before meanwhile. Speech checks of two words or fewer are logged
   (`[hands-free] speech check heard …`), to find what the model hears in
   nothing at all.
-- **The pending tone: do I need "Control"?** From the first syllable of
-  what may be speech — a cough, as likely — until it is decided, a soft
-  beep repeats four times a second: **medium-high** (G5) in the
-  conversation window, where any words will do, **low** (D4) outside it,
-  where only words starting with "Control" count. Start talking, hear the
-  low one, and you know what you are saying is being thrown away: stop, say
-  "Control", and start again. It stops just before the `dictationStart`
-  chirp — the words being taken down, from their first syllable — or as
-  soon as they turn out to be nothing: too short, not words, not "Control".
-  Speech straight after other speech, never checked, gets none. Only the app
-  plays it (`pending-tone`, `NativeMicrophone.swift`), on Control's voice
-  player, and only where that never reaches the microphone — echo
-  cancellation, or AirPods — so it is not in what is dictated, and
+- **The pending tone: do I need "Control"?** Outside the conversation
+  window, from the first syllable of what may be speech — a cough, as
+  likely — until it is decided, a soft medium-high beep (G5) repeats four
+  times a second. It stops just before the `dictationStart` chirp — the
+  words being taken down, from their first syllable — or as soon as they
+  turn out to be nothing. When the Mac says they did not start with
+  "Control" (or, for speech watched as perhaps "let me turn this off", that
+  it was not that either), they are thrown away, and a short sad tune says
+  so (`notWakeWord`: G5 sliding down a semitone at a time, then dropping to
+  a long D5): stop, say "Control", and start again. A cough too short to
+  check just stops the beep. In the window, where any words will do,
+  neither plays; nor for speech straight after other speech, never checked.
+  Only the app plays the beep (`pending-tone`, `NativeMicrophone.swift`), on
+  Control's voice player, and only where that never reaches the microphone
+  — echo cancellation, or AirPods — so it is not in what is dictated, and
   hands-free goes on hearing through it. Its one player being Control's
   voice's, it does not play while Control speaks, and Control's voice
   arriving stops it. An app too old to say `pendingTone` plays none
