@@ -460,7 +460,7 @@ export class FakeBridge implements Api {
     readAll: () => this.record('receptionist.readAll'),
     replay: (of, part) => this.record('receptionist.replay', of, part),
     stopReplay: () => this.record('receptionist.stopReplay'),
-    catchUp: () => this.record('receptionist.catchUp'),
+    readAloud: () => this.record('receptionist.readAloud'),
     onUnread: (cb) => subscribe(this.receptionistUnread, cb),
     onReplaying: (cb) => subscribe(this.receptionistReplaying, cb),
     onSpeaking: (cb) => subscribe(this.receptionistSpeaking, cb),

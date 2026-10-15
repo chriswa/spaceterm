@@ -4107,27 +4107,28 @@ describe('Receptionist muted, and what the user has taken in', () => {
     expect(h.consumedMarks).toEqual([{ of: at, part: 1, from: 0, to: 'Kevin here. The solver works.'.length, how: 'replayed' }])
   })
 
-  it('catches the user up on what they have not read, and counts it taken in', async () => {
+  it('reads what waits unread aloud in its own voices, with nothing to Control, read at once and lit as it goes', async () => {
     const h = harness({
       replies: [
-        reply([{ from: 'control', text: 'Kevin is done.' }]),
-        (turn) => {
-          expect(turn.prompt).toContain('The user asks to be caught up on what you wrote while they had you muted, which they have not read: "Kevin is done."')
-          expect(turn.prompt).not.toContain('have not read it yet')
-          expect(turn.prompt).toContain("THE USER SAYS: Catch me up on what I haven't read.")
-          return reply([{ from: 'control', text: 'Kevin finished.' }])
-        },
+        reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works.' }]),
       ],
     })
     listen(h, true)
     await h.receptionist.hear('how is Kevin?', 'spoken')
     await flush()
-    listen(h, false)
-    await h.receptionist.catchUp()
+    const at = h.record.findIndex(message => message.content.includes('The solver works'))
+    expect(h.receptionist.unread()).toEqual({ count: 1, first: at })
+    expect(await h.receptionist.readAloud(h.listener.speech)).toBeUndefined()
     await flush()
-    expect(h.turns).toHaveLength(2)
+    expect(h.turns).toHaveLength(1)
     expect(h.receptionist.unread()).toEqual({ count: 0 })
-    expect(h.consumedMarks.map(mark => mark.how)).toEqual(['summary'])
+    expect(h.consumedMarks.map(mark => mark.how)).toEqual(['aloud', 'aloud'])
+    expect(h.spoken.at(-1)).toEqual({ content: [
+      { text: 'Kevin is done.', voice: expect.any(String) },
+      { text: 'Kevin here. The solver works.', voice: h.assigned.get(KEVIN_ID)!.voice },
+    ] })
+    expect(h.speaking.find(Boolean)).toEqual({ of: at, parts: [0, 0] })
+    expect(h.speaking.at(-1)).toBeUndefined()
   })
 
   describe('holding its tongue through a replay', () => {

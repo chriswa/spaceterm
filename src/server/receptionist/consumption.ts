@@ -30,7 +30,7 @@ import type { ControlTranscriptEntry } from '../../shared/protocol'
  */
 
 export type Delivery = 'spoken' | 'text'
-export type ConsumedHow = 'read' | 'replayed' | 'summary'
+export type ConsumedHow = 'read' | 'replayed' | 'summary' | 'aloud'
 /** How the user's message came: typed in the transcript, or spoken. See `settle`. */
 export type Via = 'typed' | 'spoken'
 
@@ -181,7 +181,7 @@ export class ConsumptionLedger {
     return { count: unread.length, ...(unread.length ? { first: unread[0][0] } : {}) }
   }
 
-  /** What is still waiting to be taken in, part by part, for a catch-up to take in. */
+  /** What is still waiting to be taken in, part by part, for reading aloud to take in. */
   unreadParts(): Array<{ at: number; part: number; from: number; to: number; text: string }> {
     const parts: Array<{ at: number; part: number; from: number; to: number; text: string }> = []
     for (const [at, reply] of this.replies) {

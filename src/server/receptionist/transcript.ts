@@ -94,7 +94,7 @@ export function parseRecordLine(line: string, offset: number, speakers: Speakers
   }
   const consumed = raw.consumed
   if (consumed && typeof consumed.of === 'number' && typeof consumed.part === 'number' && typeof consumed.from === 'number' &&
-    typeof consumed.to === 'number' && (consumed.how === 'read' || consumed.how === 'replayed' || consumed.how === 'summary')) {
+    typeof consumed.to === 'number' && (consumed.how === 'read' || consumed.how === 'replayed' || consumed.how === 'summary' || consumed.how === 'aloud')) {
     return { ...base, kind: 'consumed', of: consumed.of, part: consumed.part, from: consumed.from, to: consumed.to, how: consumed.how }
   }
   const trace = raw.trace

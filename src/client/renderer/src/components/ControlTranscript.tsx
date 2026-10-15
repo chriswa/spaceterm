@@ -95,6 +95,25 @@ type Restore = 'bottom' | { fromBottom: number } | { toOffset: number }
 /** Room left above the first unread entry when the view opens on it. */
 const UNREAD_MARGIN_PX = 8
 
+/** The band of the view, as fractions of its height from the top, the word being said is kept in. */
+const FOLLOW_BAND = [0.15, 0.75] as const
+/** Where in the view, as a fraction of its height from the top, following the voice puts the word being said. */
+const FOLLOW_AT = 1 / 3
+
+/**
+ * Where to scroll the list so the line of the word being said is in view,
+ * or undefined while it is comfortably so: the reader is moved only when the
+ * voice is about to leave the view, or already has, and then the line goes
+ * a third of the way down, leaving most of the view for what is still to come.
+ * `view` is the list's box and scroll; `line`, the word's line, both in the
+ * same coordinates as the list's box.
+ */
+export function followScroll(view: { top: number; height: number; scrollTop: number }, line: { top: number; bottom: number }): number | undefined {
+  const [above, below] = FOLLOW_BAND
+  if (line.top >= view.top + view.height * above && line.bottom <= view.top + view.height * below) return undefined
+  return Math.max(0, view.scrollTop + line.top - view.top - view.height * FOLLOW_AT)
+}
+
 export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | 'screen'; onDismiss: () => void }) {
   const [entries, setEntries] = useState<ControlTranscriptEntry[]>([])
   const [more, setMore] = useState(false)
@@ -123,15 +142,13 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
   const [replaying, setReplaying] = useState<{ of: number; part: number } | null>(null)
   useEffect(() => window.api.receptionist.onReplaying((playing, refused) => {
     setReplaying(playing)
-    if (refused) setError(`Could not play that again: ${refused}.`)
+    if (refused) setError(`Could not play that: ${refused}.`)
   }), [])
   /** How far Control's voice has got through the reply it is saying, if any. */
   const [speaking, setSpeaking] = useState<{ of: number; parts: number[] } | null>(null)
   useEffect(() => window.api.receptionist.onSpeaking(setSpeaking), [])
   const voicing = useReceptionistStore((s) => s.phase === 'speaking' || s.phase === 'synthesizing')
   const unread = useReceptionistStore((s) => s.unread.count)
-  /** Control speaks here: only then may the unread bar offer a summary aloud. */
-  const aloud = useReceptionistStore((s) => controlMode(s) === 'speak')
 
   /** The newest page when `before` is undefined, else the page before that offset. */
   const load = useCallback(async (before: number | undefined) => {
@@ -208,6 +225,23 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
     follow.observe(list)
     return () => follow.disconnect()
   }, [])
+
+  // The view follows the voice: the line of the word being said — where what
+  // is lit gives way to what is dim — is kept in view, whether Control is
+  // saying a reply or what waited unread is being read aloud from far above.
+  useEffect(() => {
+    const list = listRef.current
+    if (!list || !speaking) return
+    const next = list.querySelector(`[data-entry-offset="${speaking.of}"] .control-transcript__unsaid`)
+    const line = next?.getClientRects()[0]
+    if (!line) return
+    const box = list.getBoundingClientRect()
+    const top = followScroll({ top: box.top, height: list.clientHeight, scrollTop: list.scrollTop }, line)
+    if (top === undefined) return
+    // Not left at the bottom by what grows there, while the voice is above it.
+    stick.current = list.scrollHeight - top - list.clientHeight < STICK_PX
+    list.scrollTo({ top, behavior: 'smooth' })
+  }, [speaking])
 
   const scrollToBottom = () => {
     const list = listRef.current
@@ -314,13 +348,15 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
       </div>
       {error && <div className="control-transcript__error" role="alert">{error}</div>}
       {unread > 0 && (
-        // The ways to be done with what waits: say it is read, or, while
-        // Control speaks here, hear it summed up. Never offered otherwise:
-        // asking brings Control here unmuted, and the bar never changes the
-        // mode the user chose.
+        // The ways to be done with what waits: hear it read out here, word
+        // by word as the transcript lights it, or say it is read. Either way
+        // it is read at once, and nothing goes to Control.
         <div className="control-transcript__unread-bar" role="group" aria-label="Unread replies">
-          <span className="control-transcript__unread-count">{unread} unread</span>
-          {aloud && <button className="control-transcript__button" onClick={() => window.api.receptionist.catchUp()}>Summarize aloud</button>}
+          <button
+            className="control-transcript__button" disabled={voicing}
+            title={voicing ? 'Control is talking' : undefined}
+            onClick={() => window.api.receptionist.readAloud()}
+          >Read aloud</button>
           <button className="control-transcript__button" onClick={() => window.api.receptionist.readAll()}>Mark all read</button>
         </div>
       )}

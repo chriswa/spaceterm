@@ -211,7 +211,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       readAll: () => client.readAllOfReceptionist(),
       replay: (of, part) => client.replayReceptionistReply(of, part),
       stopReplay: () => client.stopReceptionistReplay(),
-      catchUp: () => client.catchUpWithReceptionist(),
+      readAloud: () => client.readReceptionistAloud(),
       onUnread: (cb) => onReceptionistUnread(({ count, first }) => cb({ count, ...(first === undefined ? {} : { first }) })),
       onReplaying: (cb) => on('receptionist-replaying', ({ playing, refused }) => cb(playing, refused)),
       onSpeaking: (cb) => on('receptionist-speaking', (m) => cb(m.speaking)),

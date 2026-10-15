@@ -449,8 +449,6 @@ const MUTED_NOTE = 'The user has muted you: from now on your replies are shown t
   'and they may not read them at once. Write them as before.'
 /** Told with the next message after they unmute it. */
 const UNMUTED_NOTE = 'The user has unmuted you: your replies are spoken again.'
-/** The user's words for a catch-up, as the transcript shows them: see `catchUp`. */
-const CATCH_UP_REQUEST = "Catch me up on what I haven't read."
 
 /** The note for a reply the user cut off and then said nothing to Control: see `resumeIfStopped`. */
 const EMPTY_INTERRUPTION = "The user cut you off, but nothing they said was caught. Say in a few words that you hadn't finished, then carry on from where you were cut off."
@@ -919,21 +917,6 @@ export class Receptionist {
   }
 
   /**
-   * The user asked to be caught up on what they have not read: Control sums
-   * it up, spoken, as their turn, and it all counts as taken in — they will
-   * have heard what of it matters from the summary.
-   */
-  async catchUp(): Promise<void> {
-    const parts = this.ledger.unreadParts()
-    if (!parts.length) return
-    this.notes.push(`The user asks to be caught up on what you wrote while they had you muted, which they have not read: ${parts.map(part => `"${part.text.replace(/\s+/g, ' ').trim()}"`).join('; ')}. ` +
-      'Sum it up in a few spoken sentences: what matters, and anything waiting on them.')
-    // Told: the note above is all the model needs to hear of them.
-    for (const part of parts) this.consume(part.at, part.part, part.from, part.to, 'summary', true)
-    await this.hear(CATCH_UP_REQUEST, 'spoken')
-  }
-
-  /**
    * Play part `part` of the reply at `of` again, as it was said, through
    * `speech` — the device that asked. Its own channel, not Control's: a
    * replay is no turn, and talking over it only stops it. While it plays,
@@ -948,13 +931,7 @@ export class Receptionist {
     if (!said) return 'That reply was recorded before replies kept their voices'
     const spoken = `${said.intro}${said.text}`
     const intro = said.intro.length
-    const channel = this.replayChannel ??= new SpeechChannel({
-      speech, label: '[receptionist replay]',
-      onPhase: () => undefined,
-      onFailure: (failure) => this.onError(speechFailureMessage(failure, 'the replay')),
-      deps: { sleep: (ms) => this.deps.sleep(ms), voiceOperatorDiscovered: () => this.deps.voiceOperatorDiscovered() },
-    })
-    channel.speech = speech
+    const channel = this.replayOn(speech)
     const attempt = channel.begin('synthesizing')
     this.setReplaying(true)
     onPlaying(true)
@@ -976,6 +953,112 @@ export class Receptionist {
       done()
     }
     return undefined
+  }
+
+  /**
+   * Read what waits unread for the user out to them, through `speech` — the
+   * device that asked — in the voices it was written in: oldest reply first,
+   * each from its first word waiting. Nothing goes to Control: like a replay
+   * it is no turn, plays on the replay channel, holds Control while it plays,
+   * and talking over it, or `stopReplay`, stops it. All of it counts as taken
+   * in at once, so the Unread line goes as it starts; the transcript lights
+   * each word as it is said instead, as it does when Control speaks.
+   * Refused while Control is speaking.
+   */
+  async readAloud(speech: SpeechBackend): Promise<string | undefined> {
+    if (this.channel.isProducing()) return 'Control is talking'
+    const replies = this.readings()
+    if (!replies.length) return undefined
+    for (const part of this.ledger.unreadParts()) this.consume(part.at, part.part, part.from, part.to, 'aloud')
+    const channel = this.replayOn(speech)
+    this.setReplaying(true)
+    try {
+      for (const reply of replies) {
+        if (!await this.readOut(channel, reply)) break
+      }
+    } finally {
+      this.onSpeaking(undefined)
+      this.setReplaying(false)
+    }
+    return undefined
+  }
+
+  /**
+   * The replies with words waiting, each as `readAloud` says it: its parts
+   * from the first word waiting on, the part it starts in from that word, a
+   * part said from its start introduced as it was when said. `lengths` are
+   * the reply's parts' lengths; `starts`, where in its part each piece said
+   * starts. Replies recorded before replies kept their voices are left out.
+   */
+  private readings(): Array<{ at: number; lengths: number[]; first: number; starts: number[]; intros: number[]; pieces: SpokenPart[] }> {
+    const firsts = new Map<number, { part: number; from: number }>()
+    for (const { at, part, from } of this.ledger.unreadParts()) if (!firsts.has(at)) firsts.set(at, { part, from })
+    return [...firsts].flatMap(([at, first]) => {
+      const said: Array<NonNullable<ReturnType<ReceptionistDeps['record']['spokenPart']>>> = []
+      for (let part = 0, one; (one = this.deps.record.spokenPart(at, part)); part++) said.push(one)
+      if (said.length <= first.part) return []
+      const reading = said.slice(first.part).map((part, i) => {
+        const from = i === 0 ? first.from : 0
+        const intro = from === 0 ? part.intro : ''
+        return { start: from, intro: intro.length, piece: { text: `${intro}${part.text.slice(from)}`, voice: part.voice } }
+      })
+      return [{
+        at, first: first.part, lengths: said.map(part => part.text.length),
+        starts: reading.map(r => r.start), intros: reading.map(r => r.intro), pieces: reading.map(r => r.piece),
+      }]
+    })
+  }
+
+  /**
+   * Say one of `readings` through `channel`, lighting the transcript as the
+   * voice goes, and asking it where it is as `followVoice` does. Resolves
+   * whether it was said to the end, so the next may follow.
+   */
+  private async readOut(channel: SpeechChannel, reply: ReturnType<Receptionist['readings']>[number]): Promise<boolean> {
+    const reached = (heard: number): void => {
+      const played = playedLengths(reply.pieces, heard)
+      this.onSpeaking({
+        of: reply.at,
+        parts: reply.lengths.map((length, part) => {
+          const i = part - reply.first
+          return i < 0 ? length : reply.starts[i] + Math.max(0, played[i] - reply.intros[i])
+        }),
+      })
+    }
+    reached(0)
+    const attempt = channel.begin('synthesizing')
+    let ended: (completed: boolean) => void = () => {}
+    const end = new Promise<boolean>((resolve) => { ended = resolve })
+    const followed = await channel.deliver(attempt, reply.pieces, undefined, (progress) => {
+      if (progress.kind === 'playing') reached(progress.heard)
+      else ended(progress.state === 'completed')
+    })
+    if (!followed) {
+      channel.settle(attempt)
+      return false
+    }
+    void (async () => {
+      while (attempt.isCurrent && channel.isProducing()) {
+        await this.deps.voiceTick()
+        const offset = await channel.liveOffset()
+        if (offset !== undefined && attempt.isCurrent) reached(offset)
+      }
+      // A replay took the channel, which ends this without a word to `onProgress`.
+      ended(false)
+    })()
+    return end
+  }
+
+  /** The channel replays and reading aloud play on, through `speech`, the device that asked. */
+  private replayOn(speech: SpeechBackend): SpeechChannel {
+    const channel = this.replayChannel ??= new SpeechChannel({
+      speech, label: '[receptionist replay]',
+      onPhase: () => undefined,
+      onFailure: (failure) => this.onError(speechFailureMessage(failure, 'the replay')),
+      deps: { sleep: (ms) => this.deps.sleep(ms), voiceOperatorDiscovered: () => this.deps.voiceOperatorDiscovered() },
+    })
+    channel.speech = speech
+    return channel
   }
 
   /** Stop a replay, if one is playing. What was heard of it counts, as it does when it ends. */

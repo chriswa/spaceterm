@@ -4117,7 +4117,6 @@ html, body, #root {
   border-top: 1px solid var(--ct-border);
   flex-shrink: 0;
 }
-.control-transcript__unread-count { font-size: 12px; font-weight: 600; color: var(--ct-unread); }
 
 .control-transcript__composer {
   display: flex;

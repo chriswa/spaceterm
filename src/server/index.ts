@@ -1793,14 +1793,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       receptionist?.stopReplay()
       break
 
-    case 'receptionist-catch-up':
-      // Asking is talking to Control: it comes here, as for any words to it,
-      // and unmuted, since being told is the point.
-      if (client.device) {
-        setReceptionistMuted(client.device.id, false)
-        setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
-      }
-      void receptionist?.catchUp()
+    case 'receptionist-read-aloud':
+      // On this device, as a replay is: Control stays where it is, muted or not.
+      void receptionist?.readAloud(speechFor(client)).then((refused) => {
+        if (refused) send(client.link, { type: 'receptionist-replaying', playing: null, refused })
+      })
       break
 
     case 'receptionist-transcript': {

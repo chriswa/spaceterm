@@ -877,9 +877,9 @@ export class ServerClient {
     this.fireAndForget({ type: 'receptionist-replay-stop' })
   }
 
-  catchUpWithReceptionist(): void {
-    this.log('[receptionist] catch-up asked for from this client')
-    this.fireAndForget({ type: 'receptionist-catch-up' })
+  readReceptionistAloud(): void {
+    this.log('[receptionist] unread replies read aloud on this client')
+    this.fireAndForget({ type: 'receptionist-read-aloud' })
   }
 
   /** Typed in Control's transcript view, or `spoken`: dictation pasted into nothing on the Mac. */

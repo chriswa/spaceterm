@@ -134,10 +134,10 @@ as you scroll up.
 Under the box to type in, centred: the Away / Silent / Aloud choice, captioned
 Replies, and a Concise / Detailed choice of whether Control's activity shows
 between its words. Above the box, while
-replies wait unread: **Mark all read**, and, while Control is Aloud here,
-**Summarize aloud**, which has Control sum them up. It is offered only then
-because asking brings Control here unmuted, and the bar never changes the
-mode you chose.
+replies wait unread: **Read aloud**, which reads them out on this device in
+the voices they were written in — nothing goes to Control, and they count as
+read at once, the transcript lighting each word as it is said and scrolling to
+keep it in view — and **Mark all read**.
 
 While it is open the bar stays up: the Control button is a down arrow that
 closes it, and the microphone talks to Control, with what it heard appearing at the bottom. It and the toolbar sheet are screens, not

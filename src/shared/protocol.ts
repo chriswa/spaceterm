@@ -950,9 +950,12 @@ export interface ReceptionistReplayStopMessage {
   type: 'receptionist-replay-stop'
 }
 
-/** Have Control say, in a few words, what its unread replies said: it comes to this device, unmuted, to say it. */
-export interface ReceptionistCatchUpMessage {
-  type: 'receptionist-catch-up'
+/**
+ * Read what waits unread out on this device, in the voices it was written in,
+ * as a replay is: it counts as read at once, and nothing goes to Control.
+ */
+export interface ReceptionistReadAloudMessage {
+  type: 'receptionist-read-aloud'
 }
 
 /**
@@ -1315,7 +1318,7 @@ export type ClientMessage =
   | ReceptionistReadAllMessage
   | ReceptionistReplayMessage
   | ReceptionistReplayStopMessage
-  | ReceptionistCatchUpMessage
+  | ReceptionistReadAloudMessage
 
 // --- Server → Client messages ---
 
@@ -1704,7 +1707,7 @@ export type ControlTranscriptEntry = {
    * in — characters `from` to `to` of it — by reading it, hearing it replayed,
    * or hearing Control sum it up.
    */
-  | { kind: 'consumed'; of: number; part: number; from: number; to: number; how: 'read' | 'replayed' | 'summary' }
+  | { kind: 'consumed'; of: number; part: number; from: number; to: number; how: 'read' | 'replayed' | 'summary' | 'aloud' }
   /** What Control did, and what came to it: see `ControlTrace`. Shown only when the view is asked to show Control's activity. */
   | ({ kind: 'trace' } & ControlTrace)
 )

@@ -366,8 +366,8 @@ export interface ReceptionistApi {
   /** Play part `part` of the reply at `of` again, here, in the voice it was said in. */
   replay(of: number, part: number): void
   stopReplay(): void
-  /** Have Control sum up, aloud, what its unread replies said. */
-  catchUp(): void
+  /** Read what waits unread out here, in the voices it was written in: marked read at once, and no message to Control. */
+  readAloud(): void
   /** Replies with words waiting for the user, and where the oldest is. */
   onUnread(callback: (unread: { count: number; first?: number }) => void): () => void
   /** How far Control's voice has got through a reply, or null once nothing is spoken. Not replayed. */

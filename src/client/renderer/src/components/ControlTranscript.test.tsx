@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, cleanup, fireEvent, act, screen, waitFor, within } from '@testing-library/react'
-import { ControlTranscript, holdActions, mergeEntries } from './ControlTranscript'
+import { ControlTranscript, followScroll, holdActions, mergeEntries } from './ControlTranscript'
 import { installFakeBridge, type FakeBridge } from '../testing/fake-bridge'
 import { useControlTranscriptStore } from '../stores/controlTranscriptStore'
 import { useReceptionistStore } from '../stores/receptionistStore'
@@ -333,23 +333,29 @@ describe('ControlTranscript and what the user took in', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Aloud' }))
     expect(bridge.callsTo('receptionist.hold').map((call) => call.args[0])).toEqual(['speak-here'])
   })
-  it('offers a summary of what waits unread only while Control speaks here, and marking it read always', async () => {
+  it('offers what waits unread read aloud in any mode, and marking it read, with no count', async () => {
     useReceptionistStore.setState({ holder: { label: 'Mac', mine: false, muted: false }, mutedHere: true, unread: { count: 2, first: 0 } })
     render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
     await screen.findByText('Nothing said to Control yet')
     const bar = () => within(screen.getByRole('group', { name: 'Unread replies' }))
-    // Away, and Silent: asking would bring Control here aloud, which the user did not choose.
-    expect(bar().getByText('2 unread')).toBeTruthy()
-    expect(bar().queryByRole('button', { name: 'Summarize aloud' })).toBeNull()
-    expect(bar().getByRole('button', { name: 'Mark all read' })).toBeTruthy()
-    act(() => useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: true }, mutedHere: true }))
-    expect(bar().queryByRole('button', { name: 'Summarize aloud' })).toBeNull()
+    expect(bar().queryByText(/unread/)).toBeNull()
+    fireEvent.click(bar().getByRole('button', { name: 'Read aloud' }))
+    expect(bridge.callsTo('receptionist.readAloud')).toHaveLength(1)
+    expect(bridge.callsTo('receptionist.say')).toHaveLength(0)
     expect(bar().getByRole('button', { name: 'Mark all read' })).toBeTruthy()
 
-    act(() => useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: false }, mutedHere: false }))
-    fireEvent.click(bar().getByRole('button', { name: 'Summarize aloud' }))
-    expect(bridge.callsTo('receptionist.catchUp')).toHaveLength(1)
-    expect(bar().getByRole('button', { name: 'Mark all read' })).toBeTruthy()
+    // Not while Control's voice decides.
+    act(() => useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: false }, mutedHere: false, phase: 'speaking' }))
+    expect((bar().getByRole('button', { name: 'Read aloud' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('follows the voice only once the word being said nears the edge of the view', () => {
+    const view = { top: 100, height: 400, scrollTop: 1000 }
+    expect(followScroll(view, { top: 250, bottom: 270 })).toBeUndefined()
+    // Below the band, or above it, the line goes a third of the way down.
+    expect(followScroll(view, { top: 450, bottom: 470 })).toBeCloseTo(1000 + 350 - 400 / 3)
+    expect(followScroll(view, { top: -2000, bottom: -1980 })).toBeCloseTo(0)
+    expect(followScroll(view, { top: 80, bottom: 100 })).toBeCloseTo(1000 - 20 - 400 / 3)
   })
 
   it('strikes out what was missed, and puts what waits under an Unread line until it is marked read', async () => {
