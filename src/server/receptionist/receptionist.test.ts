@@ -4242,6 +4242,34 @@ describe('Receptionist muted, and what the user has taken in', () => {
       return finish
     }
 
+    it('shows a replay as Control speaking, lit as it goes, and what stops Control stops it', async () => {
+      const h = harness({ replies: [reply([{ from: 'control', text: 'Will do.' }])] })
+      await h.receptionist.hear('let me know when Sally is done', 'spoken')
+      await flush()
+      const at = h.record.findIndex(message => message.content.includes('Will do'))
+      // Plays until dropped, as a voice told to stop does.
+      const { speech: voice, finish } = playingUntilFinished()
+      let dropped = false
+      const speech: SpeechBackend = {
+        ...voice,
+        status: async (id) => {
+          const status = await voice.status(id)
+          return dropped ? { status: 200, body: { id, state: 'cancelled_by_client', version: 2 } } : status
+        },
+        drop: async (id) => { dropped = true; finish(); return voice.drop(id) },
+      }
+      const playing: boolean[] = []
+      void h.receptionist.replay(at, 0, speech, (now) => playing.push(now))
+      await flush()
+      expect(h.receptionist.phase).not.toBe('ready')
+      expect(h.speaking.at(-1)).toEqual({ of: at, parts: [0] })
+      await h.receptionist.cancel()
+      await flush()
+      expect(h.receptionist.phase).toBe('ready')
+      expect(h.speaking.at(-1)).toBeUndefined()
+      expect(playing).toEqual([true, false])
+    })
+
     it('says nothing until a replay ends, even once a dictation during it has ended', async () => {
       const h = harness(watching())
       const finish = await replaying(h)

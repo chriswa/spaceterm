@@ -137,7 +137,9 @@ between its words. Above the box, while
 replies wait unread: **Read aloud**, which reads them out on this device in
 the voices they were written in — nothing goes to Control, and they count as
 read at once, the transcript lighting each word as it is said and scrolling to
-keep it in view — and **Mark all read**.
+keep it in view — and **Mark all read**. A reading, like a part played again
+with its own button, looks just as Control speaking does: the bar is gone,
+the Control button shows who is speaking, and what stops Control stops it.
 
 While it is open the bar stays up: the Control button is a down arrow that
 closes it, and the microphone talks to Control, with what it heard appearing at the bottom. It and the toolbar sheet are screens, not

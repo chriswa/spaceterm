@@ -163,7 +163,7 @@ export const REAL_RECEPTIONIST_RECORD = {
     }
   },
   /** The reply line at byte `of`, as it was said: see `spokenPart`. */
-  spokenPart(of: number, part: number): { intro: string; text: string; voice: string } | undefined {
+  spokenPart(of: number, part: number): { intro: string; text: string; voice: string; from: string } | undefined {
     let fd: number
     try { fd = fs.openSync(RECEPTIONIST_CONVERSATION, 'r') } catch { return undefined }
     try {

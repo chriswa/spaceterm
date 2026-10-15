@@ -195,7 +195,7 @@ export interface ReceptionistDeps {
     /** The record's last few dozen entries, oldest first, as the transcript view reads them: to restore the ledger. */
     tail(): ControlTranscriptEntry[]
     /** Part `part` of the reply at `of` as it was said, for a replay; undefined if there is none. See `spokenPart`. */
-    spokenPart(of: number, part: number): { intro: string; text: string; voice: string } | undefined
+    spokenPart(of: number, part: number): { intro: string; text: string; voice: string; from: string } | undefined
     /**
      * Actions that never ran, because the words they waited on were never
      * heard: each as its line would read had it run. For the transcript view,
@@ -477,6 +477,23 @@ export function sideQuestionPrompt(question: string): string {
     `\n\nQuestion: ${question}`
 }
 
+/** A reply, or some of it, as read out again: see `Receptionist.readOut`. */
+interface Reading {
+  /** Where the reply is in the record. */
+  at: number
+  /** The reply's parts' lengths. */
+  lengths: number[]
+  /** The part the first piece is of; each piece after is of the part after. */
+  first: number
+  /** Where in its part each piece starts. */
+  starts: number[]
+  /** How long the introduction ahead of each piece is. */
+  intros: number[]
+  pieces: SpokenPart[]
+  /** Who says each piece, by name. */
+  speakers: string[]
+}
+
 export class Receptionist {
   private session: SavedSession | undefined
   /** Model calls go one at a time: a session takes one message after another. */
@@ -594,11 +611,14 @@ export class Receptionist {
   private interruptedAt: number | undefined
 
   private readonly onError: (message: string) => void
+  /** `opts.onPhase`: Control's phase, or a reading's while Control is idle. */
+  private readonly reportPhase: (phase: SpeechPhase) => void
   /** The server is shutting down: nothing new starts. See `shutdown`. */
   private closing = false
 
   constructor(private readonly deps: ReceptionistDeps, opts: ReceptionistOptions) {
     this.onError = opts.onError
+    this.reportPhase = opts.onPhase
     this.onSpeaker = opts.onSpeaker ?? (() => undefined)
     this.onUnread = opts.onUnread ?? (() => undefined)
     this.onSpeaking = opts.onSpeaking ?? (() => undefined)
@@ -649,7 +669,10 @@ export class Receptionist {
     })
   }
 
-  get phase(): SpeechPhase { return this.channel.phase }
+  /** Control's own channel's phase, or, while that is idle, a reading's: see `replayOn`. */
+  get phase(): SpeechPhase {
+    return this.channel.isProducing() || !this.replayChannel ? this.channel.phase : this.replayChannel.phase
+  }
 
   /**
    * The user said something to the receptionist, typed in the transcript or
@@ -782,8 +805,12 @@ export class Receptionist {
     return new Promise((resolve) => this.heldWaiters.add(resolve))
   }
 
-  /** Stop whatever the receptionist is saying or about to say. Its actions have already run. */
+  /**
+   * Stop whatever the receptionist is saying or about to say. Its actions
+   * have already run. A reading shows as Control speaking, so this stops one too.
+   */
   cancel(): Promise<boolean> {
+    void this.replayChannel?.silence()
     return this.channel.cancel()
   }
 
@@ -922,38 +949,25 @@ export class Receptionist {
   /**
    * Play part `part` of the reply at `of` again, as it was said, through
    * `speech` — the device that asked. Its own channel, not Control's: a
-   * replay is no turn, and talking over it only stops it. While it plays,
-   * Control holds anything it would say, as while the user dictates; and
-   * what the user hears of it counts as taken in. `onPlaying` hears it start
-   * and stop. Refused while Control is speaking, or for a reply with no
-   * voices on record.
+   * replay is no turn, though it shows as Control speaking does (`readOut`).
+   * While it plays, Control holds anything it would say, as while the user
+   * dictates; and what the user hears of it counts as taken in. `onPlaying`
+   * hears it start and stop. Refused while Control is speaking, or for a
+   * reply with no voices on record.
    */
   async replay(of: number, part: number, speech: SpeechBackend, onPlaying: (playing: boolean) => void): Promise<string | undefined> {
     if (this.channel.isProducing()) return 'Control is talking'
-    const said = this.deps.record.spokenPart(of, part)
-    if (!said) return 'That reply was recorded before replies kept their voices'
-    const spoken = `${said.intro}${said.text}`
-    const intro = said.intro.length
+    const reading = this.readingOf(of, part, 0, part)
+    if (!reading) return 'That reply was recorded before replies kept their voices'
     const channel = this.replayOn(speech)
-    const attempt = channel.begin('synthesizing')
     this.setReplaying(true)
     onPlaying(true)
-    let heard = 0
-    const done = (): void => {
-      if (heard > intro) this.consume(of, part, 0, heard - intro, 'replayed')
+    try {
+      const { heard } = await this.readOut(channel, reading)
+      if (heard > reading.intros[0]) this.consume(of, part, 0, heard - reading.intros[0], 'replayed')
+    } finally {
       this.setReplaying(false)
       onPlaying(false)
-    }
-    const followed = await channel.deliver(attempt, [{ text: spoken, voice: said.voice }], undefined, (progress) => {
-      if (progress.kind === 'playing') heard = Math.max(heard, progress.heard)
-      else {
-        heard = progress.state === 'completed' ? spoken.length : Math.max(heard, progress.heard ?? 0)
-        done()
-      }
-    })
-    if (!followed) {
-      channel.settle(attempt)
-      done()
     }
     return undefined
   }
@@ -963,68 +977,77 @@ export class Receptionist {
    * device that asked — in the voices it was written in: oldest reply first,
    * each from its first word waiting. Nothing goes to Control: like a replay
    * it is no turn, plays on the replay channel, holds Control while it plays,
-   * and talking over it, or `stopReplay`, stops it. All of it counts as taken
+   * and shows as Control speaking does (`readOut`). All of it counts as taken
    * in at once, so the Unread line goes as it starts; the transcript lights
-   * each word as it is said instead, as it does when Control speaks.
-   * Refused while Control is speaking.
+   * each word as it is said instead. Refused while Control is speaking.
    */
   async readAloud(speech: SpeechBackend): Promise<string | undefined> {
     if (this.channel.isProducing()) return 'Control is talking'
-    const replies = this.readings()
-    if (!replies.length) return undefined
+    const firsts = new Map<number, { part: number; from: number }>()
+    for (const { at, part, from } of this.ledger.unreadParts()) if (!firsts.has(at)) firsts.set(at, { part, from })
+    const readings = [...firsts].flatMap(([at, first]) => this.readingOf(at, first.part, first.from) ?? [])
+    if (!readings.length) return undefined
     for (const part of this.ledger.unreadParts()) this.consume(part.at, part.part, part.from, part.to, 'aloud')
     const channel = this.replayOn(speech)
     this.setReplaying(true)
     try {
-      for (const reply of replies) {
-        if (!await this.readOut(channel, reply)) break
+      for (const reading of readings) {
+        if (!(await this.readOut(channel, reading)).completed) break
       }
     } finally {
-      this.onSpeaking(undefined)
       this.setReplaying(false)
     }
     return undefined
   }
 
   /**
-   * The replies with words waiting, each as `readAloud` says it: its parts
-   * from the first word waiting on, the part it starts in from that word, a
-   * part said from its start introduced as it was when said. `lengths` are
-   * the reply's parts' lengths; `starts`, where in its part each piece said
-   * starts. Replies recorded before replies kept their voices are left out.
+   * The reply at `at` as read out again, from character `from` of part
+   * `first` through part `last` (by default its last): a part read from its
+   * start introduced as it was when said. Undefined for a reply recorded
+   * before replies kept their voices.
    */
-  private readings(): Array<{ at: number; lengths: number[]; first: number; starts: number[]; intros: number[]; pieces: SpokenPart[] }> {
-    const firsts = new Map<number, { part: number; from: number }>()
-    for (const { at, part, from } of this.ledger.unreadParts()) if (!firsts.has(at)) firsts.set(at, { part, from })
-    return [...firsts].flatMap(([at, first]) => {
-      const said: Array<NonNullable<ReturnType<ReceptionistDeps['record']['spokenPart']>>> = []
-      for (let part = 0, one; (one = this.deps.record.spokenPart(at, part)); part++) said.push(one)
-      if (said.length <= first.part) return []
-      const reading = said.slice(first.part).map((part, i) => {
-        const from = i === 0 ? first.from : 0
-        const intro = from === 0 ? part.intro : ''
-        return { start: from, intro: intro.length, piece: { text: `${intro}${part.text.slice(from)}`, voice: part.voice } }
-      })
-      return [{
-        at, first: first.part, lengths: said.map(part => part.text.length),
-        starts: reading.map(r => r.start), intros: reading.map(r => r.intro), pieces: reading.map(r => r.piece),
-      }]
+  private readingOf(at: number, first: number, from: number, last = Infinity): Reading | undefined {
+    const said: Array<NonNullable<ReturnType<ReceptionistDeps['record']['spokenPart']>>> = []
+    for (let part = 0, one; (one = this.deps.record.spokenPart(at, part)); part++) said.push(one)
+    if (said.length <= first) return undefined
+    const read = said.slice(first, last + 1).map((part, i) => {
+      const start = i === 0 ? from : 0
+      const intro = start === 0 ? part.intro : ''
+      return { start, intro: intro.length, piece: { text: `${intro}${part.text.slice(start)}`, voice: part.voice }, speaker: this.speakerOf(part.from) }
     })
+    return {
+      at, first, lengths: said.map(part => part.text.length),
+      starts: read.map(r => r.start), intros: read.map(r => r.intro), pieces: read.map(r => r.piece), speakers: read.map(r => r.speaker),
+    }
+  }
+
+  /** Who said a recorded part, by name, as `render` names whoever says each part. */
+  private speakerOf(from: string): string {
+    if (from === CONTROL) return RECEPTIONIST_NAME
+    const agents = this.deps.agents()
+    const nodeId = this.resolve(from, this.handles(agents), agents)
+    return (nodeId && this.deps.names.get(nodeId)?.name) || parseAgentRef(from).name || RECEPTIONIST_NAME
   }
 
   /**
-   * Say one of `readings` through `channel`, lighting the transcript as the
-   * voice goes, and asking it where it is as `followVoice` does. Resolves
-   * whether it was said to the end, so the next may follow.
+   * Say `reading` through `channel`, shown just as Control speaking is: the
+   * transcript lights each word as it is said, asking the voice where it is
+   * as `followVoice` does, the status names who is speaking, and the phase is
+   * Control's own (`replayOn`). Resolves whether it was said to the end, so
+   * the next may follow, and how far into its pieces the voice got.
    */
-  private async readOut(channel: SpeechChannel, reply: ReturnType<Receptionist['readings']>[number]): Promise<boolean> {
-    const reached = (heard: number): void => {
-      const played = playedLengths(reply.pieces, heard)
+  private async readOut(channel: SpeechChannel, reading: Reading): Promise<{ completed: boolean; heard: number }> {
+    const total = joinSpeechParts(reading.pieces).length
+    const starts = speechPartStarts(reading.pieces)
+    let heard = 0
+    let speaker: string | undefined
+    const reached = (at: number): void => {
+      const played = playedLengths(reading.pieces, at)
       this.onSpeaking({
-        of: reply.at,
-        parts: reply.lengths.map((length, part) => {
-          const i = part - reply.first
-          return i < 0 ? length : reply.starts[i] + Math.max(0, played[i] - reply.intros[i])
+        of: reading.at,
+        parts: reading.lengths.map((length, part) => {
+          const i = part - reading.first
+          return i < 0 || i >= reading.pieces.length ? length : reading.starts[i] + Math.max(0, played[i] - reading.intros[i])
         }),
       })
     }
@@ -1032,13 +1055,20 @@ export class Receptionist {
     const attempt = channel.begin('synthesizing')
     let ended: (completed: boolean) => void = () => {}
     const end = new Promise<boolean>((resolve) => { ended = resolve })
-    const followed = await channel.deliver(attempt, reply.pieces, undefined, (progress) => {
-      if (progress.kind === 'playing') reached(progress.heard)
-      else ended(progress.state === 'completed')
+    const followed = await channel.deliver(attempt, reading.pieces, undefined, (progress) => {
+      if (progress.kind === 'playing') {
+        heard = Math.max(heard, progress.heard)
+        reached(progress.heard)
+        const now = reading.speakers[Math.max(0, starts.filter(start => start <= progress.heard).length - 1)]
+        if (now !== speaker) this.onSpeaker(speaker = now)
+        return
+      }
+      heard = progress.state === 'completed' ? total : Math.max(heard, progress.heard ?? 0)
+      ended(progress.state === 'completed')
     })
     if (!followed) {
       channel.settle(attempt)
-      return false
+      return { completed: false, heard }
     }
     void (async () => {
       while (attempt.isCurrent && channel.isProducing()) {
@@ -1046,17 +1076,28 @@ export class Receptionist {
         const offset = await channel.liveOffset()
         if (offset !== undefined && attempt.isCurrent) reached(offset)
       }
-      // A replay took the channel, which ends this without a word to `onProgress`.
+      // Another reading took the channel, which ends this without a word to `onProgress`.
       ended(false)
     })()
-    return end
+    const completed = await end
+    return { completed, heard }
   }
 
-  /** The channel replays and reading aloud play on, through `speech`, the device that asked. */
+  /**
+   * The channel replays and reading aloud play on, through `speech`, the
+   * device that asked. Its phase is shown as Control's — busy, speaking, who
+   * speaks — so that being read to looks as being spoken to does: see `phase`.
+   */
   private replayOn(speech: SpeechBackend): SpeechChannel {
     const channel = this.replayChannel ??= new SpeechChannel({
       speech, label: '[receptionist replay]',
-      onPhase: () => undefined,
+      onPhase: (phase) => {
+        // Control's own voice is shown first; a reading never starts over it.
+        if (this.channel.isProducing()) return
+        this.reportPhase(phase)
+        if (phase !== 'speaking') this.onSpeaker(undefined)
+        if (phase === 'ready') this.onSpeaking(undefined)
+      },
       onFailure: (failure) => this.onError(speechFailureMessage(failure, 'the replay')),
       deps: { sleep: (ms) => this.deps.sleep(ms), voiceOperatorDiscovered: () => this.deps.voiceOperatorDiscovered() },
     })

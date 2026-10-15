@@ -121,11 +121,11 @@ export function parseRecordLine(line: string, offset: number, speakers: Speakers
  * Part `part` of a reply line as it was said, for a replay: the words, the
  * "Kevin here." they were spoken with in front of them (or nothing), and the
  * voice they were spoken in. Replies now keep the introduction in their words;
- * `intros` is how replies recorded before that kept it apart. Undefined for
- * a line that is not a reply, or one recorded before replies kept their
- * voices.
+ * `intros` is how replies recorded before that kept it apart. `from`: who
+ * said it, as the model wrote it. Undefined for a line that is not a reply,
+ * or one recorded before replies kept their voices.
  */
-export function spokenPart(line: string, part: number): { intro: string; text: string; voice: string } | undefined {
+export function spokenPart(line: string, part: number): { intro: string; text: string; voice: string; from: string } | undefined {
   let raw: { role?: unknown; content?: unknown; voices?: unknown; intros?: unknown }
   try { raw = JSON.parse(line) } catch { return undefined }
   if (raw.role !== 'assistant' || typeof raw.content !== 'string' || !Array.isArray(raw.voices)) return undefined
@@ -133,8 +133,10 @@ export function spokenPart(line: string, part: number): { intro: string; text: s
   const intro = Array.isArray(raw.intros) && typeof raw.intros[part] === 'string' ? raw.intros[part] as string : ''
   let say: unknown
   try { say = (JSON.parse(raw.content) as { say?: unknown }).say } catch { return undefined }
-  const text = Array.isArray(say) ? (say[part] as { text?: unknown } | undefined)?.text : undefined
-  return typeof voice === 'string' && typeof text === 'string' ? { intro, text, voice } : undefined
+  const said = Array.isArray(say) ? say[part] as { text?: unknown; from?: unknown } | undefined : undefined
+  const text = said?.text
+  const from = typeof said?.from === 'string' ? said.from : CONTROL
+  return typeof voice === 'string' && typeof text === 'string' ? { intro, text, voice, from } : undefined
 }
 
 /**
