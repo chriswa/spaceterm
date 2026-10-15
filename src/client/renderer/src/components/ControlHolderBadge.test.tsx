@@ -15,8 +15,8 @@ describe('holderBadgeText', () => {
     expect(holderBadgeText({ label: 'Phone', mine: false, muted: false })).toContain('Phone')
   })
 
-  it("says Control is unattached and can't respond when no device holds it", () => {
-    expect(holderBadgeText(null)).toBe("Control is unattached — can't respond")
+  it("says Control is unattached and can't send messages when no device holds it", () => {
+    expect(holderBadgeText(null)).toBe("Control is unattached — can't send messages")
   })
 })
 
@@ -29,6 +29,6 @@ describe('ControlHolderBadge', () => {
     act(() => useReceptionistStore.getState().setHolder({ deviceId: 'phone-1', label: 'Phone' }, 'desktop'))
     expect(screen.getByRole('status').textContent).toBe('Control is attached to Phone')
     act(() => useReceptionistStore.getState().setHolder(null, 'desktop'))
-    expect(screen.getByRole('status').textContent).toBe("Control is unattached — can't respond")
+    expect(screen.getByRole('status').textContent).toBe("Control is unattached — can't send messages")
   })
 })
