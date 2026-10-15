@@ -342,15 +342,17 @@ describe('ControlTranscript and what the user took in', () => {
     fireEvent.click(bar().getByRole('button', { name: 'Read aloud' }))
     expect(bridge.callsTo('receptionist.readAloud')).toHaveLength(1)
     expect(bridge.callsTo('receptionist.say')).toHaveLength(0)
-    // Pressed, it is gone at once, before the server says what waits is read; back for something new.
-    expect(bar().queryByRole('button', { name: 'Read aloud' })).toBeNull()
+    // Pressed, the bar is gone at once, before the server says what waits is read; back for something new.
+    expect(screen.queryByRole('group', { name: 'Unread replies' })).toBeNull()
     act(() => useReceptionistStore.setState({ unread: { count: 1, first: 300 } }))
     expect(bar().getByRole('button', { name: 'Read aloud' })).toBeTruthy()
     expect(bar().getByRole('button', { name: 'Mark all read' })).toBeTruthy()
 
-    // Gone while Control speaks.
+    // Gone while Control speaks, and back once it stops.
     act(() => useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: false }, mutedHere: false, phase: 'speaking' }))
-    expect(bar().queryByRole('button', { name: 'Read aloud' })).toBeNull()
+    expect(screen.queryByRole('group', { name: 'Unread replies' })).toBeNull()
+    act(() => useReceptionistStore.setState({ phase: 'ready' }))
+    expect(bar().getByRole('button', { name: 'Read aloud' })).toBeTruthy()
     expect(bar().getByRole('button', { name: 'Mark all read' })).toBeTruthy()
   })
 

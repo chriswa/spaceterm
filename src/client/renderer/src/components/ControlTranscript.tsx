@@ -142,7 +142,7 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
   const firstUnreadNow = useReceptionistStore((s) => s.unread.first)
   /**
    * What waited when Read aloud was pressed: pressed, it is as good as heard,
-   * so the button goes at once rather than when the server says it is read.
+   * so the bar goes at once rather than when the server says it is read.
    * Back only for something new waiting, or if the reading was refused.
    */
   const [askedAloud, setAskedAloud] = useState<number | undefined>(undefined)
@@ -359,21 +359,21 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
         )}
       </div>
       {error && <div className="control-transcript__error" role="alert">{error}</div>}
-      {unread > 0 && (
+      {unread > 0 && !voicing && !readingAloud && (
         // The ways to be done with what waits: hear it read out here, word
         // by word as the transcript lights it, or say it is read. Either way
-        // it is read at once, and nothing goes to Control. Not offered while
-        // Control speaks, which a reading would only wait behind.
+        // it is read at once, and nothing goes to Control. Neither is offered
+        // while Control speaks or what waits is being read aloud: the user is
+        // listening, and the bar is back, if anything still waits, once the
+        // voice stops.
         <div className="control-transcript__unread-bar" role="group" aria-label="Unread replies">
-          {!voicing && !readingAloud && (
-            <button
-              className="control-transcript__button"
-              onClick={() => {
-                setAskedAloud(firstUnreadNow)
-                window.api.receptionist.readAloud()
-              }}
-            >Read aloud</button>
-          )}
+          <button
+            className="control-transcript__button"
+            onClick={() => {
+              setAskedAloud(firstUnreadNow)
+              window.api.receptionist.readAloud()
+            }}
+          >Read aloud</button>
           <button className="control-transcript__button" onClick={() => window.api.receptionist.readAll()}>Mark all read</button>
         </div>
       )}
