@@ -344,9 +344,10 @@ describe('ControlTranscript and what the user took in', () => {
     expect(bridge.callsTo('receptionist.say')).toHaveLength(0)
     expect(bar().getByRole('button', { name: 'Mark all read' })).toBeTruthy()
 
-    // Not while Control's voice decides.
+    // Gone while Control speaks.
     act(() => useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: false }, mutedHere: false, phase: 'speaking' }))
-    expect((bar().getByRole('button', { name: 'Read aloud' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(bar().queryByRole('button', { name: 'Read aloud' })).toBeNull()
+    expect(bar().getByRole('button', { name: 'Mark all read' })).toBeTruthy()
   })
 
   it('follows the voice only once the word being said nears the edge of the view', () => {

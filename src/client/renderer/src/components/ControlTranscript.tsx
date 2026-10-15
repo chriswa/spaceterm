@@ -351,13 +351,10 @@ export function ControlTranscript({ variant, onDismiss }: { variant: 'modal' | '
       {unread > 0 && (
         // The ways to be done with what waits: hear it read out here, word
         // by word as the transcript lights it, or say it is read. Either way
-        // it is read at once, and nothing goes to Control.
+        // it is read at once, and nothing goes to Control. Not offered while
+        // Control speaks, which a reading would only wait behind.
         <div className="control-transcript__unread-bar" role="group" aria-label="Unread replies">
-          <button
-            className="control-transcript__button" disabled={voicing}
-            title={voicing ? 'Control is talking' : undefined}
-            onClick={() => window.api.receptionist.readAloud()}
-          >Read aloud</button>
+          {!voicing && <button className="control-transcript__button" onClick={() => window.api.receptionist.readAloud()}>Read aloud</button>}
           <button className="control-transcript__button" onClick={() => window.api.receptionist.readAll()}>Mark all read</button>
         </div>
       )}
