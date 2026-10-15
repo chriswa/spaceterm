@@ -470,12 +470,10 @@ holds the microphone, start talking with
 **"Control"** — "Control, what's Kevin doing?" — and just keep going. The
 phone taps once (a haptic) and the button turns orange; nothing waits on that, since
 the dictation is fed everything from your first syllable out of the
-listener's buffer. When you are done, just stop: once a pause reaches 0.8 s
-the Mac's turn model (Smart Turn, `src/server/turn-detector.ts`) judges from
-your words and intonation whether you sound finished, and goes on judging
-every half second (`TURN_SAMPLE_MS`) for as long as the pause lasts; the
-first time it is at least 85% sure, the dictation ends there. An answer that
-comes back after you have started talking again is dropped. If it is not, a pause still ends it once it
+listener's buffer. When you are done, just stop: at each pause of 0.8 s the
+Mac's turn model (Smart Turn, `src/server/turn-detector.ts`) judges from your
+words and intonation whether you sound finished, and if it is at least 85%
+sure, the dictation ends there. If it is not, a pause still ends it once it
 outlasts a patience that grows with how long you have been talking — three
 seconds for a quick request, up to twenty seconds five minutes into a
 monologue. A long enough pause after "Control" alone waits at least five
@@ -483,11 +481,10 @@ seconds instead, and Smart Turn is not asked about it; ten minutes in all
 ends it regardless.
 
 While a dictation runs, the hands-free button shows both, a half each,
-filling from the bottom: **left, green**, Smart Turn's latest answer, 0 at
-the bottom to 1 at the top, snapping to each answer with no smoothing and
-empty while you talk, with a **red line** across it at the threshold while
-Smart Turn is being asked — green reaching the line ends it; **right,
-magenta**, the quiet since you last spoke, ending it at the top. Both hold while what you said is sent, so you
+filling from the bottom, and whichever reaches the top first ends it:
+**left, green**, Smart Turn's answer at the latest pause, empty while you
+talk and full within 5% of the threshold; **right, magenta**, the quiet
+since you last spoke, against the patience. Both hold while what you said is sent, so you
 can see which one ended it. Two taps mean it was heard and sent: "Control" comes off the
 front, and the rest goes to Control, which comes to this phone. The dictation itself is ordinary Wispr, as a tap's.
 
@@ -723,10 +720,10 @@ context (`waiting`). A cue that waited is played when the context runs again
 only if it is fresh; otherwise, or when a newer cue replaces it, a
 `cue-dropped` line says so (`cues.ts`, `CueTracker`) — iOS used to save them
 all up and play them together, loudly. Each Smart Turn verdict on the phone
-is a `hands-free-turn` line (p, threshold, which sample of its pause, whether it ended the dictation).
+is a `hands-free-turn` line (p, threshold, whether it ended the dictation).
 
 **Seeing the turn model.** The left half of the hands-free button is
-Smart Turn's latest answer at a pause (`samplePause` in `hands-free.ts`), the
+Smart Turn's latest answer at a pause (`turnFill` in `hands-free.ts`), the
 right half the quiet against the patience (`UtteranceEndpointer.silence`);
 see "Hands-free" above. Those answers are the `hands-free-turn` lines above.
 

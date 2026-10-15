@@ -2,9 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { HandsFreeTuning } from '../shared/protocol'
 import type { DictationOptions } from './dictation'
 import type { Capture } from './held-microphone'
-import { cleanHandsFreeText, installHandsFree, useHandsFree, type HandsFreeDeps } from './hands-free'
+import { cleanHandsFreeText, installHandsFree, turnFill, useHandsFree, type HandsFreeDeps } from './hands-free'
 import type { FrameScorer } from './speech-detector'
-import { DEFAULT_TUNING } from './wake-listener'
 
 /**
  * "Speech" is a 200 Hz tone at about −20 dBFS, "quiet" a room's hiss, and
@@ -42,7 +41,7 @@ const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(
  * `justTurnedOn`: start in the window that turning hands-free on opens;
  * otherwise it has run out, and "Control" is needed.
  */
-function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, isWords = true as boolean | ((nth: number) => boolean), saidWakeWord = false, oldServer = false, transcript = 'Control, what is Kevin doing?', turn = null as number | null | (() => number | null),
+function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, isWords = true as boolean | ((nth: number) => boolean), saidWakeWord = false, oldServer = false, transcript = 'Control, what is Kevin doing?', turn = null as number | null,
   heardShutdown = (() => undefined) as (mode: 'wake-word' | 'speech') => 'whole' | 'start' | undefined } = {}) {
   const listeners = new Set<(block: Float32Array) => void>()
   const capture: Capture = {
@@ -120,7 +119,7 @@ function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, 
       return {
         finish: async () => { d.finished = true; return transcript },
         cancel: () => { d.cancelled = true },
-        checkTurn: async () => { d.turnChecks++; return typeof turn === 'function' ? turn() : turn },
+        checkTurn: async () => { d.turnChecks++; return turn },
       }
     },
     othersDictating: () => false,
@@ -184,7 +183,7 @@ function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, 
 }
 
 let h: ReturnType<typeof harness> | undefined
-beforeEach(() => useHandsFree.setState({ phase: 'off', conversation: false, secondsLeft: null, turn: null, sampling: null }))
+beforeEach(() => useHandsFree.setState({ phase: 'off', conversation: false, secondsLeft: null, turn: null }))
 afterEach(() => { h?.uninstall(); h = undefined })
 
 describe('hands-free mode', () => {
@@ -245,36 +244,6 @@ describe('hands-free mode', () => {
     await h.hear(quiet(1000))
     expect(h.dictations[0].turnChecks).toBe(2)
     expect(useHandsFree.getState().turn).toEqual({ p: 0.08, threshold: expect.any(Number) })
-  })
-
-  it('asks the turn model again every half second for as long as the pause lasts, and stops when they carry on', async () => {
-    h = harness({ turn: 0.08 })
-    await h.hear(quiet(1500), speech(2500), quiet(1000))
-    expect(h.dictations[0].turnChecks).toBe(1)
-    expect(useHandsFree.getState().sampling).toBe(DEFAULT_TUNING.turnThreshold)
-    await h.elapse(500)
-    expect(h.dictations[0].turnChecks).toBe(2)
-    await h.elapse(500)
-    expect(h.dictations[0].turnChecks).toBe(3)
-    await h.hear(speech(500))
-    expect(useHandsFree.getState().sampling).toBeNull()
-    expect(useHandsFree.getState().turn).toBeNull()
-    await h.elapse(500)
-    expect(h.dictations[0].turnChecks).toBe(3)
-  })
-
-  it('ends on the first answer in a pause that is sure enough, and asks no more', async () => {
-    let p = 0.08
-    h = harness({ turn: () => p })
-    await h.hear(quiet(1500), speech(2500), quiet(1000))
-    expect(h.said).toEqual([])
-    p = 0.93
-    await h.elapse(500)
-    expect(h.dictations[0].turnChecks).toBe(2)
-    expect(h.said).toEqual(['what is Kevin doing?'])
-    expect(useHandsFree.getState().sampling).toBeNull()
-    await h.elapse(500)
-    expect(h.dictations[0].turnChecks).toBe(2)
   })
 
   it('forgets the answer once the dictation it was about has ended', async () => {
@@ -762,5 +731,19 @@ describe('cleanHandsFreeText', () => {
   it('leaves "control" alone anywhere but first, and is empty when nothing else was said', () => {
     expect(cleanHandsFreeText('Take control of the build.')).toBe('Take control of the build.')
     expect(cleanHandsFreeText('Control.')).toBe('')
+  })
+})
+
+describe('the turn gauge', () => {
+  it('rises with the answer, the threshold at the top', () => {
+    expect(turnFill(0, 0.6)).toBe(0)
+    expect(turnFill(0.15, 0.6)).toBeCloseTo(0.25)
+    expect(turnFill(0.3, 0.6)).toBeLessThan(turnFill(0.45, 0.6))
+  })
+
+  it('is whole at the threshold, just short of it, or past it', () => {
+    expect(turnFill(0.6, 0.6)).toBe(1)
+    expect(turnFill(0.58, 0.6)).toBe(1)
+    expect(turnFill(0.9, 0.6)).toBe(1)
   })
 })

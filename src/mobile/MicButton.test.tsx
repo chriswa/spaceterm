@@ -22,7 +22,7 @@ afterEach(() => {
   cleanup()
   setHoldMicrophone(false)
   useDictationSession.setState({ mic: { kind: 'idle' } })
-  useHandsFree.setState({ phase: 'off', turn: null })
+  useHandsFree.setState({ phase: 'off', turn: null, sampling: null })
 })
 
 const mic = () => screen.getByRole('button', { name: /Talk to|Cut .* off|dictating/ })
@@ -168,11 +168,24 @@ describe('what may end a hands-free dictation', () => {
     expect(container.querySelector('.m-mic__turn')).toBeNull()
     expect(gauge(container, 'turn')?.style.clipPath).toBe('inset(100.0% 0 0 0)')
 
+    // From 0 to 1, the answer itself, not its share of the threshold.
     act(() => useHandsFree.setState({ turn: { p: 0.15, threshold: 0.6 } }))
-    expect(gauge(container, 'turn')?.style.clipPath).toBe('inset(75.0% 0 0 0)')
+    expect(gauge(container, 'turn')?.style.clipPath).toBe('inset(85.0% 0 0 0)')
     act(() => useHandsFree.setState({ turn: { p: 0.6, threshold: 0.6 } }))
-    expect(gauge(container, 'turn')?.style.clipPath).toBe('inset(0.0% 0 0 0)')
+    expect(gauge(container, 'turn')?.style.clipPath).toBe('inset(40.0% 0 0 0)')
     expect(gauge(container, 'quiet')).not.toBeNull()
+  })
+
+  it('marks the threshold with a line across the left half only while the turn model is being asked', () => {
+    useHandsFree.setState({ phase: 'hearing', turn: null, sampling: null })
+    const { container } = render(<HandsFreeButton />)
+    expect(container.querySelector('.m-hands-free__threshold')).toBeNull()
+    act(() => useHandsFree.setState({ sampling: 0.85 }))
+    const line = container.querySelector('.m-hands-free__threshold line')
+    expect(Number(line?.getAttribute('y1'))).toBeCloseTo(42 * 0.15)
+    expect(Number(line?.getAttribute('x2'))).toBe(21)
+    act(() => useHandsFree.setState({ sampling: null }))
+    expect(container.querySelector('.m-hands-free__threshold')).toBeNull()
   })
 
   it('keeps both up while what was said is sent, and drops them once it is listening again', () => {
