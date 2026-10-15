@@ -104,6 +104,8 @@ export interface FakeBridgeResponses {
   agentMemoryBytes: number | null
   /** The page `receptionist.transcript(before)` resolves to. */
   controlTranscript: (before?: number) => ControlTranscriptPage
+  /** What `receptionist.image(id, size)` resolves to; undefined rejects, as for a picture no longer kept. */
+  controlImage: (id: string, size: 'thumb' | 'full') => { mime: string; data: string } | undefined
 }
 
 /** The device the fake bridge says it runs on: emit a holder with this id to make it this client's. */
@@ -142,7 +144,8 @@ export class FakeBridge implements Api {
     restartFlag: { required: false, reason: '' },
     usageReport: null,
     agentMemoryBytes: null,
-    controlTranscript: () => ({ entries: [], more: false })
+    controlTranscript: () => ({ entries: [], more: false }),
+    controlImage: () => undefined
   }
 
   /**
@@ -469,6 +472,11 @@ export class FakeBridge implements Api {
     onReplaying: (cb) => subscribe(this.receptionistReplaying, cb),
     onSpeaking: (cb) => subscribe(this.receptionistSpeaking, cb),
     transcript: (before) => this.reply('receptionist.transcript', this.responses.controlTranscript(before), before),
+    image: (id, size) => {
+      this.record('receptionist.image', id, size)
+      const image = this.responses.controlImage(id, size)
+      return image ? Promise.resolve(image) : Promise.reject(new Error('That picture is no longer kept.'))
+    },
     onTranscriptAppended: (cb) => subscribe(this.transcriptAppended, cb),
     deviceId: FAKE_DEVICE_ID,
     onStatus: (cb) => subscribe(this.receptionistStatus, cb),

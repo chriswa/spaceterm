@@ -10,6 +10,7 @@
  *   spaceterm-cli subscribe [--events ...] [--nodes ...]  # stream events as JSON lines
  *   spaceterm-cli protocol                               # version + event set, as JSON
  *   spaceterm-cli capabilities [--json]                  # what optional integrations are present
+ *   spaceterm-cli show-images <path> [--caption c] ... [--summary s]  # pictures in Control's transcript
  *
  * Environment:
  *   SPACETERM_NODE_ID   — set automatically in PTY sessions
@@ -18,12 +19,14 @@
 
 import * as net from 'net'
 import {
+  HOOKS_SOCKET_PATH,
   SCRIPTS_SOCKET_PATH,
   SCRIPT_EVENTS,
   SCRIPT_PROTOCOL_VERSION,
   type ScriptEvent,
 } from '../shared/protocol'
 import { probeCapabilities, formatCapabilityReport } from '../server/capabilities'
+import { checkImages } from '../claude-code-plugin/mcp-server/show-user-images'
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -122,6 +125,35 @@ async function forkClaude(nodeId: string, parentId: string): Promise<void> {
   )
   if (reply.error) fatal(reply.error as string)
   process.stdout.write(JSON.stringify({ nodeId: reply.nodeId }) + '\n')
+}
+
+/**
+ * The `show_user_images` MCP tool, for an agent without it (Codex): each
+ * `--caption` belongs to the path before it. Checked here, as the tool does,
+ * since the hooks socket answers nothing.
+ */
+function showImages(rest: string[]): void {
+  const surfaceId = process.env.SPACETERM_SURFACE_ID
+  if (!surfaceId) fatal('SPACETERM_SURFACE_ID is not set: run this inside a Spaceterm surface')
+  const images: Array<{ path: string; caption?: string }> = []
+  let summary: string | undefined
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--summary') summary = rest[++i]
+    else if (rest[i] === '--caption') {
+      if (!images.length) fatal('--caption goes after the path it describes')
+      images[images.length - 1].caption = rest[++i]
+    } else images.push({ path: rest[i] })
+  }
+  if (!images.length) { printUsage(); process.exit(1) }
+  const { ok, problems } = checkImages(images, process.cwd())
+  for (const problem of problems) process.stderr.write(`Not shown: ${problem}\n`)
+  if (!ok.length) process.exit(1)
+  const socket = net.createConnection(HOOKS_SOCKET_PATH, () => {
+    socket.end(JSON.stringify({ type: 'show-user-images', surfaceId, images: ok, ...(summary ? { summary } : {}) }) + '\n', () => {
+      process.stdout.write(`${ok.length} picture${ok.length === 1 ? '' : 's'} in Control's transcript\n`)
+    })
+  })
+  socket.on('error', (err) => fatal(`Could not reach the server at ${HOOKS_SOCKET_PATH}: ${err.message}`))
 }
 
 function unread(nodeId: string): void {
@@ -232,6 +264,8 @@ function printUsage(): void {
   spaceterm-cli subscribe [--events e1,e2] [--nodes n1,n2] Stream events
   spaceterm-cli protocol                                   Protocol version and event set
   spaceterm-cli capabilities [--json]                      Optional integrations present on this machine
+  spaceterm-cli show-images <path> [--caption c] ... [--summary s]
+                                                           Show the user pictures in Control's transcript
 
 Events: ${SCRIPT_EVENTS.join(', ')}
 `)
@@ -271,6 +305,10 @@ switch (command) {
 
   case 'capabilities':
     capabilities(args.includes('--json'))
+    break
+
+  case 'show-images':
+    showImages(args.slice(1))
     break
 
   case 'subscribe': {

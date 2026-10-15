@@ -20,7 +20,7 @@ import { EndedAgents } from './ended-agents'
 import { PendingNews } from './pending-news'
 import { CarryOver, CRASHED_MID_REPLY, RESTARTED_MID_REPLY } from './carry-over'
 import type { NameRegistryStore } from './name-registry'
-import type { ControlTrace, ControlTranscriptEntry } from '../../shared/protocol'
+import type { ControlImage, ControlTrace, ControlTranscriptEntry } from '../../shared/protocol'
 import { spokenPart } from './transcript'
 import { STATUS_HEADING, type StatusSample } from './spaceterm-status'
 
@@ -187,6 +187,7 @@ function harness(opts: {
   const consumedMarks: Array<{ of: number; part: number; from: number; to: number; how: string }> = []
   const notDone: string[] = []
   const traces: ControlTrace[] = []
+  const shownImages: Array<{ from: string; images: ControlImage[]; summary?: string }> = []
   /** How far the voice had got, each time it moved on, and undefined each time nothing was spoken. */
   const speaking: Array<{ of: number; parts: number[] } | undefined> = []
   let backlogJson: string | undefined
@@ -264,6 +265,7 @@ function harness(opts: {
       spokenPart: (of, part) => record[of] ? spokenPart(JSON.stringify(record[of]), part) : undefined,
       notDone: (actions) => { notDone.push(...actions) },
       trace: (trace) => { traces.push(trace) },
+      images: (from, images, summary) => { shownImages.push({ from, images, ...(summary ? { summary } : {}) }) },
       search: (query) => record.filter(message => message.content.includes(query)).map(message => message.content).join('\n') || 'nothing',
       recent: (count) => record.slice(-count),
     },
@@ -338,7 +340,7 @@ function harness(opts: {
     spacetermStatus: opts.status ?? (() => ({ restartPending: false, phoneInstallPending: false, device: 'Mac' })),
   }, { listener: { id: 'here', speech: opts.speech ?? speech }, onPhase: () => {}, onError: () => {}, onSpeaking: (now) => speaking.push(now) })
   return {
-    receptionist, listener: { id: 'here', speech }, backlog, turns, aborted, spoken, focused, sideQuestions, endedQuestions, assigned, wire, notices, record, heardMarks, consumedMarks, notDone, traces, speaking,
+    receptionist, listener: { id: 'here', speech }, backlog, turns, aborted, spoken, focused, sideQuestions, endedQuestions, assigned, wire, notices, record, heardMarks, consumedMarks, notDone, traces, speaking, shownImages,
     get session() { return session },
     get overlapped() { return overlapped },
     setState(nodeId: NodeId, state: ClaudeState) {
@@ -997,6 +999,28 @@ describe('Receptionist', () => {
     h.setState(SALLY_ID, 'stopped')
     await flush()
     expect(h.turns).toHaveLength(2)
+  })
+
+  it('puts an agent\'s pictures in the transcript, and tells the model only how many and their captions', async () => {
+    const id = `${'ab'.repeat(32)}.png`
+    const h = harness({
+      replies: [
+        (turn) => {
+          expect(turn.prompt).toContain('2 pictures')
+          expect(turn.prompt).toContain('"Water at dusk"')
+          expect(turn.prompt).toContain('"Foam close-up"')
+          // Not the picture, nor anything that fetches it.
+          expect(turn.prompt).not.toContain(id)
+          return reply([{ from: 'control', text: `{${KEVIN}} has two pictures for you.` }])
+        },
+      ],
+    })
+    h.receptionist.showImages(KEVIN_ID, [{ id, caption: 'Water at dusk' }, { id, caption: 'Foam  close-up\n' }])
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    expect(h.shownImages).toEqual([{ from: expect.stringContaining(KEVIN), images: [{ id, caption: 'Water at dusk' }, { id, caption: 'Foam  close-up\n' }] }])
+    // Only ever in the transcript view: nothing the model reads back of its record.
+    expect(h.record.some(message => message.content.includes(id))).toBe(false)
   })
 
   it('never asks the model about events while the user is dictating, then sends them all at once', async () => {

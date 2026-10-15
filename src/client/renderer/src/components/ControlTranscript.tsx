@@ -5,6 +5,7 @@ import { controlMode, useReceptionistStore, type ControlMode } from '../stores/r
 import { ChoiceGroup } from './ChoiceGroup'
 import { ControlHolderBadge } from './ControlHolderBadge'
 import { ControlBacklogBadge } from './ControlBacklogBadge'
+import { ControlImages } from './ControlImages'
 import { classifyWheelEvent, createWheelAccumulator } from '../lib/wheel-gesture'
 import { TRANSCRIPT_DISMISS_SCROLL_THRESHOLD } from '../lib/constants'
 import { openReplies, partViews, segments, words, type PartView } from '../lib/control-consumption'
@@ -576,6 +577,23 @@ function EntryRow({ entry, previous, parts, unreadLine, markable, played, replay
           {colon >= 0 && <div className="control-transcript__log-body">{entry.text.slice(colon + 2)}</div>}
           {notDone && <button className="control-transcript__do-it" onClick={doItNow}>Do it now</button>}
         </details>
+      </>
+    )
+  }
+  if (entry.kind === 'images') {
+    // Pictures an agent showed the user: headed by the agent, like the words it speaks in Control's replies.
+    return (
+      <>
+        {divider}
+        <div className="control-transcript__entry control-transcript__entry--images" data-entry-offset={entry.offset}>
+          <div className="control-transcript__meta">
+            {entry.nodeId
+              ? <button className="control-transcript__speaker" title={`Go to ${entry.from}`} onClick={() => showAgent(entry.nodeId!, onLeave)}>{entry.from}</button>
+              : entry.from}
+            {` · ${entry.images.length === 1 ? 'a picture' : `${entry.images.length} pictures`} · ${at}`}
+          </div>
+          <ControlImages images={entry.images} summary={entry.summary} />
+        </div>
       </>
     )
   }

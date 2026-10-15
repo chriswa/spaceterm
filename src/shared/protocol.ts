@@ -227,6 +227,19 @@ export interface SpacetermBroadcastMessage {
   content: string
 }
 
+/**
+ * An agent showing the user pictures, in Control's transcript: see
+ * `src/server/control-images.ts`. `path`s are absolute, checked by the tool to
+ * be images. Control is told how many there are and their captions, never
+ * the pictures themselves.
+ */
+export interface ShowUserImagesMessage {
+  type: 'show-user-images'
+  surfaceId: PtySessionId
+  images: Array<{ path: string; caption?: string }>
+  summary?: string
+}
+
 export interface PlaySoundMessage {
   type: 'play-sound'
   surfaceId: PtySessionId
@@ -991,6 +1004,17 @@ export interface ReceptionistTranscriptMessage {
   count: number
 }
 
+/**
+ * One picture an agent showed the user, from an `images` transcript entry:
+ * its small copy for the list, or the whole one. Replies `control-image-result`.
+ */
+export interface ControlImageMessage {
+  type: 'control-image'
+  seq: number
+  id: string
+  size: 'thumb' | 'full'
+}
+
 export interface VoiceCommandMessage {
   type: 'voice-command'
   text: string
@@ -1023,6 +1047,7 @@ export type IngestMessage =
   | ForkClaudeSurfaceMessage
   | SpacetermBroadcastMessage
   | PlaySoundMessage
+  | ShowUserImagesMessage
   | VoiceCommandMessage
   | VoiceDictationMessage
 
@@ -1321,6 +1346,7 @@ export type ClientMessage =
   | SetAutoStampsEnabledMessage
   | ReceptionistSayMessage
   | ReceptionistTranscriptMessage
+  | ControlImageMessage
   | ReceptionistStopMessage
   | ReceptionistHoldMessage
   | ReceptionistReadMessage
@@ -1737,7 +1763,19 @@ export type ControlTranscriptEntry = {
   | { kind: 'consumed'; of: number; part: number; from: number; to: number; how: 'read' | 'replayed' | 'summary' | 'aloud' }
   /** What Control did, and what came to it: see `ControlTrace`. Shown only when the view is asked to show Control's activity. */
   | ({ kind: 'trace' } & ControlTrace)
+  /**
+   * Pictures an agent showed the user (`show_user_images`). `from` and
+   * `nodeId` as for a reply part. Each image's `id` is what `control-image`
+   * fetches it by. Never part of what Control is shown of its record.
+   */
+  | { kind: 'images'; from: string; nodeId?: NodeId; images: ControlImage[]; summary?: string }
 )
+
+/** One picture in an `images` transcript entry. */
+export interface ControlImage {
+  id: string
+  caption?: string
+}
 
 /**
  * What Control's activity entries are about, which the transcript view
@@ -1767,6 +1805,16 @@ export interface ControlTrace {
 }
 
 /** A page of the record, oldest first; `more` when the record goes back further. */
+/** A picture asked for with `control-image`: base64 `data` of type `mime`, or `error`. */
+export interface ControlImageResultMessage {
+  type: 'control-image-result'
+  seq: number
+  id: string
+  mime?: string
+  data?: string
+  error?: string
+}
+
 export interface ReceptionistTranscriptResultMessage {
   type: 'receptionist-transcript-result'
   seq: number
@@ -2182,6 +2230,7 @@ export type ServerMessage =
   | CameraFollowMessage
   | ReceptionistNoticeMessage
   | ReceptionistTranscriptResultMessage
+  | ControlImageResultMessage
   | ReceptionistTranscriptAppendedMessage
   | WakeWordResultMessage
   | HandsFreeTuningMessage

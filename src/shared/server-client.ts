@@ -332,7 +332,8 @@ export class ServerClient {
       case 'wake-word-result':
       case 'dictation-turn-result':
       case 'agent-memory-result':
-      case 'receptionist-transcript-result': {
+      case 'receptionist-transcript-result':
+      case 'control-image-result': {
         const pending = this.pending.get(msg.seq)
         if (!pending) return
         this.pending.delete(msg.seq)
@@ -888,6 +889,13 @@ export class ServerClient {
   sayToReceptionist(text: string, spoken = false, staysPut = false): void {
     this.log(`[receptionist] ${text.length} chars ${spoken ? 'spoken' : 'typed'} to Control`)
     this.fireAndForget({ type: 'receptionist-say', text, ...(spoken ? { spoken } : {}), ...(staysPut ? { staysPut } : {}) })
+  }
+
+  async controlImage(id: string, size: 'thumb' | 'full'): Promise<{ mime: string; data: string }> {
+    const resp = await this.request({ type: 'control-image', id, size })
+    if (resp.type !== 'control-image-result') return unexpected(resp)
+    if (resp.mime === undefined || resp.data === undefined) throw new Error(resp.error ?? 'No such picture')
+    return { mime: resp.mime, data: resp.data }
   }
 
   async receptionistTranscript(before: number | undefined, count: number): Promise<{ entries: ControlTranscriptEntry[]; more: boolean }> {

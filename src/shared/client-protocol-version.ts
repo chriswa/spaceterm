@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 19
+export const CLIENT_PROTOCOL_VERSION = 21
 
 /**
  * Oldest client protocol this build still serves.
@@ -92,5 +92,12 @@ export const CLIENT_PROTOCOL_VERSION = 19
  *
  * v18 never says whether its app is behind (`app-behind`), so Control cannot
  * tell the user an iPhone install is waiting; it loses nothing else.
+ *
+ * v19 cannot draw pictures agents showed the user (`images` transcript
+ * entries), so it is never sent them, and never asks for one
+ * (`control-image`); it loses nothing else.
+ *
+ * v20 never reloads its page when the server asks (`reload-page`, Control's
+ * refresh_clients), and logs it as an unknown message; it loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

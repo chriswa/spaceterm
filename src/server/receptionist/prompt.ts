@@ -122,13 +122,29 @@ export type ReceptionistEvent = { failures?: number } & (
   /** `ended`: the agent has ended, and was asked from its cache without being brought back. */
   | { kind: 'agent-answer'; agent: string; question: string; answer: string; ended?: true; beforeUserSpoke?: true }
   | { kind: 'agent-answer-failed'; agent: string; question: string; reason: string; beforeUserSpoke?: true }
+  /**
+   * The agent put pictures in the transcript for the user (`show_user_images`).
+   * Only how many and what they are called: Control never sees the pictures.
+   */
+  | { kind: 'agent-images'; agent: string; count: number; captions: string[] }
 )
+
+/** The most captions an `agent-images` event lists, and the most of each. */
+export const IMAGE_CAPTIONS_TOLD = 8
+export const IMAGE_CAPTION_CHARS = 100
 
 /**
  * Follows an ended agent's answer instead of ASK_AGENT_REMINDER: there is no
  * real agent to send anything to, and it cannot speak for itself.
  */
 export const ENDED_ANSWER_REMINDER = '[Reminder: this agent has ended and is still archived; a copy of it answered from its cache. It is not live, so tell the user its answer yourself, in plain words, rather than in its voice.]'
+
+/**
+ * Follows an agent's pictures. Control cannot see them, and the user may be
+ * listening with the screen off, so it says they are there and whose they are.
+ */
+export const IMAGES_REMINDER = '[You cannot see these pictures; only the user can, in the transcript. Tell the user how many there are and whose they are, ' +
+  'so that they know to look, and describe them by nothing beyond their captions.]'
 
 /** Said of a side question's answer that was asked before the user last spoke. */
 export const ASKED_BEFORE_USER_SPOKE = 'You asked this before the user last spoke: weigh it against what they have said since, and leave it unmentioned if it no longer matters.'
@@ -145,6 +161,9 @@ export function renderEvent(event: ReceptionistEvent): string {
       return `${event.agent} was asked "${event.question}" and answered: ${event.answer} ${event.ended ? ENDED_ANSWER_REMINDER : ASK_AGENT_REMINDER}${event.beforeUserSpoke ? ` ${ASKED_BEFORE_USER_SPOKE}` : ''}`
     case 'agent-answer-failed':
       return `Asking ${event.agent} "${event.question}" failed: ${event.reason}${event.beforeUserSpoke ? ` ${ASKED_BEFORE_USER_SPOKE}` : ''}`
+    case 'agent-images':
+      return `${event.agent} put ${event.count === 1 ? 'a picture' : `${event.count} pictures`} in the transcript for the user to look at` +
+        `${event.captions.length ? `: ${event.captions.map(caption => `"${caption}"`).join('; ')}` : ''}. ${IMAGES_REMINDER}`
   }
 }
 

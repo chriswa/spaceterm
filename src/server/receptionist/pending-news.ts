@@ -25,7 +25,7 @@ import { mergeNews, type ReceptionistEvent, type ReturnNews } from './prompt'
 
 export const PENDING_NEWS_FILE = path.join(SOCKET_DIR, 'receptionist', 'pending-news.json')
 
-const KINDS: ReadonlySet<ReceptionistEvent['kind']> = new Set(['agent-stopped', 'agent-ended', 'agent-answer', 'agent-answer-failed'])
+const KINDS: ReadonlySet<ReceptionistEvent['kind']> = new Set(['agent-stopped', 'agent-ended', 'agent-answer', 'agent-answer-failed', 'agent-images'])
 
 /** Which turn took something: settling a turn that has been superseded must not drop what its successor took. */
 export type Taking = object

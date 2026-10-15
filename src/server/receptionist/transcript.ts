@@ -85,6 +85,7 @@ export function parseRecordLine(line: string, offset: number, speakers: Speakers
     trace?: { what?: unknown; text?: unknown; detail?: unknown }
     consumed?: { of?: unknown; part?: unknown; from?: unknown; to?: unknown; how?: unknown }
     delivery?: unknown
+    images?: { from?: unknown; images?: unknown; summary?: unknown }
   }
   try { raw = JSON.parse(line) } catch { return undefined }
   const base = { offset, timestamp: typeof raw.timestamp === 'string' ? raw.timestamp : '' }
@@ -102,6 +103,16 @@ export function parseRecordLine(line: string, offset: number, speakers: Speakers
     return {
       ...base, kind: 'trace', what: trace.what as ControlTraceKind, text: readable(trace.text, speakers),
       ...(typeof trace.detail === 'string' && trace.detail ? { detail: readable(trace.detail, speakers) } : {}),
+    }
+  }
+  const images = raw.images
+  if (images && typeof images.from === 'string' && Array.isArray(images.images)) {
+    const shown = images.images.flatMap((image: { id?: unknown; caption?: unknown }) =>
+      typeof image?.id === 'string' ? [{ id: image.id, ...(typeof image.caption === 'string' && image.caption ? { caption: image.caption } : {}) }] : [])
+    const nodeId = speakers.nodeOf(parseAgentRef(images.from).key)
+    return {
+      ...base, kind: 'images', from: speaker(images.from, speakers), ...(nodeId ? { nodeId } : {}), images: shown,
+      ...(typeof images.summary === 'string' && images.summary ? { summary: images.summary } : {}),
     }
   }
   if (typeof raw.notDone === 'string') return { ...base, kind: 'log', text: readable(raw.notDone, speakers), notDone: true }

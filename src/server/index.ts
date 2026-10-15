@@ -4,7 +4,7 @@ import * as path from 'path'
 import { execFile } from 'child_process'
 import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR, CLIENT_PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL_VERSION } from '../shared/protocol'
 import { checkProtocolVersion } from '../shared/protocol-handshake'
-import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, CameraBounds, ClaudeSessionEntry, ClientDevice, ControlTranscriptEntry, HandsFreeTuning } from '../shared/protocol'
+import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, CameraBounds, ClaudeSessionEntry, ClientDevice, ControlImage, ControlTranscriptEntry, HandsFreeTuning } from '../shared/protocol'
 import { ScriptApi, type ScriptConnection } from './script-api'
 import { ModRegistry } from './mod-registry'
 import { respawnTerminal, type TerminalRespawnDeps, type SpawnedPty } from './terminal-respawn'
@@ -92,6 +92,7 @@ import { CarryOver } from './receptionist/carry-over'
 import { jevPauseJudge } from './receptionist/backlog-pause'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
 import { REAL_RECEPTIONIST_RECORD, REAL_RECEPTIONIST_SESSION, RecordNameScanner, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
+import { ControlImages } from './control-images'
 import { HandleNames, isHandleOf } from './receptionist/transcript-names'
 import { parseRecordLine, type Speakers } from './receptionist/transcript'
 import { SideQuestions, serveSideQuestions } from './side-questions'
@@ -350,6 +351,8 @@ let potentialErrorDetector: PotentialErrorDetector
 let forkTitler: ForkTitler
 /** Undefined until startup builds it; Claude state changes arrive before then. */
 let receptionist: Receptionist | undefined
+/** Pictures agents show the user in Control's transcript. */
+const controlImages = new ControlImages()
 /** Control's backlog, built with it: its size goes to every client for the transcript's badge. */
 let receptionistBacklog: Backlog | undefined
 /** Who Control's speech is being heard as, while it speaks: see `ReceptionistStatusMessage.speaker`. */
@@ -572,11 +575,33 @@ const TRACE_PROTOCOL_VERSION = 13
 const CONSUMED_PROTOCOL_VERSION = 14
 /** How far Control's voice has got (`receptionist-speaking`) was new in v15. */
 const SPEAKING_PROTOCOL_VERSION = 15
+/** Pictures agents showed the user (`images`) in v20. */
+const IMAGES_PROTOCOL_VERSION = 20
 
 function transcriptEntriesFor(client: ClientConnection, entries: ControlTranscriptEntry[]): ControlTranscriptEntry[] {
   const version = client.protocolVersion ?? 0
   return entries.filter(entry =>
-    !(entry.kind === 'trace' && version < TRACE_PROTOCOL_VERSION) && !(entry.kind === 'consumed' && version < CONSUMED_PROTOCOL_VERSION))
+    !(entry.kind === 'trace' && version < TRACE_PROTOCOL_VERSION) && !(entry.kind === 'consumed' && version < CONSUMED_PROTOCOL_VERSION) &&
+    !(entry.kind === 'images' && version < IMAGES_PROTOCOL_VERSION))
+}
+
+/**
+ * An agent's pictures, copied in and put in Control's transcript. One that
+ * cannot be copied is logged and left out; the tool checked each was an
+ * image, so that is a file gone or changed since.
+ */
+async function showUserImages(nodeId: NodeId, images: Array<{ path: string; caption?: string }>, summary?: string): Promise<void> {
+  const shown: ControlImage[] = []
+  for (const image of images) {
+    const stored = await controlImages.store(image.path)
+    if (!stored.ok) {
+      serverLog(`[show-user-images] ${stored.error}`)
+      continue
+    }
+    shown.push({ id: stored.id, ...(image.caption ? { caption: image.caption } : {}) })
+  }
+  serverLog(`[show-user-images] ${shown.length} of ${images.length} shown from ${nodeId.slice(0, 8)}`)
+  receptionist?.showImages(nodeId, shown, summary)
 }
 
 /** Lines just added to Control's record, sent to every open transcript view. Returns where each starts. */
@@ -1449,6 +1474,16 @@ function handleIngestMessage(msg: IngestMessage): void {
       break
     }
 
+    case 'show-user-images': {
+      const nodeId = stateManager.getNodeIdForSession(msg.surfaceId)
+      if (!nodeId) {
+        serverLog(`[show-user-images] Unknown surfaceId: ${msg.surfaceId}`)
+        break
+      }
+      void showUserImages(nodeId, msg.images, msg.summary)
+      break
+    }
+
     case 'spawn-claude-surface': {
       const spawnParentNodeId = stateManager.getNodeIdForSession(msg.surfaceId)
       if (!spawnParentNodeId) {
@@ -1812,6 +1847,14 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         if (refused) send(client.link, { type: 'receptionist-replaying', playing: null, refused })
       })
       break
+
+    case 'control-image': {
+      const image = controlImages.read(msg.id, msg.size)
+      send(client.link, image
+        ? { type: 'control-image-result', seq: msg.seq, id: msg.id, mime: image.mime, data: image.data.toString('base64') }
+        : { type: 'control-image-result', seq: msg.seq, id: msg.id, error: 'That picture is no longer kept.' })
+      break
+    }
 
     case 'receptionist-transcript': {
       const count = Math.max(1, Math.min(200, Math.floor(msg.count)))
@@ -3425,6 +3468,7 @@ async function startServer(): Promise<void> {
       consumed: (of, part, from, to, how) => { announceRecorded(REAL_RECEPTIONIST_RECORD.consumed(of, part, from, to, how)) },
       notDone: (actions) => { announceRecorded(REAL_RECEPTIONIST_RECORD.notDone(actions)) },
       trace: (trace) => { announceRecorded(REAL_RECEPTIONIST_RECORD.trace(trace)) },
+      images: (from, images, summary) => { announceRecorded(REAL_RECEPTIONIST_RECORD.images(from, images, summary)) },
     },
     // Jev over titles and recent transcripts: the same chooser as the agent
     // search box, asked with the receptionist's description instead.

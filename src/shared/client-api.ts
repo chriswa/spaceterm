@@ -219,6 +219,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       onReplaying: (cb) => on('receptionist-replaying', ({ playing, refused }) => cb(playing, refused)),
       onSpeaking: (cb) => on('receptionist-speaking', (m) => cb(m.speaking)),
       transcript: (before) => client.receptionistTranscript(before, TRANSCRIPT_PAGE),
+      image: (id, size) => client.controlImage(id, size),
       onTranscriptAppended: (cb) => on('receptionist-transcript-appended', (m) => cb(m.entries)),
       onStatus: (cb) => onReceptionistStatus(({ phase, message, speaker }) => cb({ phase, message, speaker })),
       deviceId: client.device.id,

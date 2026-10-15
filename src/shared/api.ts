@@ -391,6 +391,11 @@ export interface ReceptionistApi {
    * those before `before` (an entry's `offset`). Never what compaction left.
    */
   transcript(before?: number): Promise<ControlTranscriptPage>
+  /**
+   * A picture an agent showed the user (an `images` entry's), small or whole,
+   * as base64 of type `mime`; rejects when it is no longer kept.
+   */
+  image(id: string, size: 'thumb' | 'full'): Promise<{ mime: string; data: string }>
   /** Entries as they join the record. Not replayed. */
   onTranscriptAppended(callback: (entries: ControlTranscriptEntry[]) => void): () => void
   /** This client's device, to tell whether it is the one holding Control. */

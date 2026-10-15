@@ -15,11 +15,11 @@ import { DIRECTORY_PREFIX, editDistance, Handles, NODE_PREFIX } from './handles'
 import { AGENT_TOKEN, agentToken, parseAgentRef, stripBraces } from './agent-token'
 import { whereWords, type NearbyNode } from './nearby'
 import { NOTHING_PENDING, sameStatus, statusOf, statusToTell, type SpacetermStatus, type StatusSample } from './spaceterm-status'
-import type { CameraBounds, ControlTrace, ControlTraceKind, ControlTranscriptEntry } from '../../shared/protocol'
+import type { CameraBounds, ControlImage, ControlTrace, ControlTraceKind, ControlTranscriptEntry } from '../../shared/protocol'
 import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
 import type { EndedAnswer } from '../ended-side-question'
 import {
-  FORMAT_REMINDER, HANDOVER_CHARS, HANDOVER_HEADING, HANDOVER_PROMPT, mergeNews, RECEPTIONIST_SYSTEM_PROMPT, renderEvent, renderTurnBody, type ReceptionistEvent, type ReturnNews,
+  FORMAT_REMINDER, HANDOVER_CHARS, IMAGE_CAPTION_CHARS, IMAGE_CAPTIONS_TOLD, HANDOVER_HEADING, HANDOVER_PROMPT, mergeNews, RECEPTIONIST_SYSTEM_PROMPT, renderEvent, renderTurnBody, type ReceptionistEvent, type ReturnNews,
 } from './prompt'
 import {
   CONVERSATION_WORDS, decideInterruption, HANG_ON, lastWords, splitAtOffset, type InterruptionContext, type InterruptionVerdict,
@@ -212,6 +212,12 @@ export interface ReceptionistDeps {
      * asked to. Never shown to the model.
      */
     trace(trace: ControlTrace): void
+    /**
+     * Pictures an agent showed the user: for the transcript view alone, which
+     * draws them. Never shown to the model, which is told of them with an
+     * `agent-images` event instead. `from` is the agent's token.
+     */
+    images(from: string, images: ControlImage[], summary?: string): void
     search(query: string): string
     /** The last `count` messages, oldest first. */
     recent(count: number): RecordMessage[]
@@ -1499,6 +1505,24 @@ export class Receptionist {
       }
       this.deps.log({ event: 'kept-watching', nodeId, outcome: this.watchFromNow(agent, 'its stop was neither told nor set aside, so it is watched again') })
     }
+  }
+
+  /**
+   * An agent showed the user pictures: into the transcript for the user, and
+   * to the model as news of how many and what they are called — never the
+   * pictures, which it has no use for and which would sit in its context for
+   * as long as the session lasts.
+   */
+  showImages(nodeId: NodeId, images: ControlImage[], summary?: string): void {
+    if (!images.length) return
+    const token = this.traceToken(nodeId)
+    this.deps.record.images(token, images, summary)
+    const captions = [summary, ...images.map(image => image.caption)]
+      .flatMap(caption => caption?.replace(/\s+/g, ' ').trim() || [])
+      .slice(0, IMAGE_CAPTIONS_TOLD)
+      .map(caption => caption.length > IMAGE_CAPTION_CHARS ? `${caption.slice(0, IMAGE_CAPTION_CHARS - 1)}…` : caption)
+    this.events.push({ kind: 'agent-images', agent: token, count: images.length, captions })
+    this.maybeSpeakUp()
   }
 
   /** What a tool that goes quiet does once Control is let go of, and the line saying so. */
@@ -3206,6 +3230,7 @@ function eventHeadline(event: ReceptionistEvent): string {
     case 'agent-ended': return `${event.agent} ended`
     case 'agent-answer': return `${event.agent} answered "${event.question}"`
     case 'agent-answer-failed': return `asking ${event.agent} failed`
+    case 'agent-images': return `${event.agent} showed you ${event.count === 1 ? 'a picture' : `${event.count} pictures`}`
   }
 }
 

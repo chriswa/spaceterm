@@ -8,7 +8,7 @@ import { parseRecordBytes, spokenPart, transcriptPage, type RecordFile, type Spe
 import type { ConsumedHow } from './consumption'
 import type { SpacetermStatus } from './spaceterm-status'
 import type { HandleNames } from './transcript-names'
-import type { ControlTrace, ControlTranscriptEntry } from '../../shared/protocol'
+import type { ControlImage, ControlTrace, ControlTranscriptEntry } from '../../shared/protocol'
 
 /**
  * The receptionist's real collaborators that are not the server's own state:
@@ -185,6 +185,10 @@ export const REAL_RECEPTIONIST_RECORD = {
   /** Why Control did or did not speak, for the transcript view: a line `recent` and `search` pass over, as `amendHeard`'s. */
   trace(trace: ControlTrace): Array<{ line: string; offset: number }> {
     return appendTranscriptOnly([{ trace }])
+  },
+  /** Pictures an agent showed the user, for the transcript view: a line `recent` and `search` pass over, as `amendHeard`'s, so the model never sees it. */
+  images(from: string, images: ControlImage[], summary?: string): Array<{ line: string; offset: number }> {
+    return appendTranscriptOnly([{ images: { from, images, ...(summary ? { summary } : {}) } }])
   },
   /** A page of the transcript view: see `transcriptPage`. */
   page(before: number | undefined, count: number, speakers: Speakers): { entries: ControlTranscriptEntry[]; more: boolean } {

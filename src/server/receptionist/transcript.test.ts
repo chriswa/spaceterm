@@ -123,6 +123,18 @@ describe('parseRecordLine', () => {
     expect(parseRecordLine(trace('pondered'), 40, nameOf)).toBeUndefined()
   })
 
+  it('reads the pictures an agent showed, naming it and giving its node', () => {
+    const speakers = { nameOf: () => undefined, nodeOf: (handle: string) => (handle === 'amber-otter' ? asNodeId('kevin') : undefined) }
+    const shown = JSON.stringify({
+      timestamp: '2026-10-05T08:00:00Z',
+      images: { from: '{Kevin:amber-otter}', images: [{ id: 'a.png', caption: 'Dusk' }, { id: 'b.png' }, { caption: 'no id' }], summary: 'The water' },
+    })
+    expect(parseRecordLine(shown, 7, speakers)).toEqual({
+      offset: 7, timestamp: '2026-10-05T08:00:00Z', kind: 'images', from: 'Kevin', nodeId: 'kevin',
+      images: [{ id: 'a.png', caption: 'Dusk' }, { id: 'b.png' }], summary: 'The water',
+    })
+  })
+
   it("shows Control's actions as log lines", () => {
     expect(parseRecordLine(line('assistant', 'UNARCHIVED {Kevin:amber-otter}'), 0)).toMatchObject({ kind: 'log', text: 'UNARCHIVED Kevin' })
     expect(parseRecordLine(line('assistant', 'SENT TO Kevin: ship it'), 0)).toMatchObject({ kind: 'log', text: 'SENT TO Kevin: ship it' })

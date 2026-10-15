@@ -19,6 +19,15 @@ describe('searchConversation', () => {
   })
 })
 
+describe('pictures in the record', () => {
+  it('are never found by recall or read back as messages: the model is not shown them', () => {
+    const images = JSON.stringify({ timestamp: '2026-10-04T08:00:00Z', images: { from: '{Kevin:amber-otter}', images: [{ id: 'a.png', caption: 'Ripe bananas' }] } })
+    const raw = `${record}${images}\n`
+    expect(searchConversation(raw, 'ripe bananas')).not.toContain('a.png')
+    expect(recentMessages(raw, 10).some(message => message.content.includes('a.png'))).toBe(false)
+  })
+})
+
 describe('recentMessages', () => {
   it('takes the last messages, oldest first, skipping a line cut off by reading from the middle', () => {
     const raw = [
