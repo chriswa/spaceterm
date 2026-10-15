@@ -3,7 +3,7 @@ import { useReceptionistStore } from '@/stores/receptionistStore'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { Dictation, useMicActivity, whenHearing } from './dictation'
 import { useDictationSession } from './dictation-session'
-import { playCue, primeCues } from './cues'
+import { playCue, playHeardUnattachedCue, primeCues } from './cues'
 import { nativeHaptic } from './native-microphone'
 import { recordMobileEvent } from './mobile-events'
 import { Spark } from './Spark'
@@ -159,9 +159,12 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
         fail(new Error("Didn't catch any words — tap to try again."))
         return
       }
-      // Into its transcript, if that is open, as typing there would.
-      window.api.receptionist.say(text)
+      // Into its transcript, if that is open, as typing there would. Control
+      // stays where it is (the transcript's holder badge says where); held by
+      // nobody, it will not answer, so a jingle says the words were taken.
+      window.api.receptionist.say(text, { staysPut: true })
       useControlTranscriptStore.getState().addPending(text)
+      if (!useReceptionistStore.getState().holder) playHeardUnattachedCue()
       setMic({ kind: 'idle' })
     } catch (err) {
       fail(err)

@@ -451,6 +451,12 @@ them, so the Ring/Silent switch does not silence them (`playHandsFreeCue`):
 | three soft steps down | the conversation window closed; "Control" is needed again |
 | an octave down, held low | "Let me turn this off" (or "Control, shutdown"): Control is away until you say "Control" again |
 
+The microphone button leaves Control where it is — it does not bring Control
+to this phone; the transcript's holder badge says where it is. When nobody
+holds Control, its words are still taken but no reply is coming, and a quick
+bright jingle — three high notes bouncing up to a ring — says so, played
+the same way as hands-free's tones (`playHeardUnattachedCue`).
+
 ## Hands-free: "Control, …"
 
 The lock right of the microphone (`MicLockButton.tsx`), always on the bar, is

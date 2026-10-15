@@ -28,6 +28,11 @@ describe('cueSamples', () => {
     const boop = s.slice(s.length - Math.floor(0.08 * 44_100))
     expect(crossings(beep) / beep.length).toBeGreaterThan(crossings(boop) / boop.length)
   })
+  it('the "taken, no reply coming" jingle is unlike every other cue', () => {
+    const others = ['error', 'nothingToSay', 'handsFreeReady', 'conversationClosed', 'dictationStart', 'dictationEnd', 'controlShutdown'] as const
+    const jingle = cueSamples('heardUnattached').length
+    for (const other of others) expect(cueSamples(other).length).not.toBe(jingle)
+  })
 })
 
 describe('CueTracker', () => {

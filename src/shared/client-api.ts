@@ -207,7 +207,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
     receptionist: {
       stop: () => client.stopReceptionist(),
       hold: (action) => client.holdReceptionist(action),
-      say: (text, how) => client.sayToReceptionist(text, how?.spoken === true),
+      say: (text, how) => client.sayToReceptionist(text, how?.spoken === true, how?.staysPut === true),
       mark: (of, part, char) => client.markReceptionistReply(of, part, char),
       readAll: () => client.readAllOfReceptionist(),
       replay: (of, part) => client.replayReceptionistReply(of, part),

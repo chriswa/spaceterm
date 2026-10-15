@@ -2020,8 +2020,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         break
       }
       // The wake word names Control, and typing in its transcript is writing
-      // to it: as speaking to it does, it brings Control here.
-      if (client.device) setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
+      // to it: as speaking to it does, it brings Control here. Not the
+      // phone's microphone button, which leaves it where it is: the
+      // transcript's holder badge says where, and the phone plays a jingle
+      // when nobody holds it, so no reply is coming.
+      const staysPut = msg.type === 'receptionist-say' && msg.staysPut === true
+      if (client.device && !staysPut) setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
       // Heard before the dictation that carried the words lets go, so that
       // letting go finds them already taken rather than resuming without them.
       void receptionist.hear(text, msg.type === 'receptionist-say' && msg.spoken !== true ? 'typed' : 'spoken')

@@ -5,6 +5,7 @@ import { useReceptionistStore } from '@/stores/receptionistStore'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { holdState, setHoldMicrophone } from './held-microphone'
 import { useDictationSession } from './dictation-session'
+import * as cues from './cues'
 import { MicButton } from './MicButton'
 import { MicLockButton } from './MicLockButton'
 
@@ -70,10 +71,38 @@ describe('the microphone over Control’s transcript', () => {
     expect(container.querySelector('.m-mic--hearing')).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Listening — tap to send' }))
     await screen.findByRole('button', { name: /^Talk to Control/ })
-    expect(bridge.lastCall('receptionist.say')).toEqual(['what is Kevin doing?'])
+    expect(bridge.lastCall('receptionist.say')).toEqual(['what is Kevin doing?', { staysPut: true }])
     expect(useControlTranscriptStore.getState().pending).toEqual(['what is Kevin doing?'])
     act(() => useControlTranscriptStore.getState().setOpen(false))
     vi.restoreAllMocks()
+  })
+})
+
+describe('the microphone and who holds Control', () => {
+  async function speak(): Promise<void> {
+    const dictation = await import('./dictation')
+    vi.spyOn(dictation.Dictation, 'begin').mockReturnValue({} as never)
+    vi.spyOn(dictation, 'whenHearing').mockResolvedValue({ finish: vi.fn(async () => 'hello'), cancel: vi.fn() } as never)
+    render(<MicButton />)
+    fireEvent.click(screen.getByRole('button', { name: /^Talk to Control/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Listening — tap to send' }))
+    await screen.findByRole('button', { name: /^Talk to Control/ })
+  }
+
+  afterEach(() => vi.restoreAllMocks())
+
+  it('leaves Control where it is, and with nobody holding it plays the jingle: taken, but no reply is coming', async () => {
+    const jingle = vi.spyOn(cues, 'playHeardUnattachedCue').mockImplementation(() => undefined)
+    await speak()
+    expect(bridge.lastCall('receptionist.say')).toEqual(['hello', { staysPut: true }])
+    expect(jingle).toHaveBeenCalledTimes(1)
+  })
+
+  it('plays no jingle when Control is held, here or elsewhere', async () => {
+    const jingle = vi.spyOn(cues, 'playHeardUnattachedCue').mockImplementation(() => undefined)
+    useReceptionistStore.setState({ holder: { label: 'Mac', mine: false, muted: false } })
+    await speak()
+    expect(jingle).not.toHaveBeenCalled()
   })
 })
 

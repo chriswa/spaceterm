@@ -22,6 +22,12 @@
  * runs out and "Control" is needed again; and `controlShutdown`, an octave
  * dropping into a long low note, for "Control, shutdown".
  *
+ * `heardUnattached`, a quick bright jingle — three high notes bouncing up to a
+ * ring — plays the same way when the microphone button's words reached
+ * Control while nobody holds it: taken, but no reply is coming
+ * (`playHeardUnattachedCue`). Higher than every other tone, and the only
+ * one with four notes.
+ *
  * The sonar while Control thinks, or waits for its voice to be made, is
  * thinking-cue.ts, shared with the desktop.
  *
@@ -34,7 +40,7 @@ import { controlMode, useReceptionistStore } from '@/stores/receptionistStore'
 import { recordMobileEvent } from './mobile-events'
 import { nativeCues } from './native-microphone'
 
-export type Cue = 'error' | 'nothingToSay' | 'handsFreeReady' | 'conversationClosed' | 'dictationStart' | 'dictationEnd' | 'controlShutdown'
+export type Cue = 'error' | 'nothingToSay' | 'handsFreeReady' | 'conversationClosed' | 'dictationStart' | 'dictationEnd' | 'controlShutdown' | 'heardUnattached'
 
 /**
  * Hands-free's tones (`playHandsFreeCue`), beside its haptics: ready to
@@ -56,10 +62,11 @@ const SEGMENTS: Record<Cue, Array<[number, number]>> = {
   dictationStart: [[659, 0.08], [0, 0.03], [988, 0.12]],
   dictationEnd: [[988, 0.08], [0, 0.03], [659, 0.12]],
   controlShutdown: [[523, 0.10], [262, 0.36]],
+  heardUnattached: [[1047, 0.06], [0, 0.02], [880, 0.06], [0, 0.02], [1047, 0.06], [0, 0.02], [1319, 0.18]],
 }
 
 /** Each cue's volume. Voice Operator plays at 0.35; the phone's are quieter, being heard in an ear. */
-const GAINS: Record<Cue, number> = { error: 0.3, nothingToSay: 0.2, handsFreeReady: 0.2, conversationClosed: 0.2, dictationStart: 0.2, dictationEnd: 0.2, controlShutdown: 0.2 }
+const GAINS: Record<Cue, number> = { error: 0.3, nothingToSay: 0.2, handsFreeReady: 0.2, conversationClosed: 0.2, dictationStart: 0.2, dictationEnd: 0.2, controlShutdown: 0.2, heardUnattached: 0.2 }
 
 /** Replies are Aloud here: this phone holds Control, unmuted. The only time it makes a sound of its own. */
 export function cuesAudible(): boolean {
@@ -226,6 +233,19 @@ export function playCue(cue: Cue): void {
  * or from an app too old to play them, the page plays it.
  */
 export function playHandsFreeCue(cue: HandsFreeCue): void {
+  playWhateverReplies(cue)
+}
+
+/**
+ * The microphone button's words were taken, but nobody holds Control, so no
+ * reply is coming. Heard whatever Replies is set to — it is set to Away.
+ */
+export function playHeardUnattachedCue(): void {
+  playWhateverReplies('heardUnattached')
+}
+
+/** Played by the app where it can, so the Ring/Silent switch does not silence it; else by the page. */
+function playWhateverReplies(cue: HandsFreeCue | 'heardUnattached'): void {
   if (nativeCues.available()) {
     nativeCues.play(cue, SEGMENTS[cue].map(([freq, dur]) => [freq, dur / SPEEDUP]), GAINS[cue])
     return

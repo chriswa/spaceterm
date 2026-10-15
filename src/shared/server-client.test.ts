@@ -212,6 +212,8 @@ describe('createApi', () => {
     expect(t.last('receptionist-say').msg).toEqual({ type: 'receptionist-say', text: 'typed' })
     api.receptionist.say('dictated', { spoken: true })
     expect(t.last('receptionist-say').msg).toEqual({ type: 'receptionist-say', text: 'dictated', spoken: true })
+    api.receptionist.say('from the phone', { staysPut: true })
+    expect(t.last('receptionist-say').msg).toEqual({ type: 'receptionist-say', text: 'from the phone', staysPut: true })
   })
 
   it('filters mod traffic to the mod that asked', () => {

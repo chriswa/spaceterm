@@ -962,11 +962,15 @@ export interface ReceptionistReadAloudMessage {
  * Words typed to Control in its transcript view: as speaking to it does, they
  * bring Control here. `spoken`: dictated rather than typed — the Mac's
  * dictation pasted with nothing to paste into — so Control takes it as said.
+ * `staysPut`: from the phone's microphone button, which leaves Control where
+ * it is — held elsewhere, or by nobody — rather than bringing it here; the
+ * transcript's holder badge says where that is.
  */
 export interface ReceptionistSayMessage {
   type: 'receptionist-say'
   text: string
   spoken?: true
+  staysPut?: true
 }
 
 /**

@@ -378,9 +378,9 @@ export interface ReceptionistApi {
   onReplaying(callback: (playing: { of: number; part: number } | null, refused?: string) => void): () => void
   /**
    * Words to Control, typed unless `spoken` — dictation that landed nowhere on
-   * the Mac. They bring it here, as speaking to it does.
+   * the Mac. They bring it here, as speaking to it does, unless `staysPut`.
    */
-  say(text: string, how?: { spoken: boolean }): void
+  say(text: string, how?: { spoken?: boolean; staysPut?: boolean }): void
   /**
    * A page of Control's full record, oldest first: the newest entries, or
    * those before `before` (an entry's `offset`). Never what compaction left.
