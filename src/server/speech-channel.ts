@@ -356,15 +356,18 @@ export class SpeechChannel {
    * returns silently once it no longer owns the channel, so a cancelled job
    * used to strand the surface in `thinking` forever — which is how a waiting
    * cue could outlive the thing it was waiting for.
+   *
+   * `heardUntil`: the listener stopped hearing the answer then, before this
+   * was asked — see `SpeechBackend.drop`.
    */
-  async cancel(): Promise<boolean> {
+  async cancel(heardUntil?: number): Promise<boolean> {
     const job = this.job
     const attempt = this.attempt
     const interim = this.interimJobs
     this.job = undefined
     this.attempt = undefined
     this.interimJobs = []
-    for (const spoken of interim) void spoken.backend.drop(spoken.id)
+    for (const spoken of interim) void spoken.backend.drop(spoken.id, heardUntil)
     // Abandoning aborts the request the attempt is parked on, which is what
     // frees a monitor sitting in a thirty-second long poll.
     attempt?.abandon()
@@ -373,7 +376,7 @@ export class SpeechChannel {
     // Being cut off is exactly the situation the interruption offset exists to
     // describe, so record it for the next turn. A job that had already
     // finished was heard in full, and records nothing.
-    this.interruptedAtCharacter = cutOffAt(speechStatus(await job.backend.drop(job.id)))
+    this.interruptedAtCharacter = cutOffAt(speechStatus(await job.backend.drop(job.id, heardUntil)))
     return true
   }
 

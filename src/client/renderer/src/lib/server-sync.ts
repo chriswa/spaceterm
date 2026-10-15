@@ -1,5 +1,5 @@
 import { useNodeStore } from '../stores/nodeStore'
-import { useNotificationSoundStore } from '../stores/notificationSoundStore'
+import { bellRingsNow } from '../stores/notificationSoundStore'
 import { useRootCwdStore } from '../stores/rootCwdStore'
 import { useAutoStampsEnabledStore } from '../stores/autoStampsEnabledStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
@@ -17,9 +17,9 @@ import { pokeFrames } from './frame-policy'
 import type { CreateOptions, SoundName } from '../../../../shared/protocol'
 import type { NodeId, PtySessionId } from '../../../../shared/ids'
 
-/** Play notification sound if enabled. */
+/** Play the notification sound if the bell is on and Control is held here. */
 function playUnreadSound(): void {
-  if (useNotificationSoundStore.getState().enabled) {
+  if (bellRingsNow()) {
     playSound('done')
   }
 }

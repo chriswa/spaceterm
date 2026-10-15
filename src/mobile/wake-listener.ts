@@ -249,6 +249,11 @@ export class WakeListener {
     this.quietFrom = this.at
   }
 
+  /** How long ago, in audio heard, sample `from` was: a candidate's `start` gives how long its speech has gone on. */
+  msSince(from: number): number {
+    return ms(this.at - from)
+  }
+
   /** Everything heard from sample `from` (with `LEAD_MS` before it) up to now, as far back as the buffer goes. */
   audioSince(from: number): Int16Array {
     return this.recent.slice(from - samplesOf(LEAD_MS), this.at)

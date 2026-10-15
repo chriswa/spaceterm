@@ -154,7 +154,10 @@ What you cut Control off in the middle of shows once you interrupt: the words
 you never heard struck out, and, as dashed struck pills, "not done, cut off",
 the actions that were waiting on them and so never ran, each with **Do it
 now** to ask for it after all. While Control speaks, the word being said is
-lit and the rest of the reply dim.
+lit and the rest of the reply dim. Talked over hands-free, the cut is dated to
+your first syllable, not to the moment the Mac decided you were talking to
+Control: from then on Control was turned down under your voice, and unheard
+(`cutInMsAgo` in `ReceptionistStopMessage`).
 
 Words still waiting for you — written while muted, or cut off while you were
 away or had moved to another device — sit under the red Unread line, with a
@@ -692,7 +695,7 @@ is a `hands-free-turn` line (p, threshold, whether it ended the dictation).
 
 **Seeing the turn model.** While hands-free is hearing you, the orange
 microphone button carries Smart Turn's latest answer at a pause — the same
-answer that decides whether the dictation ends there — as a magenta rim
+answer that decides whether the dictation ends there — as a deep violet rim
 filling from the bottom up (`turnFill` in `mic-button.ts`). The top is
 `turnThreshold`: within 5% of it the rim is whole, and at it the dictation
 ends. Those answers are the `hands-free-turn` lines above.

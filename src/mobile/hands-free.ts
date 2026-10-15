@@ -133,8 +133,13 @@ export interface HandsFreeDeps {
   nativeSpeech(): { playing: boolean; outputDb?: number; voiceProcessing: boolean }
   /** Turn Control's voice down while someone may be talking over it, and back up. */
   duckSpeech(on: boolean): void
-  /** Stop Control mid-reply: the user cut in with "Control". */
-  interruptControl(): void
+  /**
+   * Stop Control mid-reply: the user cut in. `cutInMsAgo`: how long ago they
+   * began talking — the check that decided it was for Control took that long,
+   * and Control was turned down, not heard, all the while. What was heard is
+   * counted up to then, not to now.
+   */
+  interruptControl(cutInMsAgo: number): void
 }
 
 const REAL_DEPS = (api: HandsFreeDeps['api']): HandsFreeDeps => ({
@@ -155,9 +160,9 @@ const REAL_DEPS = (api: HandsFreeDeps['api']): HandsFreeDeps => ({
   record: (kind, detail) => recordMobileEvent(kind, detail),
   nativeSpeech: () => ({ playing: nativePlayback.playing(), outputDb: nativePlayback.outputDb(), voiceProcessing: nativeSpeech.voiceProcessing() }),
   duckSpeech: (on) => nativeSpeech.duck(on),
-  interruptControl: () => {
+  interruptControl: (cutInMsAgo) => {
     noteUserInterrupted()
-    window.api.receptionist.stop()
+    window.api.receptionist.stop(cutInMsAgo)
   },
 })
 
@@ -238,6 +243,14 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   let endUtterance: ((reason: EndReason) => void) | undefined
   /** Bumped at every pause and every resumption: a turn verdict counts only for the pause it was asked about. */
   let pauseNumber = 0
+  /**
+   * The pause is over — they carried on, or a new one is being asked about:
+   * any verdict on it is moot, so it is neither acted on nor shown.
+   */
+  const pauseOver = () => {
+    pauseNumber++
+    if (useHandsFree.getState().turn) useHandsFree.setState({ turn: null })
+  }
   let checkError: string | undefined
   /**
    * Speech outside the window whose start was heard as the start of "let me
@@ -525,7 +538,8 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
 
   /** A pause: if the turn model is sure enough they have finished, and they have not started again, end here. */
   const askAboutPause = async (talkMs: number) => {
-    const asked = ++pauseNumber
+    pauseOver()
+    const asked = pauseNumber
     const dictation = utteranceDictation
     if (!dictation) return
     const p = await dictation.checkTurn()
@@ -561,7 +575,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     if (phase === 'hearing') {
       for (const event of utterance?.push([frame]) ?? []) {
         if (event.kind === 'ended') endUtterance?.(event.reason)
-        else if (event.kind === 'resumed') pauseNumber++
+        else if (event.kind === 'resumed') pauseOver()
         else if (event.wakeWordOnly) {
           // "Control." and a breath: the turn model would call that finished. Wait for the rest.
           log('pause after the wake word alone: waiting for the rest, not asking the turn model')
@@ -610,9 +624,11 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
         // Said over Control's reply: cut it off — its record keeps how much was heard.
         const interrupting = deps.nativeSpeech().playing
         if (interrupting) {
-          log(mode === 'speech' ? 'words over its own reply: cutting it off' : '"Control" over its own reply: cutting it off')
-          record('hands-free-interrupt', { mode })
-          deps.interruptControl()
+          // From the first syllable, in audio heard — so a check that took a while costs none of it — plus any still waiting to be scored.
+          const cutInMsAgo = Math.round(listener.msSince(candidate.start) + queued.length * FRAME_SECONDS * 1000)
+          log(`${mode === 'speech' ? 'words over its own reply' : '"Control" over its own reply'}: cutting it off as of ${cutInMsAgo}ms ago, when they began`)
+          record('hands-free-interrupt', { mode, cutInMsAgo })
+          deps.interruptControl(cutInMsAgo)
         }
         // Began with "Control", window or not: "Control." and a breath waits for the rest.
         void respond(candidate, interrupting, wakeWord)

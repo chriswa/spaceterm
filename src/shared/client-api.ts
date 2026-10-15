@@ -205,7 +205,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       progress: (id, index, event) => client.speechProgress(id, index, event)
     },
     receptionist: {
-      stop: () => client.stopReceptionist(),
+      stop: (cutInMsAgo) => client.stopReceptionist(cutInMsAgo),
       hold: (action) => client.holdReceptionist(action),
       say: (text, how) => client.sayToReceptionist(text, how?.spoken === true, how?.staysPut === true),
       mark: (of, part, char) => client.markReceptionistReply(of, part, char),

@@ -759,11 +759,11 @@ export class Receptionist {
    * the rest while they are still talking, rather than when their words
    * arrive. Every way the user stops Control comes through here: talking over
    * it, and the phone's stop ahead of a dictation (`cancel`). Returns whether
-   * there was anything to stop.
+   * there was anything to stop. `heardUntil`: see `SpeechChannel.cancel`.
    */
-  private cutOffByUser(): Promise<boolean> {
+  private cutOffByUser(heardUntil?: number): Promise<boolean> {
     this.noteInterimCut()
-    const stopping = this.channel.cancel()
+    const stopping = this.channel.cancel(heardUntil)
     void this.noteInterruption('user', stopping)
     return stopping
   }
@@ -831,11 +831,12 @@ export class Receptionist {
    * Stop whatever the receptionist is saying or about to say: the user cut it
    * off, by a tap or by talking over it hands-free, before the dictation that
    * follows. Its actions have already run. A reading shows as Control
-   * speaking, so this stops one too.
+   * speaking, so this stops one too. `heardUntil`: when the user began
+   * talking over it, if before now — see `SpeechChannel.cancel`.
    */
-  cancel(): Promise<boolean> {
+  cancel(heardUntil?: number): Promise<boolean> {
     void this.replayChannel?.silence()
-    return this.cutOffByUser()
+    return this.cutOffByUser(heardUntil)
   }
 
   /**

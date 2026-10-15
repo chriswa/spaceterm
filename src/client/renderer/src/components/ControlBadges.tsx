@@ -59,15 +59,24 @@ export function ControlBadges({ busy }: { busy?: ReactNode }) {
   const here = holder?.mine === true
   return (
     <>
-      {!here && (
-        <span className="control-cross" aria-hidden="true">
-          <svg viewBox="0 0 10 10">
-            <path d="M2.2 2.2l5.6 5.6M7.8 2.2l-5.6 5.6" />
-          </svg>
-        </span>
-      )}
+      {!here && <ControlCross />}
       {here ? busy : holder && <span className="control-badge control-badge--where" aria-hidden="true">{holder.label}</span>}
     </>
+  )
+}
+
+/**
+ * The red X that says "not while Control is elsewhere": across the whole
+ * Control button, and small over the notification bell (NotificationSoundToggle).
+ * It fills its positioned parent.
+ */
+export function ControlCross({ className }: { className?: string }) {
+  return (
+    <span className={'control-cross' + (className ? ` ${className}` : '')} aria-hidden="true">
+      <svg viewBox="0 0 10 10">
+        <path d="M2.2 2.2l5.6 5.6M7.8 2.2l-5.6 5.6" />
+      </svg>
+    </span>
   )
 }
 
