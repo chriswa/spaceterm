@@ -4011,9 +4011,9 @@ html, body, #root {
   font-weight: 600;
   color: #fff;
 }
-/* How much Control has set aside for later: news, not a warning, so not red; sky blue, as the app's purple is on too many buttons to stand out. */
+/* How much Control has set aside for later: news, not a warning, so not red; yellow, as the app's purple is on too many buttons to stand out and orange is the microphone's. */
 .control-transcript__holder-badge--backlog {
-  background: #89dceb;
+  background: #f9e2af;
   color: #11111b;
 }
 
