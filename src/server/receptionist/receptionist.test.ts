@@ -3100,6 +3100,36 @@ describe('Receptionist: the user starts talking over its words', () => {
     expect(speech.spoken.at(-1)).toEqual([{ text: 'As I was saying, every test passes.', voice: RECEPTIONIST_VOICE }])
   })
 
+  it('strikes out the rest the moment the phone stops it to dictate, before the words arrive', async () => {
+    const speech = handPlayed()
+    const h = harness({
+      speech: speech.backend,
+      replies: [
+        reply([{ from: 'control', text: 'Kevin finished the solver and every test passes.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('They heard only: "Kevin *INTERRUPTED*"')
+          expect(turn.prompt).toContain('THE USER SAYS: what about Sally?')
+          return reply([{ from: 'control', text: 'Sally is still on the login page.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    speech.heard('Kevin finished'.length)
+    await flush()
+    // Hands-free, or a tap on the microphone: the phone stops Control first, then dictates.
+    await h.receptionist.cancel()
+    h.receptionist.userSpeaking(true)
+    await flush()
+    const replyAt = h.record.findIndex(message => message.content.includes('Kevin finished'))
+    expect(h.heardMarks).toEqual([{ replyAt, parts: ['Kevin '.length] }])
+    void h.receptionist.hear('what about Sally?', 'spoken')
+    h.receptionist.userSpeaking(false)
+    await flush()
+    expect(h.heardMarks).toHaveLength(1)
+    expect(speech.spoken.at(-1)).toEqual([{ text: 'Sally is still on the login page.', voice: RECEPTIONIST_VOICE }])
+  })
+
   it('tells the model how much it heard of what was said while looking things up', async () => {
     const speech = handPlayed()
     const h = harness({

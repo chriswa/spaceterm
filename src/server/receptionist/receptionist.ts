@@ -741,9 +741,22 @@ export class Receptionist {
     serverLog(`[receptionist] the user started talking: stopping a turn that was ${stopped}`)
     this.deps.log({ event: 'stopped-for-user', stopped })
     this.trace('stopped', stopped === 'speaking' ? 'Stopped mid-reply: you started talking' : 'Stopped before replying: you started talking')
+    void this.cutOffByUser()
+  }
+
+  /**
+   * Stop the voice where the user cut in, and mark at once what they heard of
+   * it — the interim words and the reply both — so the transcript strikes out
+   * the rest while they are still talking, rather than when their words
+   * arrive. Every way the user stops Control comes through here: talking over
+   * it, and the phone's stop ahead of a dictation (`cancel`). Returns whether
+   * there was anything to stop.
+   */
+  private cutOffByUser(): Promise<boolean> {
     this.noteInterimCut()
-    // Marked as soon as it stops, so the transcript strikes out the rest while they are still talking.
-    void this.noteInterruption('user', this.channel.cancel())
+    const stopping = this.channel.cancel()
+    void this.noteInterruption('user', stopping)
+    return stopping
   }
 
   private release(): void {
@@ -806,12 +819,14 @@ export class Receptionist {
   }
 
   /**
-   * Stop whatever the receptionist is saying or about to say. Its actions
-   * have already run. A reading shows as Control speaking, so this stops one too.
+   * Stop whatever the receptionist is saying or about to say: the user cut it
+   * off, by a tap or by talking over it hands-free, before the dictation that
+   * follows. Its actions have already run. A reading shows as Control
+   * speaking, so this stops one too.
    */
   cancel(): Promise<boolean> {
     void this.replayChannel?.silence()
-    return this.channel.cancel()
+    return this.cutOffByUser()
   }
 
   /**
