@@ -54,6 +54,8 @@ interface NativeState {
   sampleRate?: number
   /** The app plays hands-free's tones itself (`cue`); an older app does not say. */
   cues?: boolean
+  /** The app repeats a tone until told to stop (`pending-tone`); an older app does not say. */
+  pendingTone?: boolean
   /** Running, but the input sends only exact zeros — AirPods whose microphone is elsewhere, say. */
   silentInput?: boolean
   /** Where sound goes now, e.g. "Speaker" or "AirPods Pro"; an older app does not say. */
@@ -306,6 +308,21 @@ export const nativeCues = {
   /** `segments`: (frequency Hz, seconds) pairs, frequency 0 a rest. */
   play(name: string, segments: Array<[number, number]>, gain: number): void {
     handler()?.postMessage({ action: 'cue', name, segments, gain })
+  },
+  /**
+   * The app can repeat a tone until told to stop: through Control's voice
+   * player, so where nothing it plays leaks into the microphone
+   * (`nativeSpeech.available`), hands-free listens straight through it.
+   */
+  canRepeat(): boolean {
+    return state.pendingTone === true && !stopping && nativeSpeech.available()
+  },
+  /** `segments` over and over until `stopRepeating` — or Control's voice, or a cue, which stop it. */
+  repeat(name: string, segments: Array<[number, number]>, gain: number): void {
+    handler()?.postMessage({ action: 'pending-tone', on: true, name, segments, gain })
+  },
+  stopRepeating(): void {
+    handler()?.postMessage({ action: 'pending-tone', on: false })
   },
 }
 

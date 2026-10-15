@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { DictationApi, HandsFreeApi } from '../shared/api'
 import { isControlShutdown, LET_ME_TURN_THIS_OFF } from '../shared/control-shutdown'
 import type { HandsFreeTuning } from '../shared/protocol'
-import { playCue, playHandsFreeCue, quietForMs, type Cue, type HandsFreeCue } from './cues'
+import { playCue, playHandsFreeCue, playPendingTone, quietForMs, type Cue, type HandsFreeCue, type PendingTone } from './cues'
 import { noteUserInterrupted } from './control-tones'
 import { Dictation, type DictationOptions } from './dictation'
 import { heldCapture, holdsMicrophone, onHoldStateChange, type Capture } from './held-microphone'
@@ -61,6 +61,12 @@ import { DEFAULT_TUNING, EnergyScorer, Framer, SpeechGate, UtteranceEndpointer, 
  * nothing more is taken down until "Control" again. "Let me turn this off"
  * needs no "Control": speech whose start the Mac hears as the start of it is
  * watched until it ends, and the whole of it checked (`watchForShutdown`).
+ *
+ * From the first syllable of what may be speech until it is decided — the
+ * chirp as a dictation starts, or nothing after all — a soft beep repeats
+ * (`PendingTone`, cues.ts): medium-high when any words will do, low when only
+ * "Control" counts, so someone who forgot the window had closed hears it as
+ * they start, and starts again with "Control".
  *
  * The phone logs nothing heard: only that a candidate was or was not the
  * word, and its timings. The Mac keeps what was heard, with the audio, in
@@ -145,6 +151,8 @@ export interface HandsFreeDeps {
   playCue(cue: Cue): void
   /** One of hands-free's own tones: heard whatever Replies is set to. */
   handsFreeCue(cue: HandsFreeCue): void
+  /** The tone repeated while it decides about what may be speech, or `null` to stop it. */
+  pendingTone(tone: PendingTone | null): void
   /** A tap the user can feel: the wake word was heard. Nothing, where there is no way to. */
   haptic(pattern: HapticPattern): void
   /** A dictation on the held microphone. */
@@ -184,6 +192,7 @@ const REAL_DEPS = (api: HandsFreeDeps['api']): HandsFreeDeps => {
     quietForMs,
     playCue,
     handsFreeCue: playHandsFreeCue,
+    pendingTone: playPendingTone,
     haptic: nativeHaptic,
     beginDictation: (options) => Dictation.begin(api.dictation, options),
     // Its own dictation counts as one while it is hearing; see `hearing` below.
@@ -262,6 +271,9 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   let quietRun = 0
   /** Wake-word checks under way: Control stays turned down until each has its answer. */
   let checking = 0
+  /** Of those, the ones for speech the listener handed out — not "let me turn this off" — which the pending tone waits on. */
+  let candidatesChecking = 0
+  let pendingTone: PendingTone | null = null
   /** The conversation window, and how many frames neither side has spoken for. */
   let conversation = false
   let silentFrames = 0
@@ -393,6 +405,22 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   }
 
   /**
+   * The pending tone, as things stand: on while listening and what may be
+   * speech is undecided — under way and not yet checked, or being checked —
+   * at the pitch saying whether it needs "Control". Off as a dictation starts,
+   * before its chirp, and whenever listening stops.
+   */
+  const updatePendingTone = () => {
+    const undecided = useHandsFree.getState().phase === 'listening' && capture !== undefined && !stoodAside
+      && (listener.undecided || candidatesChecking > 0)
+    const tone: PendingTone | null = undecided ? (conversation ? 'window' : 'wakeWord') : null
+    if (tone === pendingTone) return
+    pendingTone = tone
+    deps.pendingTone(tone)
+    record('hands-free-pending-tone', { tone })
+  }
+
+  /**
    * Every frame while Control's voice plays through the app: anyone speaking
    * turns it down at once — echo cancellation means that is not Control
    * itself — and quiet brings it back once no check is pending. While
@@ -510,6 +538,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
    */
   const respond = async ({ start, spokeMs }: WakeCandidate, interrupted = false, wakeWordStart = true) => {
     setPhase('hearing')
+    updatePendingTone()
     shutdownWatch = undefined
     deps.haptic('tap')
     deps.handsFreeCue('dictationStart')
@@ -588,7 +617,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   }
 
   /** One scored frame, routed by phase: to the endpointer while dictating, else to the wake-word listener. */
-  const onFrame = (frame: ScoredFrame) => {
+  const routeFrame = (frame: ScoredFrame) => {
     const db = levelDb(frame.pcm)
     levels.frames++
     if (frame.p >= 0.5) levels.speechFrames++
@@ -639,10 +668,14 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       log(`speech after ${candidate.noSpeechBeforeMs}ms without speech — checking its start ${mode === 'speech' ? 'for words' : `for "${WAKE_WORD}"`}`)
       const overControl = deps.nativeSpeech().playing
       checking++
+      candidatesChecking++
       useHandsFree.setState({ checking: true })
       void check(candidate.clip, mode).then(({ match, wakeWord, shutdown }) => {
         checking--
+        candidatesChecking--
         if (checking === 0) useHandsFree.setState({ checking: false })
+        // Decided: off now, before a dictation's chirp, unless more speech is under way.
+        updatePendingTone()
         log(match
           ? mode === 'speech' ? 'words, in the conversation window: dictating from its start' : 'it starts with the wake word: dictating from its start'
           : mode === 'speech' ? 'not words (a cough, filler, nothing)' : 'not the wake word')
@@ -673,6 +706,12 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       })
     }
     watchForShutdown()
+  }
+
+  /** One scored frame, routed by phase, and the pending tone brought up to date. */
+  const onFrame = (frame: ScoredFrame) => {
+    routeFrame(frame)
+    updatePendingTone()
   }
 
   /** Score queued frames in order — at once for loudness, a frame at a time through the model. */
@@ -747,6 +786,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
         void deps.sleep(tuning.conversationMs).then(() => { if (!capture && loss === micLosses) closeConversation('microphone') })
       }
       if (useHandsFree.getState().phase === 'listening') setPhase('off')
+      updatePendingTone()
       log('not listening: the microphone is not held')
       record('hands-free-mic', { listening: false })
       return
@@ -776,5 +816,6 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     closeConversation('microphone')
     useHandsFree.setState({ checking: false })
     setPhase('off')
+    updatePendingTone()
   }
 }

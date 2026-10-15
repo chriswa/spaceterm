@@ -238,6 +238,13 @@ export class WakeListener {
   get speaking(): boolean { return this.gate.speaking }
 
   /**
+   * Speech under way that will be checked but has not yet been handed out:
+   * still short of `onsetWindowMs`, and perhaps a cough. Speech too soon after
+   * other speech, which is never checked, is not undecided.
+   */
+  get undecided(): boolean { return this.speech !== null && this.speech.eligible && !this.speech.handedOut }
+
+  /**
    * Start over, as if everything before now were speech: a candidate needs a
    * full `noSpeechBeforeMs` from here. For after Control's voice or a cue,
    * which the microphone heard too.

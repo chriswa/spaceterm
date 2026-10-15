@@ -155,6 +155,10 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             case "speech-duck": duckSpeech((message.body as? [String: Any])?["on"] as? Bool ?? false)
             // A tone of hands-free's, played here so the Ring/Silent switch does not silence it: see `playCue`.
             case "cue": playCue(message.body as? [String: Any] ?? [:])
+            // Hands-free's beep while it decides about what may be speech, repeated until told to stop: see `startPendingTone`.
+            case "pending-tone":
+                let body = message.body as? [String: Any] ?? [:]
+                if body["on"] as? Bool == true { startPendingTone(body) } else { stopPendingTone() }
             default: log("unknown action \(action ?? "nil")")
             }
         }
@@ -1040,7 +1044,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         // Whether the engine *is* running, not what it was brought up for: iOS stops it under the app, and
         // a page told "awake" by an app whose engine had stopped sent it Control's voice to play into nothing.
         // `haptics`: 2 — this app plays a whole pattern from one message, in the background too (`playHaptic`).
-        var state: [String: Any] = ["running": running, "awake": up == .speaker && engineRunning, "speech": true, "voiceProcessing": voiceProcessing, "haptics": 2, "cues": true]
+        // `pendingTone`: it repeats a tone until told to stop (`startPendingTone`).
+        var state: [String: Any] = ["running": running, "awake": up == .speaker && engineRunning, "speech": true, "voiceProcessing": voiceProcessing, "haptics": 2, "cues": true, "pendingTone": true]
         if running {
             state["input"] = inputName()
             // The microphone link's rate, for hands-free's badge (HandsFreeButton.tsx). Read only.
@@ -1127,6 +1132,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             sendSpeech(id: id, index: index, event: "failed")
             return
         }
+        stopPendingTone()
         let idle = speech.current == nil
         speech.append(sentence)
         schedule(sentence, on: player)
@@ -1156,16 +1162,63 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             log("cue without segments and gain")
             return
         }
-        // Shares the player with Control's voice, which is a quarter as loud through echo cancellation:
-        // the tone made up for that, so it sounds as it does elsewhere.
-        let toneGain = voiceProcessing ? min(0.9, gain / Double(Self.echoCancelledSpeechVolume)) : gain
-        guard !transitioning, up != .off, engineRunning, let player, let buffer = Self.toneBuffer(segments, gain: toneGain) else {
+        guard !transitioning, up != .off, engineRunning, let player, let buffer = Self.toneBuffer(segments, gain: toneGain(gain)) else {
             events.record("native-cue-dropped", ["cue": name, "why": transitioning ? "the engine is coming up" : "no engine running"])
             return
         }
+        // The cue is what the pending tone was waiting for: it ends there, not after the cue.
+        stopPendingTone()
         player.scheduleBuffer(buffer, completionHandler: nil)
         if !player.isPlaying { player.play() }
         events.record("native-cue", ["cue": name, "ms": Int(Double(buffer.frameLength) / SpeechQueue.format.sampleRate * 1000), "gain": gain])
+    }
+
+    /// Shares the player with Control's voice, which is a quarter as loud through echo cancellation:
+    /// a tone makes up for that, so it sounds as it does elsewhere.
+    private func toneGain(_ gain: Double) -> Double {
+        voiceProcessing ? min(0.9, gain / Double(Self.echoCancelledSpeechVolume)) : gain
+    }
+
+    /// The player the pending tone is looping on, if it is; a new engine's player, or one stopped, is not.
+    private var pendingTonePlayer: AVAudioPlayerNode?
+
+    /**
+     * Hands-free's pending tone (src/mobile/cues.ts `playPendingTone`): a beep
+     * and a rest, looped, while it decides whether what it hears is words —
+     * until the page says stop, a cue (the chirp it was waiting for), or
+     * Control's voice. Looped on the one player (see `playCue`), so only while
+     * that has no voice to play: a loop would hold back whatever is queued
+     * behind it, and stopping it, which is the player stopping, would cut that
+     * off too. A new pitch starts it again.
+     */
+    private func startPendingTone(_ body: [String: Any]) {
+        let name = body["name"] as? String ?? "?"
+        guard let segments = body["segments"] as? [[Double]], let gain = body["gain"] as? Double else {
+            log("pending-tone without segments and gain")
+            return
+        }
+        stopPendingTone()
+        guard speech.isEmpty else {
+            events.record("native-pending-tone-dropped", ["tone": name, "why": "Control is speaking"])
+            return
+        }
+        guard !transitioning, up != .off, engineRunning, let player, let buffer = Self.toneBuffer(segments, gain: toneGain(gain)) else {
+            events.record("native-pending-tone-dropped", ["tone": name, "why": transitioning ? "the engine is coming up" : "no engine running"])
+            return
+        }
+        player.scheduleBuffer(buffer, at: nil, options: .loops, completionHandler: nil)
+        if !player.isPlaying { player.play() }
+        pendingTonePlayer = player
+        events.record("native-pending-tone", ["tone": name, "gain": gain])
+    }
+
+    /// The pending tone cut off where it is. Nothing else is queued behind it: it starts only on an idle player, and anything else stops it first.
+    private func stopPendingTone() {
+        guard let looping = pendingTonePlayer else { return }
+        pendingTonePlayer = nil
+        guard looping === player else { return }
+        looping.stop()
+        events.record("native-pending-tone-stopped", [:])
     }
 
     /// Sine notes with 5 ms fades, as the page synthesizes its cues (cues.ts `cueSamples`).
@@ -1253,6 +1306,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         // Mid-change the engine is the audio queue's; the change reschedules when it is done.
         guard !transitioning else { return }
         player?.stop()
+        pendingTonePlayer = nil
         guard up != .off, let player, !speech.isEmpty else { return }
         for sentence in speech.sentences { schedule(sentence, on: player) }
         player.play()

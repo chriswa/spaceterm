@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { HandsFreeTuning } from '../shared/protocol'
 import type { DictationOptions } from './dictation'
 import type { Capture } from './held-microphone'
-import { cleanHandsFreeText, installHandsFree, turnFill, useHandsFree, type HandsFreeDeps } from './hands-free'
+import { cleanHandsFreeText, installHandsFree, useHandsFree, type HandsFreeDeps } from './hands-free'
 import type { FrameScorer } from './speech-detector'
+import { DEFAULT_TUNING } from './wake-listener'
 
 /**
  * "Speech" is a 200 Hz tone at about −20 dBFS, "quiet" a room's hiss, and
@@ -41,7 +42,7 @@ const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(
  * `justTurnedOn`: start in the window that turning hands-free on opens;
  * otherwise it has run out, and "Control" is needed.
  */
-function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, isWords = true as boolean | ((nth: number) => boolean), saidWakeWord = false, oldServer = false, transcript = 'Control, what is Kevin doing?', turn = null as number | null,
+function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, isWords = true as boolean | ((nth: number) => boolean), saidWakeWord = false, oldServer = false, transcript = 'Control, what is Kevin doing?', turn = null as number | null | (() => number | null),
   heardShutdown = (() => undefined) as (mode: 'wake-word' | 'speech') => 'whole' | 'start' | undefined } = {}) {
   const listeners = new Set<(block: Float32Array) => void>()
   const capture: Capture = {
@@ -63,6 +64,8 @@ function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, 
   const cues: string[] = []
   /** Hands-free's own tones, apart from the page's cues. */
   const tones: string[] = []
+  /** Hands-free's tones and its pending tone together, in order: the pending tone as `pending:<tone>`, or `pending:off`. */
+  const sounds: string[] = []
   const haptics: string[] = []
   const dictations: Array<{ backlogSeconds: number; finished: boolean; cancelled: boolean; turnChecks: number }> = []
   let quietFor = 10_000
@@ -103,7 +106,8 @@ function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, 
     onHoldStateChange: (fn) => { holdChanged = fn; return () => {} },
     quietForMs: () => quietFor,
     playCue: (cue) => { cues.push(cue) },
-    handsFreeCue: (cue) => { tones.push(cue) },
+    handsFreeCue: (cue) => { tones.push(cue); sounds.push(cue) },
+    pendingTone: (tone) => { sounds.push(`pending:${tone ?? 'off'}`) },
     haptic: (pattern) => { haptics.push(pattern) },
     beginDictation: async (options: DictationOptions) => {
       const d = {
@@ -116,7 +120,7 @@ function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, 
       return {
         finish: async () => { d.finished = true; return transcript },
         cancel: () => { d.cancelled = true },
-        checkTurn: async () => { d.turnChecks++; return turn },
+        checkTurn: async () => { d.turnChecks++; return typeof turn === 'function' ? turn() : turn },
       }
     },
     othersDictating: () => false,
@@ -140,6 +144,7 @@ function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, 
     controlSpeaking = speaking
     quietFor = quietBefore
     tones.length = 0
+    sounds.length = 0
     haptics.length = 0
   })
   /** Feed audio in microphone-sized blocks, letting promises run between them. */
@@ -153,7 +158,7 @@ function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, 
     }
   }
   return {
-    hear, said, checked, modes, cues, tones, dictations, records, uninstall, ducks, sayCalls,
+    hear, said, checked, modes, cues, tones, sounds, dictations, records, uninstall, ducks, sayCalls,
     setTranscript: (text: string) => { transcript = text },
     interrupts: () => interrupts,
     cutIns,
@@ -179,7 +184,7 @@ function harness({ slowChecks = false, justTurnedOn = false, isWakeWord = true, 
 }
 
 let h: ReturnType<typeof harness> | undefined
-beforeEach(() => useHandsFree.setState({ phase: 'off', conversation: false, secondsLeft: null, turn: null }))
+beforeEach(() => useHandsFree.setState({ phase: 'off', conversation: false, secondsLeft: null, turn: null, sampling: null }))
 afterEach(() => { h?.uninstall(); h = undefined })
 
 describe('hands-free mode', () => {
@@ -240,6 +245,36 @@ describe('hands-free mode', () => {
     await h.hear(quiet(1000))
     expect(h.dictations[0].turnChecks).toBe(2)
     expect(useHandsFree.getState().turn).toEqual({ p: 0.08, threshold: expect.any(Number) })
+  })
+
+  it('asks the turn model again every half second for as long as the pause lasts, and stops when they carry on', async () => {
+    h = harness({ turn: 0.08 })
+    await h.hear(quiet(1500), speech(2500), quiet(1000))
+    expect(h.dictations[0].turnChecks).toBe(1)
+    expect(useHandsFree.getState().sampling).toBe(DEFAULT_TUNING.turnThreshold)
+    await h.elapse(500)
+    expect(h.dictations[0].turnChecks).toBe(2)
+    await h.elapse(500)
+    expect(h.dictations[0].turnChecks).toBe(3)
+    await h.hear(speech(500))
+    expect(useHandsFree.getState().sampling).toBeNull()
+    expect(useHandsFree.getState().turn).toBeNull()
+    await h.elapse(500)
+    expect(h.dictations[0].turnChecks).toBe(3)
+  })
+
+  it('ends on the first answer in a pause that is sure enough, and asks no more', async () => {
+    let p = 0.08
+    h = harness({ turn: () => p })
+    await h.hear(quiet(1500), speech(2500), quiet(1000))
+    expect(h.said).toEqual([])
+    p = 0.93
+    await h.elapse(500)
+    expect(h.dictations[0].turnChecks).toBe(2)
+    expect(h.said).toEqual(['what is Kevin doing?'])
+    expect(useHandsFree.getState().sampling).toBeNull()
+    await h.elapse(500)
+    expect(h.dictations[0].turnChecks).toBe(2)
   })
 
   it('forgets the answer once the dictation it was about has ended', async () => {
@@ -660,6 +695,56 @@ describe('hands-free mode', () => {
     })
   })
 
+  describe('the pending tone', () => {
+    it('beeps low while it decides about speech that needs "Control", and stops before the chirp', async () => {
+      h = harness()
+      await h.hear(quiet(1500), speech(1500), quiet(3500))
+      expect(h.said).toHaveLength(1)
+      expect(h.sounds).toEqual(['pending:wakeWord', 'pending:off', 'dictationStart', 'dictationEnd'])
+    })
+
+    it('beeps medium-high in the conversation window, where any words will do', async () => {
+      h = harness({ justTurnedOn: true, transcript: 'What is Kevin doing?' })
+      await h.hear(quiet(1000), speech(1500), quiet(3500))
+      expect(h.sounds).toEqual(['pending:window', 'pending:off', 'dictationStart', 'dictationEnd'])
+    })
+
+    it('goes on through the check, and stops when the Mac says it was not the wake word', async () => {
+      h = harness({ slowChecks: true, isWakeWord: false })
+      await h.hear(quiet(1500), speech(1500), quiet(800))
+      expect(h.checked).toHaveLength(1)
+      expect(h.sounds).toEqual(['pending:wakeWord'])
+      await h.answerChecks()
+      await h.hear(quiet(100))
+      expect(h.sounds).toEqual(['pending:wakeWord', 'pending:off'])
+      expect(h.dictations).toHaveLength(0)
+    })
+
+    it('stops as soon as a cough turns out too short to be words, unchecked', async () => {
+      h = harness()
+      await h.hear(quiet(1500), speech(150), quiet(1000))
+      expect(h.checked).toHaveLength(0)
+      expect(h.sounds).toEqual(['pending:wakeWord', 'pending:off'])
+    })
+
+    it('does not beep for speech straight after other speech, which is never checked', async () => {
+      h = harness()
+      await h.hear(quiet(1500), speech(150), quiet(300))
+      h.sounds.length = 0
+      await h.hear(speech(800), quiet(1000))
+      expect(h.checked).toHaveLength(0)
+      expect(h.sounds).toEqual([])
+    })
+
+    it('stops when the microphone goes mid-speech', async () => {
+      h = harness()
+      await h.hear(quiet(1500), speech(300))
+      expect(h.sounds).toEqual(['pending:wakeWord'])
+      h.dropHold()
+      expect(h.sounds).toEqual(['pending:wakeWord', 'pending:off'])
+    })
+  })
+
   it('stops listening when the microphone is no longer held', async () => {
     h = harness()
     h.dropHold()
@@ -677,19 +762,5 @@ describe('cleanHandsFreeText', () => {
   it('leaves "control" alone anywhere but first, and is empty when nothing else was said', () => {
     expect(cleanHandsFreeText('Take control of the build.')).toBe('Take control of the build.')
     expect(cleanHandsFreeText('Control.')).toBe('')
-  })
-})
-
-describe('the turn gauge', () => {
-  it('rises with the answer, the threshold at the top', () => {
-    expect(turnFill(0, 0.6)).toBe(0)
-    expect(turnFill(0.15, 0.6)).toBeCloseTo(0.25)
-    expect(turnFill(0.3, 0.6)).toBeLessThan(turnFill(0.45, 0.6))
-  })
-
-  it('is whole at the threshold, just short of it, or past it', () => {
-    expect(turnFill(0.6, 0.6)).toBe(1)
-    expect(turnFill(0.58, 0.6)).toBe(1)
-    expect(turnFill(0.9, 0.6)).toBe(1)
   })
 })

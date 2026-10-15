@@ -20,7 +20,9 @@
  * be taken down; `dictationEnd`, two notes down, as they are sent; and
  * `conversationClosed`, three soft steps down, as the conversation window
  * runs out and "Control" is needed again; and `controlShutdown`, an octave
- * dropping into a long low note, for "Control, shutdown".
+ * dropping into a long low note, for "Control, shutdown". While it decides
+ * whether what it hears is words, a beep repeats (`playPendingTone`), its
+ * pitch saying whether "Control" is needed.
  *
  * `heardUnattached`, a short odd little tune, plays the same way when the
  * microphone button's words reached Control while nobody holds it: taken,
@@ -237,6 +239,52 @@ export function playCue(cue: Cue): void {
  */
 export function playHandsFreeCue(cue: HandsFreeCue): void {
   playWhateverReplies(cue)
+}
+
+/**
+ * Hands-free's tone while it hears what may be speech — perhaps only a cough
+ * — and has not yet decided: a soft beep, repeating, until the
+ * `dictationStart` chirp says the words are being taken down (from their
+ * first syllable), or until it turns out they were nothing. Its pitch says
+ * whether they can be: `window`, medium-high (G5), the conversation window is
+ * open and any words will do; `wakeWord`, low (D4), only words that start
+ * with "Control" count — heard as you start talking, it says to stop, say
+ * "Control", and start over. Asked for in October 2026.
+ */
+export type PendingTone = 'window' | 'wakeWord'
+
+/** One beep and the rest after it, repeated: four a second. Seconds as played, not before `SPEEDUP`. */
+const PENDING_TONES: Record<PendingTone, Array<[number, number]>> = {
+  window: [[784, 0.09], [0, 0.16]],
+  wakeWord: [[294, 0.09], [0, 0.16]],
+}
+/** Quieter than a cue, being repeated; the low one a little louder, a phone's speaker being weak down there. */
+const PENDING_GAINS: Record<PendingTone, number> = { window: 0.12, wakeWord: 0.16 }
+
+let pendingTone: PendingTone | null = null
+
+/**
+ * Start hands-free's pending tone, change its pitch, or stop it (`null`).
+ * Only the app plays it, through Control's voice player and only where
+ * nothing played leaks into the microphone — so hands-free goes on hearing
+ * the speech it is about. Nowhere else: the page's own sound would make
+ * hands-free stand aside, deaf to the very words the tone is for. While
+ * Control's voice plays the app does not start it, its one player being
+ * busy, and Control's voice arriving stops it.
+ */
+export function playPendingTone(tone: PendingTone | null): void {
+  if (tone === pendingTone) return
+  const was = pendingTone
+  pendingTone = tone
+  if (tone === null) {
+    nativeCues.stopRepeating()
+    return
+  }
+  if (!nativeCues.canRepeat()) {
+    if (was !== null) nativeCues.stopRepeating()
+    return
+  }
+  nativeCues.repeat(tone, PENDING_TONES[tone], PENDING_GAINS[tone])
 }
 
 /**

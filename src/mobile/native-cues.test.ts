@@ -52,3 +52,27 @@ describe('a cue asked for as the app\'s microphone stops', () => {
     expect(posted.filter((m) => m.action === 'cue').map((m) => m.name)).toEqual(['dictationEnd'])
   })
 })
+
+describe('hands-free\'s pending tone', () => {
+  const pending = (posted: Array<{ action: string; name?: string; on?: boolean }>) =>
+    posted.filter((m) => m.action === 'pending-tone').map((m) => (m.on ? m.name : 'off'))
+
+  it('is repeated by the app where nothing it plays reaches the microphone, and stopped by it', async () => {
+    const { cues, posted, report } = await app()
+    report({ running: true, cues: true, speech: true, voiceProcessing: true, pendingTone: true })
+    cues.playPendingTone('wakeWord')
+    cues.playPendingTone('wakeWord')
+    cues.playPendingTone('window')
+    cues.playPendingTone(null)
+    expect(pending(posted as never)).toEqual(['wakeWord', 'window', 'off'])
+  })
+
+  it('is not played on the speaker without echo cancellation, nor by an app too old to repeat it', async () => {
+    const { cues, posted, report } = await app()
+    report({ running: true, cues: true, speech: true, voiceProcessing: false, pendingTone: true })
+    cues.playPendingTone('wakeWord')
+    report({ running: true, cues: true, speech: true, voiceProcessing: true })
+    cues.playPendingTone('window')
+    expect(pending(posted as never).filter((t) => t !== 'off')).toEqual([])
+  })
+})
