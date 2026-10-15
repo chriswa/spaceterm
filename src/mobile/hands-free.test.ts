@@ -225,6 +225,19 @@ describe('hands-free mode', () => {
     expect(useHandsFree.getState().turn).toEqual({ p: 0.08, threshold: expect.any(Number) })
   })
 
+  it('forgets the answer the moment they carry on, since it was about a pause that is over', async () => {
+    h = harness({ turn: 0.08 })
+    await h.hear(quiet(1500), speech(2500), quiet(1000))
+    expect(useHandsFree.getState().turn).not.toBeNull()
+    await h.hear(speech(500))
+    expect(useHandsFree.getState().phase).toBe('hearing')
+    expect(useHandsFree.getState().turn).toBeNull()
+    // The next pause is asked about afresh, and shown.
+    await h.hear(quiet(1000))
+    expect(h.dictations[0].turnChecks).toBe(2)
+    expect(useHandsFree.getState().turn).toEqual({ p: 0.08, threshold: expect.any(Number) })
+  })
+
   it('forgets the answer once the dictation it was about has ended', async () => {
     h = harness({ turn: 0.93 })
     await h.hear(quiet(1500), speech(2500), quiet(1000))

@@ -243,6 +243,14 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   let endUtterance: ((reason: EndReason) => void) | undefined
   /** Bumped at every pause and every resumption: a turn verdict counts only for the pause it was asked about. */
   let pauseNumber = 0
+  /**
+   * The pause is over — they carried on, or a new one is being asked about:
+   * any verdict on it is moot, so it is neither acted on nor shown.
+   */
+  const pauseOver = () => {
+    pauseNumber++
+    if (useHandsFree.getState().turn) useHandsFree.setState({ turn: null })
+  }
   let checkError: string | undefined
   /**
    * Speech outside the window whose start was heard as the start of "let me
@@ -530,7 +538,8 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
 
   /** A pause: if the turn model is sure enough they have finished, and they have not started again, end here. */
   const askAboutPause = async (talkMs: number) => {
-    const asked = ++pauseNumber
+    pauseOver()
+    const asked = pauseNumber
     const dictation = utteranceDictation
     if (!dictation) return
     const p = await dictation.checkTurn()
@@ -566,7 +575,7 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     if (phase === 'hearing') {
       for (const event of utterance?.push([frame]) ?? []) {
         if (event.kind === 'ended') endUtterance?.(event.reason)
-        else if (event.kind === 'resumed') pauseNumber++
+        else if (event.kind === 'resumed') pauseOver()
         else if (event.wakeWordOnly) {
           // "Control." and a breath: the turn model would call that finished. Wait for the rest.
           log('pause after the wake word alone: waiting for the rest, not asking the turn model')
