@@ -458,9 +458,9 @@ them, so the Ring/Silent switch does not silence them (`playHandsFreeCue`):
 
 The microphone button leaves Control where it is — it does not bring Control
 to this phone; the transcript's holder badge says where it is. When nobody
-holds Control, its words are still taken but no reply is coming, and a quick
-bright jingle — three high notes bouncing up to a ring — says so, played
-the same way as hands-free's tones (`playHeardUnattachedCue`).
+holds Control, its words are still taken but no reply is coming, and a
+short odd tune says so — a tritone leap up, a stutter, a drop, a pause, then
+a leap to a long high note — played the same way as hands-free's tones (`playHeardUnattachedCue`).
 
 ## Hands-free: "Control, …"
 

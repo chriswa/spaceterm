@@ -22,11 +22,13 @@
  * runs out and "Control" is needed again; and `controlShutdown`, an octave
  * dropping into a long low note, for "Control, shutdown".
  *
- * `heardUnattached`, a quick bright jingle — three high notes bouncing up to a
- * ring — plays the same way when the microphone button's words reached
- * Control while nobody holds it: taken, but no reply is coming
- * (`playHeardUnattachedCue`). Higher than every other tone, and the only
- * one with four notes.
+ * `heardUnattached`, a short odd little tune, plays the same way when the
+ * microphone button's words reached Control while nobody holds it: taken,
+ * but no reply is coming (`playHeardUnattachedCue`). A tritone leap up, a
+ * stutter on one note, a drop, a pause, then a leap to a long high note
+ * that lands a tritone from where it began — lopsided on purpose, so it
+ * sounds like nothing else here. Seven notes, the most of any cue, and at
+ * about 0.7 s the longest.
  *
  * The sonar while Control thinks, or waits for its voice to be made, is
  * thinking-cue.ts, shared with the desktop.
@@ -62,7 +64,8 @@ const SEGMENTS: Record<Cue, Array<[number, number]>> = {
   dictationStart: [[659, 0.08], [0, 0.03], [988, 0.12]],
   dictationEnd: [[988, 0.08], [0, 0.03], [659, 0.12]],
   controlShutdown: [[523, 0.10], [262, 0.36]],
-  heardUnattached: [[1047, 0.06], [0, 0.02], [880, 0.06], [0, 0.02], [1047, 0.06], [0, 0.02], [1319, 0.18]],
+  // G5, C#6, A#5 A#5, D#5 — pause — G#5, D#6.
+  heardUnattached: [[784, 0.12], [0, 0.04], [1109, 0.12], [0, 0.04], [932, 0.08], [0, 0.03], [932, 0.08], [0, 0.04], [622, 0.22], [0, 0.10], [831, 0.12], [0, 0.04], [1245, 0.36]],
 }
 
 /** Each cue's volume. Voice Operator plays at 0.35; the phone's are quieter, being heard in an ear. */
