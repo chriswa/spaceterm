@@ -1180,6 +1180,61 @@ describe('Receptionist', () => {
       .toEqual(['THE USER SAYS: how is Kevin?', 'THE USER SAYS: tell Kevin to commit', 'THE USER SAYS: and also push'])
   })
 
+  describe('words whose message is stopped only after the next turn has begun', () => {
+    // On 2026-10-15 the daemon was compacting Control's session: "make it
+    // orange" waited behind the compaction, the user spoke again, and the
+    // abort was answered — never in the session — only once the compaction
+    // was over, after the turn for "make it yellow" had begun. The orange
+    // words went with the turn after that, on their own, and Control took
+    // them for a change of mind.
+    const stoppedLate = (saved?: SavedSession) => {
+      let release: (() => void) | undefined
+      let gated = false
+      const h = harness({
+        ...(saved ? { saved } : {}),
+        // The session is busy when the first message comes, and stays so until released.
+        busyFor: 1,
+        sleep: (ms) => {
+          if (ms !== 1_000 || gated) return Promise.resolve()
+          gated = true
+          return new Promise<void>((resolve) => { release = resolve })
+        },
+        replies: [reply([{ from: 'control', text: 'Yellow it is.' }])],
+      })
+      return { h, release: () => release?.() }
+    }
+    const speakTwice = async ({ h, release }: ReturnType<typeof stoppedLate>) => {
+      void h.receptionist.hear('make it orange', 'spoken')
+      await flush()
+      h.receptionist.userSpeaking(true)
+      void h.receptionist.hear('actually no, make it yellow', 'spoken')
+      h.receptionist.userSpeaking(false)
+      await flush()
+      expect(h.turns).toHaveLength(0)
+      release()
+      await flush()
+    }
+
+    it('says them with the next message to leave, ahead of its own, and never again after', async () => {
+      const run = stoppedLate({ sessionId: 'kept', promptHash: PROMPT_HASH })
+      await speakTwice(run)
+      const { h } = run
+      expect(h.turns).toHaveLength(1)
+      expect(h.turns[0].prompt).toMatch(/^THE USER SAYS: make it orange actually no, make it yellow/)
+      expect(said(h)).toEqual([JSON.stringify([{ text: 'Yellow it is.', voice: RECEPTIONIST_VOICE }])])
+    })
+
+    it('leaves them out of the recap of a compacted session, which never had them', async () => {
+      const run = stoppedLate({ sessionId: 'kept', promptHash: PROMPT_HASH, compactsAt: Date.now() - 1_000 })
+      await speakTwice(run)
+      const { h } = run
+      expect(h.turns).toHaveLength(1)
+      const prompt = h.turns[0].prompt
+      expect(prompt.split('make it orange')).toHaveLength(2)
+      expect(prompt).toContain('THE USER SAYS: make it orange actually no, make it yellow')
+    })
+  })
+
   it('takes no action in a step that looks something up while the user is talking', async () => {
     let answer: ((text: string) => void) | undefined
     const h = harness({
