@@ -11,6 +11,7 @@ import { primeCues } from './cues'
 import { setCanvasCovered } from './browser-platform'
 import { MacReadouts } from './MacReadouts'
 import { RocketButton } from './RocketButton'
+import { FpsCounter } from './FpsCounter'
 import { useStalenessWatch } from './update-check'
 import { EXTERNAL_UNFOCUS_ZOOM_OUT } from '@/lib/constants'
 import { MicButton } from './MicButton'
@@ -218,6 +219,7 @@ export function MobileApp({ Canvas = App, canvasMounted = ALWAYS }: { Canvas?: C
           end={
             <>
               <RocketButton />
+              {!toolbarSheetOpen && <FpsCounter />}
             </>
           }
         />

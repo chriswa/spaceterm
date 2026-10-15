@@ -1050,3 +1050,23 @@ textarea, input, [contenteditable="true"], .cm-content {
 @media (prefers-reduced-motion: reduce) {
   .m-rocket--unread::after { animation: none; }
 }
+
+/* The frame rate (FpsCounter.tsx), in the empty black corner above and right
+   of the rocket: the bar's right padding wide, the gap over the buttons tall. */
+.m-fps {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: calc(var(--m-corner-radius) * 0.3);
+  height: calc((var(--m-bar-height) - var(--m-bar-button)) / 2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.45);
+  font: 600 9px/1 -apple-system, system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  pointer-events: none;
+}
+/* The rocket's update count sits in the same corner, and wins it. */
+.m-rocket--info ~ .m-fps { display: none; }
