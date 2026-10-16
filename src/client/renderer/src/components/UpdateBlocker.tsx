@@ -18,10 +18,13 @@ export const BLOCKER_TEXT: Record<UpdateKind, { title: string; detail?: string }
  * way (updateActionsStore.ts), with no way to dismiss it: anything done in
  * the meantime would be lost, or sent to a server on its way down.
  *
- * It goes only with the page — the desktop exits once the server has taken
- * the restart, and the phone reloads once the new server answers
- * (install-api.ts), so it waits through the server being down — or when the
- * action fails, which says so in a toast.
+ * A server restart blocks every connected page, wherever it was asked for:
+ * the server tells them all (`server-restarting`).
+ *
+ * It goes only with the page — the desktop that pressed ↻ exits once the
+ * server has taken the restart, and every other page reloads once the new
+ * server answers (install-api.ts), so it waits through the server being down —
+ * or when the action fails, which says so in a toast.
  *
  * A modal `<dialog>`, so that it is drawn in the browser's top layer, over
  * everything whatever its z-index. As a z-index of its own it lost: the
@@ -29,7 +32,7 @@ export const BLOCKER_TEXT: Record<UpdateKind, { title: string; detail?: string }
  * the largest z-index there is, so the screen came up hidden behind them.
  */
 export function UpdateBlocker() {
-  const kind = useUpdateActionsStore((s) => blockingUpdate(s.running))
+  const kind = useUpdateActionsStore(blockingUpdate)
   useEffect(() => (kind ? swallowInput() : undefined), [kind])
   if (!kind) return null
   const { title, detail } = BLOCKER_TEXT[kind]

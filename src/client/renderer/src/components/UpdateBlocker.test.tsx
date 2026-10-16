@@ -62,6 +62,14 @@ describe('the update blocker', () => {
     expect(blocker()?.getAttribute('data-kind')).toBe('restart')
   })
 
+  it('comes up on every page for a restart asked for elsewhere, without letting go of Control here', () => {
+    render(<UpdateBlocker />)
+    act(() => useUpdateActionsStore.getState().serverRestartBegun())
+    expect(blocker()?.getAttribute('data-kind')).toBe('restart')
+    expect(screen.getByRole('alertdialog').textContent).toContain('Restarting the server')
+    expect(bridge.callsTo('receptionist.hold')).toEqual([])
+  })
+
   it('comes down when the restart is refused', async () => {
     bridge.restartSpaceterm = () => Promise.reject(new Error('already in progress'))
     render(<UpdateBlocker />)

@@ -150,12 +150,12 @@ describe('server events reach the stores', () => {
     expect(useSavedViewportStore.getState().viewports['7']).toBeDefined()
   })
 
-  it('shows a restart asked for elsewhere as under way here, without blocking the page', () => {
+  it('blocks this page for a restart asked for elsewhere, as for one pressed here', () => {
     resetUpdateActions()
     bridge.emit.serverRestarting()
     const state = useUpdateActionsStore.getState()
     expect(restartUnderway(state)).toBe(true)
-    expect(blockingUpdate(state.running)).toBeNull()
+    expect(blockingUpdate(state)).toBe('restart')
     resetUpdateActions()
   })
 })

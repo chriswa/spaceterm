@@ -27,8 +27,8 @@ interface UpdateActionsState {
   running: Record<UpdateKind, boolean>
   /**
    * The server has taken a restart, asked for here or anywhere else (another
-   * client, Control's restart_server). Only shown, never blocking: the page
-   * reloads once the server is back (install-api.ts), which clears it.
+   * client, Control's restart_server). Blocks this page as a restart pressed
+   * here does, until it reloads once the server is back (install-api.ts).
    */
   serverRestarting: boolean
   serverRestartBegun: () => void
@@ -85,8 +85,8 @@ export const useUpdateActionsStore = create<UpdateActionsState>((set, get) => {
  * What the page is blocked for, if anything. An install outranks the others:
  * it ends with the app itself replaced, and its screen says so.
  */
-export function blockingUpdate(running: Record<UpdateKind, boolean>): UpdateKind | null {
-  return running.install ? 'install' : running.restart ? 'restart' : running.reload ? 'reload' : null
+export function blockingUpdate(s: Pick<UpdateActionsState, 'running' | 'serverRestarting'>): UpdateKind | null {
+  return s.running.install ? 'install' : restartUnderway(s) ? 'restart' : s.running.reload ? 'reload' : null
 }
 
 /** Whether a server restart is under way, whichever client or Control asked for it. */
