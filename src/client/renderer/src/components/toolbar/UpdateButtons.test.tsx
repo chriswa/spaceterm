@@ -43,7 +43,8 @@ describe('ReloadClientButton', () => {
     expect(btn.className).not.toContain('toolbar__btn--pending')
   })
 
-  it('reloads two frames after the tap, so the pressed state is painted first', () => {
+  it('lets go of Control and reloads two frames after the tap, so the pressed state is painted first', () => {
+    const bridge = installFakeBridge()
     const frames: FrameRequestCallback[] = []
     vi.stubGlobal('requestAnimationFrame', (fn: FrameRequestCallback) => { frames.push(fn); return frames.length })
     render(<ReloadClientButton />)
@@ -51,6 +52,7 @@ describe('ReloadClientButton', () => {
     fireEvent.click(btn)
     expect(btn.className).toContain('toolbar__btn--active')
     expect(frames).toHaveLength(1)
+    expect(bridge.callsTo('receptionist.hold').map((c) => c.args)).toEqual([['release']])
   })
 })
 
