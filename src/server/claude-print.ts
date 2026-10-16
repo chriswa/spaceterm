@@ -15,6 +15,20 @@ import * as path from 'path'
  */
 export const CLAUDE_PRINT_BIN = process.env.CLAUDE_PRINT_DAEMON_BIN ?? 'claude-print-daemon'
 
+/**
+ * The environment the CLI runs in, and so the PATH it is found on. The
+ * server's own environment is a snapshot of whatever started it, and under
+ * SpacetermBar that is a non-interactive login shell, which never reads
+ * `.zshrc` — where chriswa-devkit's `bin/` and `~/go/bin` usually join PATH.
+ * The server points this at its captured login environment (login-env.ts) at
+ * startup, as it does for `jev`. The daemon a call starts inherits it too.
+ */
+let spawnEnv: () => NodeJS.ProcessEnv = () => process.env
+
+export function setClaudePrintEnv(source: () => NodeJS.ProcessEnv): void {
+  spawnEnv = source
+}
+
 export interface ClaudePrintRequest {
   prompt: string
   /** Model alias or id, e.g. `haiku`. The daemon defaults to Haiku. */
@@ -111,7 +125,7 @@ export function askClaudePrint(req: ClaudePrintRequest): Promise<ClaudePrintResp
   if (abort?.aborted) onAbort()
   else abort?.addEventListener('abort', onAbort, { once: true })
   return new Promise<ClaudePrintResponse>((resolve, reject) => {
-    const child = spawn(CLAUDE_PRINT_BIN, args, { stdio: ['pipe', 'pipe', 'pipe'], signal: req.signal })
+    const child = spawn(CLAUDE_PRINT_BIN, args, { env: spawnEnv(), stdio: ['pipe', 'pipe', 'pipe'], signal: req.signal })
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk })
@@ -144,7 +158,7 @@ export function askClaudePrint(req: ClaudePrintRequest): Promise<ClaudePrintResp
  * quietly: a turn that cannot be stopped finishes, and is dropped by its caller.
  */
 export function abortClaudePrint(turnId: string): void {
-  const child = spawn(CLAUDE_PRINT_BIN, ['abort', turnId], { stdio: 'ignore' })
+  const child = spawn(CLAUDE_PRINT_BIN, ['abort', turnId], { env: spawnEnv(), stdio: 'ignore' })
   child.on('error', () => undefined)
 }
 

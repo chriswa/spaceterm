@@ -77,6 +77,9 @@ export class LoginShellEnv implements LoginEnvSource {
   private inFlight = false
   private again = false
   private readonly watched: Array<{ file: string; listener: StatListener }>
+  private settleFirst!: () => void
+  /** Settles once the first capture has finished, whether or not it succeeded. */
+  readonly firstCapture: Promise<void> = new Promise((resolve) => { this.settleFirst = resolve })
 
   constructor(private readonly shell: string = process.env.SHELL || '/bin/zsh') {
     // Polling rather than fs.watch: editors save by renaming over the file,
@@ -128,6 +131,7 @@ export class LoginShellEnv implements LoginEnvSource {
           serverLog(`[login-env] capture from ${this.shell} failed: ${err?.message ?? 'no marker in output'}`)
         }
         this.inFlight = false
+        this.settleFirst()
         if (this.again) {
           this.again = false
           this.refresh()

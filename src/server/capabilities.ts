@@ -37,8 +37,8 @@ export interface Capability {
 }
 
 export interface CapabilityDeps {
-  /** The executable `command` resolves to on PATH, or undefined. */
-  which(command: string): string | undefined
+  /** The executable `command` resolves to on `pathVar`, or undefined. */
+  which(command: string, pathVar: string | undefined): string | undefined
   /** True when a path exists and is executable. */
   isExecutable(filePath: string): boolean
   /** True when a path exists. */
@@ -46,10 +46,10 @@ export interface CapabilityDeps {
 }
 
 export const REAL_CAPABILITY_DEPS: CapabilityDeps = {
-  which(command) {
+  which(command, pathVar) {
     const candidates = command.includes('/')
       ? [command]
-      : (process.env.PATH ?? '').split(path.delimiter).filter(Boolean).map(dir => path.join(dir, command))
+      : (pathVar ?? '').split(path.delimiter).filter(Boolean).map(dir => path.join(dir, command))
     return candidates.find(candidate => REAL_CAPABILITY_DEPS.isExecutable(candidate))
   },
   isExecutable(filePath) {
@@ -85,6 +85,7 @@ const AGENT_SURFACE_NAMES: Record<keyof typeof AGENT_PTY_COMMANDS, string> = {
 
 export function probeCapabilities(
   deps: CapabilityDeps = REAL_CAPABILITY_DEPS,
+  /** The environment the probed tools are spawned with: the captured login env (login-env.ts). */
   env: Readonly<Record<string, string | undefined>> = process.env
 ): Capability[] {
   const capabilities: Capability[] = []
@@ -100,11 +101,8 @@ export function probeCapabilities(
     affects: daemonBin ? '' : 'no terminal can start'
   })
 
-  // Looked up on this process's PATH. A surface resolves its CLI on the login
-  // shell's PATH instead (command-path.ts), so run this from a terminal for
-  // the answer a surface would get.
   for (const [type, command] of Object.entries(AGENT_PTY_COMMANDS) as [keyof typeof AGENT_PTY_COMMANDS, string][]) {
-    const found = deps.which(command)
+    const found = deps.which(command, env.PATH)
     const name = AGENT_SURFACE_NAMES[type]
     capabilities.push({
       id: `agent-${type}`,
@@ -115,7 +113,7 @@ export function probeCapabilities(
     })
   }
 
-  const git = deps.which('git')
+  const git = deps.which('git', env.PATH)
   capabilities.push({
     id: 'git',
     name: 'git',
@@ -127,7 +125,7 @@ export function probeCapabilities(
   // Control and auto-stamps reach Claude through claude-print-daemon,
   // which runs the signed-in Claude Code. The binary is enough: it starts the
   // daemon itself.
-  const claudePrint = deps.which(CLAUDE_PRINT_BIN)
+  const claudePrint = deps.which(CLAUDE_PRINT_BIN, env.PATH)
   capabilities.push({
     id: 'claude-print-daemon',
     name: 'claude-print-daemon',
@@ -138,7 +136,7 @@ export function probeCapabilities(
 
   // jev also needs TYPESAFE_API_KEY, which it reads from the login shell's
   // environment; only its presence is checked here.
-  const jev = deps.which('jev')
+  const jev = deps.which('jev', env.PATH)
   capabilities.push({
     id: 'jev',
     name: 'jev',
