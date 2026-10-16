@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { blockingUpdate, useUpdateActionsStore, type UpdateKind } from '../stores/updateActionsStore'
 
 export const BLOCKER_TEXT: Record<UpdateKind, { title: string; detail?: string }> = {
@@ -22,6 +22,11 @@ export const BLOCKER_TEXT: Record<UpdateKind, { title: string; detail?: string }
  * the restart, and the phone reloads once the new server answers
  * (install-api.ts), so it waits through the server being down — or when the
  * action fails, which says so in a toast.
+ *
+ * A modal `<dialog>`, so that it is drawn in the browser's top layer, over
+ * everything whatever its z-index. As a z-index of its own it lost: the
+ * phone's toolbar sheet, where its ↻ is pressed, and its bottom bar sit near
+ * the largest z-index there is, so the screen came up hidden behind them.
  */
 export function UpdateBlocker() {
   const kind = useUpdateActionsStore((s) => blockingUpdate(s.running))
@@ -29,13 +34,38 @@ export function UpdateBlocker() {
   if (!kind) return null
   const { title, detail } = BLOCKER_TEXT[kind]
   return (
-    <div className="update-blocker" role="alertdialog" aria-modal="true" aria-labelledby="update-blocker-title" data-kind={kind}>
+    <TopLayer kind={kind}>
       <div className="update-blocker__box">
         <div className="update-blocker__spinner" aria-hidden="true" />
         <div id="update-blocker-title" className="update-blocker__title">{title}</div>
         {detail && <div className="update-blocker__detail">{detail}</div>}
       </div>
-    </div>
+    </TopLayer>
+  )
+}
+
+function TopLayer({ kind, children }: { kind: UpdateKind; children: ReactNode }) {
+  const ref = useRef<HTMLDialogElement>(null)
+  useEffect(() => {
+    const dialog = ref.current
+    if (!dialog || dialog.open) return
+    // jsdom has no showModal; there it is only shown.
+    if (typeof dialog.showModal === 'function') dialog.showModal()
+    else dialog.setAttribute('open', '')
+  }, [])
+  return (
+    <dialog
+      ref={ref}
+      className="update-blocker"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="update-blocker-title"
+      data-kind={kind}
+      // Escape would close a modal dialog: this one goes only with the page.
+      onCancel={(e) => e.preventDefault()}
+    >
+      {children}
+    </dialog>
   )
 }
 

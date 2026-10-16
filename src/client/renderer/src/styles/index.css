@@ -4538,11 +4538,19 @@ html, body, #root {
 }
 
 /* The screen over everything while a restart, install or reload is under way
-   (UpdateBlocker.tsx). Over the toasts too: a failure takes it down first. */
+   (UpdateBlocker.tsx). A modal <dialog>, so the top layer puts it over
+   everything, the phone's sheet and bars and the toasts too, with no z-index
+   to outbid; these undo the dialog's own box. */
 .update-blocker {
   position: fixed;
   inset: 0;
-  z-index: 1000000;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  outline: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4584,6 +4592,10 @@ html, body, #root {
   border-top-color: #fff;
   border-radius: 50%;
   animation: update-blocker-spin 0.9s linear infinite;
+}
+
+.update-blocker::backdrop {
+  background: transparent;
 }
 
 @keyframes update-blocker-spin {
