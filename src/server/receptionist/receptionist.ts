@@ -477,11 +477,22 @@ const UNMUTED_NOTE = 'The user has unmuted you: your replies are spoken again.'
 const EMPTY_INTERRUPTION = "The user cut you off, but nothing they said was caught. Say in a few words that you hadn't finished, then carry on from where you were cut off."
 /** The note for a turn stopped before it spoke, when the user then said nothing to Control: see `resumeIfStopped`. */
 const STOPPED_FOR_NOTHING = 'The user started talking while you were working on your reply, so you stopped; nothing they said was for you. Carry on from where you stopped.'
+/** The note for a turn stopped before it spoke so that what waited unread could be read aloud: see `readAloud`. */
+const READ_TO_MID_TURN = 'The user had their unread replies read aloud to them while you were working on your reply, so you stopped. Carry on from where you stopped.'
 /** Told with the next message after "let me turn this off" or "Control, shutdown": see `sentAway`. */
 const SENT_AWAY = 'The user said a fixed phrase that sends you away ("let me turn this off" or "Control, shutdown"), handled without you: someone near them needs their attention, ' +
   'so they sent you away, as choosing Away does, until they next say "Control". It was not a request for you to act on.'
 /** Told instead when the phrase stopped a turn: see `resumeIfStopped`. */
 const SENT_AWAY_MID_TURN = `${SENT_AWAY} It stopped you; carry on from where you stopped, away.`
+/** What a turn stopped for the user is told as it carries on, by what stopped: see `resumeIfStopped`. */
+const RESUME_NOTES = { 'speaking': EMPTY_INTERRUPTION, 'thinking': STOPPED_FOR_NOTHING, 'sent-away': SENT_AWAY_MID_TURN, 'read-to': READ_TO_MID_TURN } as const
+/** What the transcript's activity log says of it. */
+const RESUME_TRACES = {
+  'speaking': 'Carried on: nothing you said was for Control',
+  'thinking': 'Carried on: nothing you said was for Control',
+  'sent-away': 'Carried on, away: you sent Control away',
+  'read-to': 'Carried on: the reading aloud is over',
+} as const
 /** Told with the next message when an answer was aborted part-way, its message kept in the session. */
 const ABORTED_MID_ANSWER = 'You were stopped part-way through your last answer, because the user started talking: none of it was said, and none of its actions were done.'
 
@@ -604,9 +615,11 @@ export class Receptionist {
    * What the user's talking stopped, until their words for Control arrive:
    * a reply being spoken, or a turn still working towards one. Resumed if
    * none do: see `resumeIfStopped`. `sent-away`: either, and then the user
-   * sent Control away (see `sentAway`).
+   * sent Control away (see `sentAway`). `read-to`: a turn working towards a
+   * reply, stopped for what waited unread to be read aloud (see
+   * `readAloud`), and resumed once the reading ends.
    */
-  private stoppedForUser: 'speaking' | 'thinking' | 'sent-away' | undefined
+  private stoppedForUser: 'speaking' | 'thinking' | 'sent-away' | 'read-to' | undefined
   /**
    * The user's words from a turn stopped before its message reached the
    * session, or that failed, or that the last server left: said with the
@@ -767,19 +780,25 @@ export class Receptionist {
     this.onsets++
     this.pauses++
     this.held = true
-    this.stopForUser()
+    void this.stopForUser('talking')
   }
 
-  /** The user started talking: stop whatever Control is doing, and remember what it was. */
-  private stopForUser(): void {
-    if (!this.channel.isProducing()) return
+  /**
+   * The user started talking, or asked for what waits unread to be read
+   * aloud: stop whatever Control is doing, and remember what it was. Its
+   * caller holds Control first, so the turn resumed for it waits for the
+   * user to be done. Resolves once the voice has stopped.
+   */
+  private stopForUser(why: 'talking' | 'reading'): Promise<boolean> {
+    if (!this.channel.isProducing()) return Promise.resolve(false)
     const stopped = this.lastSpoken ? 'speaking' : 'thinking'
-    this.stoppedForUser ??= stopped
+    this.stoppedForUser ??= why === 'reading' && stopped === 'thinking' ? 'read-to' : stopped
     this.interruptedAt = Date.now()
-    serverLog(`[receptionist] the user started talking: stopping a turn that was ${stopped}`)
-    this.deps.log({ event: 'stopped-for-user', stopped })
-    this.trace('stopped', stopped === 'speaking' ? 'Stopped mid-reply: you started talking' : 'Stopped before replying: you started talking')
-    void this.cutOffByUser()
+    const because = why === 'talking' ? 'you started talking' : 'you asked for what waited to be read aloud'
+    serverLog(`[receptionist] ${why === 'talking' ? 'the user started talking' : 'reading aloud'}: stopping a turn that was ${stopped}`)
+    this.deps.log({ event: 'stopped-for-user', stopped, ...(why === 'reading' ? { for: 'reading' } : {}) })
+    this.trace('stopped', stopped === 'speaking' ? `Stopped mid-reply: ${because}` : `Stopped before replying: ${because}`)
+    return this.cutOffByUser()
   }
 
   /**
@@ -814,8 +833,8 @@ export class Receptionist {
     const stopped = this.stoppedForUser
     this.stoppedForUser = undefined
     if (!stopped || this.closing) return false
-    this.notes.push(stopped === 'speaking' ? EMPTY_INTERRUPTION : stopped === 'thinking' ? STOPPED_FOR_NOTHING : SENT_AWAY_MID_TURN)
-    this.trace('resumed', stopped === 'sent-away' ? 'Carried on, away: you sent Control away' : 'Carried on: nothing you said was for Control')
+    this.notes.push(RESUME_NOTES[stopped])
+    this.trace('resumed', RESUME_TRACES[stopped])
     void this.runTurn(undefined)
     return true
   }
@@ -1092,10 +1111,16 @@ export class Receptionist {
    * it is no turn, plays on the replay channel, holds Control while it plays,
    * and shows as Control speaking does (`readOut`). All of it counts as taken
    * in at once, so the Unread line goes as it starts; the transcript lights
-   * each word as it is said instead. Refused while Control is busy (`busy`).
+   * each word as it is said instead.
+   *
+   * Asked for while Control thinks — as it does straight after a restart or
+   * the phone's return, catching the user up — the reading wins: the turn is
+   * stopped as the user's talking stops one, and carries on once the
+   * reading ends. Refused while Control is saying something (`busy`).
    */
   async readAloud(speech: SpeechBackend): Promise<string | undefined> {
-    const busy = this.busy()
+    const thinking = this.channel.phase === 'thinking'
+    const busy = thinking ? undefined : this.busy()
     if (busy) return busy
     const firsts = new Map<number, { part: number; from: number }>()
     for (const { at, part, from } of this.ledger.unreadParts()) if (!firsts.has(at)) firsts.set(at, { part, from })
@@ -1105,6 +1130,8 @@ export class Receptionist {
     const channel = this.replayOn(speech)
     this.setReplaying(true)
     try {
+      // Held first, so the turn stopped here waits for the reading before it carries on.
+      if (thinking) await this.stopForUser('reading')
       for (const reading of readings) {
         if (!(await this.readOut(channel, reading)).completed) break
       }
@@ -1117,9 +1144,9 @@ export class Receptionist {
   /**
    * Why a replay or a reading cannot start now, if it cannot: Control's own
    * turn is under way. Thinking counts as much as talking, since a turn may
-   * speak at any moment of it. The transcript hides Read aloud whenever
-   * Control's phase is other than ready, so for a reading this is said only
-   * when the two cross; a part's play button is always there.
+   * speak at any moment of it — though a reading stops a turn that is only
+   * thinking instead (`readAloud`). The transcript hides Read aloud while
+   * Control speaks, so for a reading this is said only when the two cross.
    */
   private busy(): string | undefined {
     if (!this.channel.isProducing()) return undefined

@@ -4502,7 +4502,37 @@ describe('Receptionist muted, and what the user has taken in', () => {
     expect(h.speaking.at(-1)).toBeUndefined()
   })
 
-  it('refuses a reading while Control thinks, saying so, not that it is talking', async () => {
+  it('stops a turn that is only thinking to read aloud at once, and carries it on once the reading ends', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Kevin is done.' }, { from: KEVIN, text: 'The solver works.' }], [{ tool: 'monitor', agent: KEVIN }]),
+        // News of Kevin, as catching the user up after a restart is: it never answers, and is stopped.
+        () => new Promise<string>(() => {}),
+        (turn) => {
+          expect(turn.prompt).toContain('had their unread replies read aloud to them while you were working on your reply, so you stopped')
+          return reply([{ from: 'control', text: 'Sally is at work.' }])
+        },
+      ],
+    })
+    listen(h, true)
+    await h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    listen(h, false)
+    expect(h.receptionist.phase).toBe('thinking')
+    expect(h.receptionist.unread().count).toBe(1)
+    expect(await h.receptionist.readAloud(h.listener.speech)).toBeUndefined()
+    await flush()
+    expect(h.receptionist.unread()).toEqual({ count: 0 })
+    const spoken = said(h)
+    expect(spoken.at(-2)).toContain('Kevin here. The solver works.')
+    expect(spoken.at(-1)).toContain('Sally is at work.')
+    expect(h.traces.map(trace => `${trace.what}: ${trace.text}`).filter(line => /^(stopped|resumed):/.test(line))).toEqual([
+      'stopped: Stopped before replying: you asked for what waited to be read aloud',
+      'resumed: Carried on: the reading aloud is over',
+    ])
+  })
+
+  it('refuses a replay while Control thinks, which a reading would stop', async () => {
     let answer: ((text: string) => void) | undefined
     const h = harness({
       replies: [
@@ -4516,7 +4546,6 @@ describe('Receptionist muted, and what the user has taken in', () => {
     const at = h.record.findIndex(message => message.content.includes('The solver works'))
     void h.receptionist.hear('and Sally?', 'spoken')
     await flush()
-    expect(await h.receptionist.readAloud(h.listener.speech)).toBe('Control is thinking')
     expect(await h.receptionist.replay(at, 1, h.listener.speech, () => {})).toBe('Control is thinking')
     answer?.(reply([{ from: 'control', text: 'Sally is at work.' }]))
     await flush()
