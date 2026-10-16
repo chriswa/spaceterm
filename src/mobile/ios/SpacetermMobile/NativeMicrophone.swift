@@ -155,7 +155,7 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
             case "speech-duck": duckSpeech((message.body as? [String: Any])?["on"] as? Bool ?? false)
             // A tone of hands-free's, played here so the Ring/Silent switch does not silence it: see `playCue`.
             case "cue": playCue(message.body as? [String: Any] ?? [:])
-            // Hands-free's beep while it decides about what may be speech, repeated until told to stop: see `startPendingTone`.
+            // Hands-free's beep while it decides about what may be speech, or Control's thinking sonar, repeated until told to stop: see `startPendingTone`.
             case "pending-tone":
                 let body = message.body as? [String: Any] ?? [:]
                 if body["on"] as? Bool == true { startPendingTone(body) } else { stopPendingTone() }
@@ -1045,7 +1045,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         // a page told "awake" by an app whose engine had stopped sent it Control's voice to play into nothing.
         // `haptics`: 2 — this app plays a whole pattern from one message, in the background too (`playHaptic`).
         // `pendingTone`: it repeats a tone until told to stop (`startPendingTone`).
-        var state: [String: Any] = ["running": running, "awake": up == .speaker && engineRunning, "speech": true, "voiceProcessing": voiceProcessing, "haptics": 2, "cues": true, "pendingTone": true]
+        // `noteGains`: a note may carry its own gain, a third number (`toneBuffer`).
+        var state: [String: Any] = ["running": running, "awake": up == .speaker && engineRunning, "speech": true, "voiceProcessing": voiceProcessing, "haptics": 2, "cues": true, "pendingTone": true, "noteGains": true]
         if running {
             state["input"] = inputName()
             // The microphone link's rate, for hands-free's badge (HandsFreeButton.tsx). Read only.
@@ -1186,7 +1187,8 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
      * Hands-free's pending tone (src/mobile/cues.ts `playPendingTone`): a beep
      * and a rest, looped, while it decides whether what it hears is words —
      * until the page says stop, a cue (the chirp it was waiting for), or
-     * Control's voice. Looped on the one player (see `playCue`), so only while
+     * Control's voice. The thinking sonar loops here the same way
+     * (`playThinkingSonar`), one tone at a time, the page deciding which. Looped on the one player (see `playCue`), so only while
      * that has no voice to play: a loop would hold back whatever is queued
      * behind it, and stopping it, which is the player stopping, would cut that
      * off too. A new pitch starts it again.
@@ -1221,17 +1223,20 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler {
         events.record("native-pending-tone-stopped", [:])
     }
 
-    /// Sine notes with 5 ms fades, as the page synthesizes its cues (cues.ts `cueSamples`).
+    /// Sine notes with 5 ms fades, as the page synthesizes its cues (cues.ts `cueSamples`): (frequency, seconds),
+    /// frequency 0 a rest, and optionally a third number scaling `gain` for that note alone — the thinking
+    /// sonar's fading echoes (thinking-cue.ts `echoNotes`).
     nonisolated private static func toneBuffer(_ segments: [[Double]], gain: Double) -> AVAudioPCMBuffer? {
         let rate = SpeechQueue.format.sampleRate
         let fade = max(1, Int(0.005 * rate))
         var samples: [Float] = []
-        for segment in segments where segment.count == 2 {
+        for segment in segments where segment.count == 2 || segment.count == 3 {
             let (freq, seconds) = (segment[0], segment[1])
+            let noteGain = gain * (segment.count == 3 ? segment[2] : 1)
             let n = Int(seconds * rate)
             for i in 0..<n {
                 let env = i < fade ? Double(i) / Double(fade) : i > n - fade ? Double(n - i) / Double(fade) : 1
-                samples.append(freq == 0 ? 0 : Float(env * sin(2 * .pi * freq * Double(i) / rate) * gain))
+                samples.append(freq == 0 ? 0 : Float(env * sin(2 * .pi * freq * Double(i) / rate) * noteGain))
             }
         }
         guard !samples.isEmpty, let buffer = AVAudioPCMBuffer(pcmFormat: SpeechQueue.format, frameCapacity: AVAudioFrameCount(samples.count)),

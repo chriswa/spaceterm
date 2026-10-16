@@ -34,7 +34,8 @@
  * about 0.7 s the longest.
  *
  * The sonar while Control thinks, or waits for its voice to be made, is
- * thinking-cue.ts, shared with the desktop.
+ * thinking-cue.ts, shared with the desktop; here the app plays it where it
+ * can (`playThinkingSonar`).
  *
  * Synthesised as Voice Operator synthesises its cues — a short run of sine
  * notes, its `chirp` ported (~/voiceop/Sources/VoiceOperator/Core/SoundEffects.swift):
@@ -43,7 +44,8 @@
 
 import { controlMode, useReceptionistStore } from '@/stores/receptionistStore'
 import { recordMobileEvent } from './mobile-events'
-import { nativeCues } from './native-microphone'
+import { echoNotes, playEchoTone } from '@/lib/thinking-cue'
+import { nativeCues, nativeSpeech } from './native-microphone'
 
 export type Cue = 'error' | 'nothingToSay' | 'handsFreeReady' | 'conversationClosed' | 'dictationStart' | 'dictationEnd' | 'controlShutdown' | 'notWakeWord' | 'heardUnattached'
 
@@ -262,6 +264,13 @@ const PENDING_GAIN = 0.12
 let pendingTone = false
 
 /**
+ * What the app's one repeating tone is, as far as the page knows: hands-free's
+ * pending beep, Control's sonar, or nothing. A cue the app plays stops it, and
+ * so does a new engine (`epoch`, `nativeSpeech.engineEpoch`).
+ */
+let repeating: { tone: 'pending' | 'sonar'; epoch: number } | null = null
+
+/**
  * Start hands-free's pending tone, or stop it.
  * Only the app plays it, through Control's voice player and only where
  * nothing played leaks into the microphone — so hands-free goes on hearing
@@ -273,8 +282,62 @@ let pendingTone = false
 export function playPendingTone(on: boolean): void {
   if (on === pendingTone) return
   pendingTone = on
-  if (!on) nativeCues.stopRepeating()
-  else if (nativeCues.canRepeat()) nativeCues.repeat('pending', PENDING_TONE, PENDING_GAIN)
+  if (!on) {
+    nativeCues.stopRepeating()
+    repeating = null
+  } else if (nativeCues.canRepeat()) {
+    nativeCues.repeat('pending', PENDING_TONE, PENDING_GAIN)
+    repeating = { tone: 'pending', epoch: nativeSpeech.engineEpoch() }
+  }
+}
+
+/**
+ * One tick of the sonar while Control thinks (thinking-cue.ts `ThinkingCue`,
+ * through `thinkingCueScope.playTone`). Played by the app where it can, which
+ * loops it on Control's voice player: the page's sound is silenced by the
+ * screen lock and the Ring/Silent switch, and turned down by hands-free's
+ * microphone, which under hands-free left the sonar unheard from October 12
+ * 2026. The app's loop keeps the cue's time (`echoNotes`), so a tick only
+ * starts it again where the page knows it stopped: a cue, the pending beep, a
+ * new engine. Never over the pending beep, which has the one repeating tone
+ * while hands-free decides about what may be speech; the sonar comes back on
+ * the tick after it ends. Elsewhere the page plays it, on its one audio
+ * context, which it wakes if it was suspended.
+ *
+ * Returns the function that silences it.
+ */
+export function playThinkingSonar(): () => void {
+  if (pendingTone) return stopSonarLoop
+  if (nativeCues.canRepeatNotes()) {
+    const epoch = nativeSpeech.engineEpoch()
+    if (repeating?.tone !== 'sonar' || repeating.epoch !== epoch) {
+      const notes = echoNotes()
+      const peak = Math.max(...notes.map(([, , gain]) => gain))
+      nativeCues.repeat('sonar', notes.map(([freq, seconds, gain]) => [freq, seconds, gain / peak]), peak)
+      repeating = { tone: 'sonar', epoch }
+      recordMobileEvent('thinking-sonar', { on: true, by: 'app' })
+    }
+    return stopSonarLoop
+  }
+  // The app cannot take it now: its loop, if it had it, stops for the page's.
+  stopSonarLoop()
+  const ctx = audioContext()
+  if (!ctx) return stopSonarLoop
+  if (ctx.state === 'suspended') void ctx.resume()
+  recordMobileEvent('thinking-sonar', { on: true, by: 'page', audio: ctx.state })
+  const stop = playEchoTone(ctx)
+  return () => {
+    stop()
+    stopSonarLoop()
+  }
+}
+
+/** The app's sonar loop stopped, if it has it. */
+function stopSonarLoop(): void {
+  if (repeating?.tone !== 'sonar') return
+  repeating = null
+  nativeCues.stopRepeating()
+  recordMobileEvent('thinking-sonar', { on: false })
 }
 
 /**
@@ -294,6 +357,8 @@ function playWhateverReplies(cue: HandsFreeCue | 'heardUnattached'): void {
   nativeCues.whenSettled(() => {
     if (nativeCues.available()) {
       nativeCues.play(cue, SEGMENTS[cue].map(([freq, dur]) => [freq, dur / SPEEDUP]), GAINS[cue])
+      // The app stops whatever it was repeating for a cue.
+      repeating = null
       return
     }
     playInPage(cue)

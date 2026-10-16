@@ -22,7 +22,7 @@ import { followHandsFree, installDuckOthers } from './duck-others'
 import { DownlinkWatch, watchedTransport } from './downlink-watch'
 import { installHandsFree, useHandsFree } from './hands-free'
 import { installControlTones } from './control-tones'
-import { playCue, playHandsFreeCue } from './cues'
+import { playCue, playHandsFreeCue, playThinkingSonar } from './cues'
 import { installReadyCue } from './ready-cue'
 import { Dictation } from './dictation'
 import { useDictationSession } from './dictation-session'
@@ -150,9 +150,10 @@ if (!token) {
     installHandsFree(window.api)
     // A tone as the hands-free switch turns white: ready to listen.
     installReadyCue(onHoldStateChange, () => playHandsFreeCue('handsFreeReady'))
-    // The sonar carries on while Control's voice is made, and its turns end
-    // with a tone when it says nothing or fails — where replies are Aloud.
+    // The sonar carries on while Control's voice is made, played by the app where it can,
+    // and its turns end with a tone when it says nothing or fails — where replies are Aloud.
     thinkingCueScope.alsoSynthesizing = true
+    thinkingCueScope.playTone = playThinkingSonar
     installControlTones({
       play: playCue,
       userTalking: () => Dictation.live > 0 || useDictationSession.getState().mic.kind !== 'idle'

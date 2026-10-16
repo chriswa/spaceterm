@@ -56,6 +56,8 @@ interface NativeState {
   cues?: boolean
   /** The app repeats a tone until told to stop (`pending-tone`); an older app does not say. */
   pendingTone?: boolean
+  /** A note may carry a third number, its own gain against the message's (the thinking sonar's echoes); an older app does not say. */
+  noteGains?: boolean
   /** Running, but the input sends only exact zeros — AirPods whose microphone is elsewhere, say. */
   silentInput?: boolean
   /** Where sound goes now, e.g. "Speaker" or "AirPods Pro"; an older app does not say. */
@@ -317,8 +319,16 @@ export const nativeCues = {
   canRepeat(): boolean {
     return state.pendingTone === true && !stopping && nativeSpeech.available()
   },
-  /** `segments` over and over until `stopRepeating` — or Control's voice, or a cue, which stop it. */
-  repeat(name: string, segments: Array<[number, number]>, gain: number): void {
+  /** As `canRepeat`, with each note at a gain of its own (`noteGains`). */
+  canRepeatNotes(): boolean {
+    return state.noteGains === true && nativeCues.canRepeat()
+  },
+  /**
+   * `segments` over and over until `stopRepeating` — or Control's voice, or a
+   * cue, which stop it. A third number in a note scales `gain` for that note
+   * alone, where `canRepeatNotes`.
+   */
+  repeat(name: string, segments: Array<[number, number] | [number, number, number]>, gain: number): void {
     handler()?.postMessage({ action: 'pending-tone', on: true, name, segments, gain })
   },
   stopRepeating(): void {

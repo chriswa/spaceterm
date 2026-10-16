@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 
 async function app() {
   vi.resetModules()
@@ -74,5 +74,77 @@ describe('hands-free\'s pending tone', () => {
     report({ running: true, cues: true, speech: true, voiceProcessing: true })
     cues.playPendingTone(true)
     expect(pending(posted as never).filter((t) => t !== 'off')).toEqual([])
+  })
+})
+
+describe('the thinking sonar', () => {
+  type Posted = { action: string; on?: boolean; name?: string; segments?: number[][]; gain?: number }
+  const repeats = (posted: Posted[]) =>
+    posted.filter((m) => m.action === 'pending-tone').map((m) => (m.on ? m.name : 'off'))
+  const repeatingApp = { running: true, cues: true, speech: true, voiceProcessing: true, pendingTone: true, noteGains: true }
+  // The page's own sonar, where it falls to the page, needs no Web Audio here.
+  beforeEach(() => vi.stubGlobal('AudioContext', undefined))
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('is looped by the app once, each echo at its own gain, and stopped by it', async () => {
+    const { cues, posted, report } = await app()
+    report(repeatingApp)
+    const stop = cues.playThinkingSonar()
+    cues.playThinkingSonar()
+    cues.playThinkingSonar()
+    expect(repeats(posted)).toEqual(['sonar'])
+    const sent = (posted as Posted[]).find((m) => m.name === 'sonar')!
+    const echoes = sent.segments!.filter(([freq]) => freq > 0).map(([, , scale]) => scale * sent.gain!)
+    expect(echoes.length).toBeGreaterThan(1)
+    for (let i = 1; i < echoes.length; i++) expect(echoes[i]).toBeLessThan(echoes[i - 1])
+    stop()
+    stop()
+    expect(repeats(posted)).toEqual(['sonar', 'off'])
+  })
+
+  it('gives way to the pending beep, and comes back on the tick after it ends', async () => {
+    const { cues, posted, report } = await app()
+    report(repeatingApp)
+    cues.playThinkingSonar()
+    cues.playPendingTone(true)
+    cues.playThinkingSonar()
+    cues.playPendingTone(false)
+    cues.playThinkingSonar()
+    expect(repeats(posted)).toEqual(['sonar', 'pending', 'off', 'sonar'])
+  })
+
+  it('starts again after a cue the app played stopped it', async () => {
+    const { cues, posted, report } = await app()
+    report(repeatingApp)
+    cues.playThinkingSonar()
+    cues.playHandsFreeCue('dictationEnd')
+    cues.playThinkingSonar()
+    expect(repeats(posted)).toEqual(['sonar', 'sonar'])
+  })
+
+  it('starts again on a new engine', async () => {
+    const { cues, posted, report } = await app()
+    report(repeatingApp)
+    cues.playThinkingSonar()
+    report({ ...repeatingApp, running: false, awake: true })
+    cues.playThinkingSonar()
+    expect(repeats(posted)).toEqual(['sonar', 'sonar'])
+  })
+
+  it('is left to the page by an app that cannot give each echo its own gain', async () => {
+    const { cues, posted, report } = await app()
+    report({ ...repeatingApp, noteGains: undefined })
+    cues.playThinkingSonar()()
+    expect(repeats(posted)).toEqual([])
+  })
+
+  it('stops the app\'s loop when the app can no longer play it and the page takes over', async () => {
+    const { cues, posted, report } = await app()
+    report(repeatingApp)
+    cues.playThinkingSonar()
+    // The speaker without echo cancellation: what the app plays would reach the microphone.
+    report({ ...repeatingApp, voiceProcessing: false })
+    cues.playThinkingSonar()
+    expect(repeats(posted)).toEqual(['sonar', 'off'])
   })
 })

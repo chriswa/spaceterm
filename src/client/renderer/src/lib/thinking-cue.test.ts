@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ThinkingCue, type ThinkingCueDeps } from './thinking-cue'
+import { ThinkingCue, echoNotes, type ThinkingCueDeps } from './thinking-cue'
 
 /**
  * A fake clock plus a fake tone player. The cue's Web Audio graph is not the
@@ -128,5 +128,24 @@ describe('ThinkingCue', () => {
     const afterStop = h.played
     h.advance(60_000)
     expect(h.played).toBe(afterStop)
+  })
+})
+
+describe('echoNotes', () => {
+  it('lasts one tick, so a loop of it keeps the cue\'s time', () => {
+    const h = harness()
+    h.cue.setThinking(true)
+    h.advance(1_500)
+    const first = h.played
+    h.advance(10_000)
+    const ticksPerSecond = (h.played - first) / 10
+    const loopSeconds = echoNotes().reduce((sum, [, seconds]) => sum + seconds, 0)
+    expect(loopSeconds).toBeCloseTo(1 / ticksPerSecond, 1)
+  })
+
+  it('fades each echo below the one before, with rests between', () => {
+    const echoes = echoNotes().filter(([freq]) => freq > 0)
+    for (let i = 1; i < echoes.length; i++) expect(echoes[i][2]).toBeLessThan(echoes[i - 1][2])
+    expect(echoNotes().filter(([freq, , gain]) => freq === 0 && gain !== 0)).toEqual([])
   })
 })

@@ -19,11 +19,17 @@
  * until the answer is handed over, and Voice Operator owns it after.
  */
 /**
- * The phone's exception (src/mobile/main.tsx): there the cue carries on while
+ * The phone's exceptions (src/mobile/main.tsx): there the cue carries on while
  * Control's voice is made, since Voice Operator's own echo plays on the Mac,
- * not in the phone's ear, and the wait for a voice is still a wait.
+ * not in the phone's ear, and the wait for a voice is still a wait. And there
+ * the iPhone app plays it (`playTone`, cues.ts `playThinkingSonar`): the
+ * page's own sound is silenced by the screen lock and the Ring/Silent switch,
+ * and turned down under hands-free's microphone.
  */
-export const thinkingCueScope = { alsoSynthesizing: false }
+export const thinkingCueScope: { alsoSynthesizing: boolean; playTone: () => () => void } = {
+  alsoSynthesizing: false,
+  playTone: () => playEchoTone(),
+}
 
 const INITIAL_DELAY_MS = 1_500
 const CUE_DURATION_MS = 1_500
@@ -48,6 +54,23 @@ const SEGMENT_GAP_S = 0.06
 const SEGMENT_GAINS = [0.05625, 0.028125, 0.0140625, 0.00703125, 0.003515625]
 
 /**
+ * One echo and the rest before the next, as (frequency Hz, seconds, gain)
+ * notes, frequency 0 a rest: what the phone's app loops in place of
+ * `playEchoTone`. As long as one tick of `ThinkingCue`, so the loop keeps the
+ * cue's own time.
+ */
+export function echoNotes(): Array<[number, number, number]> {
+  const notes: Array<[number, number, number]> = []
+  SEGMENT_GAINS.forEach((gain, index) => {
+    if (index > 0) notes.push([0, SEGMENT_GAP_S, 0])
+    notes.push([FREQUENCY_HZ, SEGMENT_DURATION_S, gain])
+  })
+  const echoS = SEGMENT_GAINS.length * SEGMENT_DURATION_S + (SEGMENT_GAINS.length - 1) * SEGMENT_GAP_S
+  notes.push([0, (CUE_DURATION_MS + REPEAT_GAP_MS) / 1000 - echoS, 0])
+  return notes
+}
+
+/**
  * Everything the cue reaches outside itself. jsdom has no Web Audio, so the
  * schedule — which is where the bugs live — is tested against a fake tone
  * player rather than by mocking `AudioContext`.
@@ -60,7 +83,7 @@ export interface ThinkingCueDeps {
 }
 
 export const REAL_THINKING_CUE_DEPS: ThinkingCueDeps = {
-  playTone: playEchoTone,
+  playTone: () => thinkingCueScope.playTone(),
   setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
   clearTimer: (handle) => clearTimeout(handle),
 }
@@ -122,8 +145,8 @@ function getAudioContext(): AudioContext {
   return audioContext
 }
 
-function playEchoTone(): () => void {
-  const context = getAudioContext()
+/** One decaying echo, played by the page; on `context` if given, else a context of the cue's own. */
+export function playEchoTone(context: AudioContext = getAudioContext()): () => void {
   const start = context.currentTime
   const oscillators: OscillatorNode[] = []
   for (let index = 0; index < SEGMENT_GAINS.length; index++) {

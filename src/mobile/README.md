@@ -441,7 +441,7 @@ Control, unmuted; on Silent or Released the phone makes no sound of its own
 
 | Sound | Means |
 |---|---|
-| sonar, a soft repeating echo | Control is thinking, or its voice is being made (`thinking-cue.ts`) |
+| sonar, a soft repeating echo | Control is thinking, or its voice is being made (`thinking-cue.ts`). Looped by the app where it can, like the pending tone, so the screen lock, the Ring/Silent switch and hands-free's ducking do not silence it; else the page plays it (`playThinkingSonar`, cues.ts; `thinking-sonar` and `native-pending-tone` with `tone: sonar` in the record) |
 | "beep boop", soft, stepping down | Control finished and chose to say nothing — not a failure (`control-tones.ts`) |
 | two low notes | something failed: the microphone, a transcription, or Control |
 
