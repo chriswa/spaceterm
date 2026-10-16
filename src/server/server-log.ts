@@ -1,4 +1,4 @@
-import { appendFile } from 'fs'
+import { appendFile, appendFileSync } from 'fs'
 import { join } from 'path'
 import { SOCKET_DIR } from '../shared/protocol'
 
@@ -10,6 +10,11 @@ import { SOCKET_DIR } from '../shared/protocol'
 export function serverLog(message: string): void {
   const line = `${new Date().toISOString()}  ${message}\n`
   appendFile(join(SOCKET_DIR, 'electron.log'), line, () => {})
+}
+
+/** `serverLog`, written before it returns: for the last lines before the process exits or replaces itself. */
+export function serverLogSync(message: string): void {
+  try { appendFileSync(join(SOCKET_DIR, 'electron.log'), `${new Date().toISOString()}  ${message}\n`) } catch { /* best-effort, as serverLog */ }
 }
 
 /**

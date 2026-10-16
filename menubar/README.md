@@ -66,7 +66,7 @@ think it is a nested child — see `Spawn.inheritedAgentSessionVars`), and in it
 
 | exit | then |
 |---|---|
-| code 75 | relaunch immediately. This is `SERVER_RESTART_EXIT_CODE` / `CLIENT_RESTART_EXIT_CODE`; the client's ↻ Restart button ends here. |
+| code 75 | relaunch immediately. This is `CLIENT_RESTART_EXIT_CODE`, where the client's ↻ Restart button ends. The server restarts in place instead (`src/server/relaunch.ts`), so the bar never sees it go; it exits 75 only on a Node too old to do that. |
 | code 0 | stopped, and stays stopped. Cmd-Q on the client is not a crash. Start it again from the menu. |
 | anything else | relaunch after 1s, 2s, 4s… (capped at 30s). Six crashes in a row without a stable minute in between and it stops trying, says so in the menu, and waits for you to press Start. |
 | adopted process, status unknowable | treated as a restart request. |

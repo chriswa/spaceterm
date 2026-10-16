@@ -30,7 +30,7 @@ import { LoginShellEnv } from './login-env'
 import { askEndedSession, realEndedAskDeps } from './ended-side-question'
 import { UNTITLED_AGENT, agentSurfaceTitle, collectAgentSurfaces, jevCliRunner, searchAgentSurfaces, transcriptTail, type AgentSearchDeps } from './agent-search'
 import { isAgentSurface } from '../shared/node-utils'
-import { serverLog, sanitizeForLog } from './server-log'
+import { serverLog, serverLogSync, sanitizeForLog } from './server-log'
 import { MobileEventsLog } from './mobile-events'
 import { expandTilde } from './cwd'
 import { DaemonClient } from './daemon-client'
@@ -61,6 +61,7 @@ import { CodexCacheReader } from './codex-cache-warmth'
 import { cursorCacheWarmth } from './cursor-cache-warmth'
 import { SessionFileWatcher } from './session-file-watcher'
 import { readRestartFlag, clearRestartFlag, watchRestartFlag } from './restart-flag'
+import { realProcess, relaunchInPlace } from './relaunch'
 import type { StatusSample } from './receptionist/spaceterm-status'
 import { CodexSessionFileWatcher, findCodexSessionFile } from './codex-session-file-watcher'
 import { CursorSessionFileWatcher, findCursorTranscript } from './cursor-session-file-watcher'
@@ -278,11 +279,8 @@ interface ClientConnection {
  */
 const restartRecovery = new RestartRecoveryLedger()
 
-// `concurrently --restart-tries` restarts non-zero exits in development. Keep
-// this distinct from an ordinary shutdown for the current launcher and any
-// future dedicated supervisor.
-const SERVER_RESTART_EXIT_CODE = 75
-let shutdownServer: ((exitCode?: number) => Promise<void>) | null = null
+/** Shut down, then exit with the code given, or for `'restart'` come back as a fresh server: see relaunch.ts. */
+let shutdownServer: ((then?: number | 'restart') => Promise<void>) | null = null
 let serverRestartScheduled = false
 
 /**
@@ -297,7 +295,7 @@ function restartServer(requestedBy: string, ack: () => void = () => {}): string 
   serverRestartScheduled = true
   serverLog(`[restart] Restart requested by ${requestedBy}`)
   ack()
-  setTimeout(() => void shutdownServer?.(SERVER_RESTART_EXIT_CODE), 25)
+  setTimeout(() => void shutdownServer?.('restart'), 25)
   return undefined
 }
 
@@ -3889,7 +3887,7 @@ async function startServer(): Promise<void> {
   // Graceful shutdown
   let socketWatchdog: ReturnType<typeof setInterval> | null = null
   let shuttingDown = false
-  const shutdown = async (exitCode = 0) => {
+  const shutdown = async (then: number | 'restart' = 0) => {
     if (shuttingDown) return
     shuttingDown = true
     console.log('\nShutting down...')
@@ -3921,7 +3919,8 @@ async function startServer(): Promise<void> {
     try { fs.unlinkSync(SOCKET_PATH) } catch { /* ignore */ }
     try { fs.unlinkSync(HOOKS_SOCKET_PATH) } catch { /* ignore */ }
     try { fs.unlinkSync(SCRIPTS_SOCKET_PATH) } catch { /* ignore */ }
-    process.exit(exitCode)
+    if (then === 'restart') relaunchInPlace(realProcess(), serverLogSync)
+    process.exit(then)
   }
   shutdownServer = shutdown
 

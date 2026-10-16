@@ -66,8 +66,8 @@ enum Settings {
     }
 
     /// Both services exit with this code to ask their supervisor for an
-    /// immediate relaunch — `SERVER_RESTART_EXIT_CODE` in `src/server/index.ts`
-    /// and `CLIENT_RESTART_EXIT_CODE` in `src/client/main/index.ts`. The
+    /// immediate relaunch — `SERVER_RESTART_EXIT_CODE` in `src/server/relaunch.ts`
+    /// (only where Node cannot relaunch in place) and `CLIENT_RESTART_EXIT_CODE` in `src/client/main/index.ts`. The
     /// client's ↻ Restart button ends here.
     static let restartExitCode: Int32 = 75
 
