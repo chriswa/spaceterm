@@ -4,7 +4,7 @@ import { installFakeBridge } from '../../testing/fake-bridge'
 import { InstallAppButton, ReloadClientButton } from './buttons'
 import { useRestartRequiredStore } from '../../stores/restartRequiredStore'
 import { useClientStalenessStore, pendingUpdates } from '../../stores/clientStalenessStore'
-import { resetUpdateActions } from '../../stores/updateActionsStore'
+import { resetUpdateActions, useUpdateActionsStore } from '../../stores/updateActionsStore'
 
 /**
  * The phone's update buttons in the toolbar sheet: always there, and marching
@@ -53,6 +53,15 @@ describe('ReloadClientButton', () => {
     expect(btn.className).toContain('toolbar__btn--active')
     expect(frames).toHaveLength(1)
     expect(bridge.callsTo('receptionist.hold').map((c) => c.args)).toEqual([['release']])
+  })
+
+  it('is busy while a server restart is under way, since the page reloads once the server is back', () => {
+    render(<ReloadClientButton />)
+    const btn = screen.getByRole('button', { name: 'Reload client' })
+    act(() => useUpdateActionsStore.getState().serverRestartBegun())
+    expect(btn.className).toContain('toolbar__btn--active')
+    expect((btn as HTMLButtonElement).disabled).toBe(true)
+    expect(btn.getAttribute('data-tooltip')).toBe('Reloads once the server is back')
   })
 })
 

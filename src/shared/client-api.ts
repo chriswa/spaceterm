@@ -168,6 +168,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       },
       onMobileBuildChanged: (cb) => on('mobile-build-changed', () => cb()),
       onReloadRequested: (cb) => on('reload-page', () => cb()),
+      onServerRestarting: (cb) => on('server-restarting', () => cb()),
       pauseCanvas: (paused) => {
         canvasPaused = paused
         client.pauseCanvas(paused)

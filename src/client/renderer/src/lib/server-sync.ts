@@ -185,6 +185,11 @@ export async function initServerSync(): Promise<void> {
     })
   )
 
+  // A restart asked for anywhere shows on this client's restart button too.
+  cleanupFns.push(
+    window.api.node.onServerRestarting(() => useUpdateActionsStore.getState().serverRestartBegun())
+  )
+
   // An echo while Control waits on the model (see thinking-cue.ts), but only
   // where Control is heard. Derived from the store rather than from the status
   // event, because a hand-off or a mute mid-thought arrives as a holder change.

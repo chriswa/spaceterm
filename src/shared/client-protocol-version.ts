@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 21
+export const CLIENT_PROTOCOL_VERSION = 22
 
 /**
  * Oldest client protocol this build still serves.
@@ -99,5 +99,9 @@ export const CLIENT_PROTOCOL_VERSION = 21
  *
  * v20 never reloads its page when the server asks (`reload-page`, Control's
  * refresh_clients), and logs it as an unknown message; it loses nothing else.
+ *
+ * v21 never hears that the server has taken a restart (`server-restarting`),
+ * so a restart another client or Control asked for shows on its restart
+ * button only as the connection dropping; it loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

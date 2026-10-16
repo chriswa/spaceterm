@@ -55,7 +55,7 @@ import { useTouchCamera } from './hooks/useTouchCamera'
 import { useReparentStore } from './stores/reparentStore'
 import { useResizeStore } from './stores/resizeStore'
 import { useCameraLockStore } from './stores/cameraLockStore'
-import { useUpdateActionsStore } from './stores/updateActionsStore'
+import { restartUnderway, useUpdateActionsStore } from './stores/updateActionsStore'
 import { retainServerSync, addNodeUpdateInterceptor, sendMove, sendBatchMove, sendRename, sendSetColor, sendSetStamp, sendBringToFront, sendArchive, sendUnarchive, sendArchiveDelete, sendTerminalCreate, sendMarkdownAdd, sendMarkdownResize, sendMarkdownContent, sendMarkdownSetMaxWidth, sendTerminalResize, sendReparent, sendSwapParentChild, sendDirectoryAdd, sendDirectoryCwd, sendFileAdd, sendFilePath, sendTitleAdd, sendTitleText, sendCacheTimerMute, sendForkSession, sendTerminalRestart, sendCrabReorder, sendUndoPush, sendUndoSetCursor, sendCameraBounds, sendSaveViewport, sendRootCwd } from './lib/server-sync'
 import { initTooltips } from './lib/tooltip'
 import { adjacentCrab, highestPriorityClaudeCrab } from './lib/crab-nav'
@@ -177,7 +177,7 @@ export function App() {
   const coarseNow = useCoarseClock()
   // Fallback colour for nodes the user has not coloured — see the nodeTint facet.
   const nodeTint = useFacet('nodeTint')
-  const restartingSpaceterm = useUpdateActionsStore(s => s.running.restart)
+  const restartingSpaceterm = useUpdateActionsStore(restartUnderway)
   const focusRef = useRef<NodeId | null>(focusedId)
   focusRef.current = focusedId
   const navBlockUntilRef = useRef(0)

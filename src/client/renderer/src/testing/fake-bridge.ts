@@ -169,6 +169,7 @@ export class FakeBridge implements Api {
   private readonly rootCwd = new Set<(cwd: string | undefined) => void>()
   private readonly autoStampsEnabled = new Set<(enabled: boolean) => void>()
   private readonly restartRequired = new Set<(required: boolean, reason: string) => void>()
+  private readonly serverRestarting = new Set<() => void>()
   private readonly usageReport = new Set<(snapshot: UsageSnapshot) => void>()
   private readonly systemStats = new Set<(snapshot: SystemStatsSnapshot | null) => void>()
   private readonly agentMetaAvailability = new Set<(nodeId: NodeId, available: boolean) => void>()
@@ -258,6 +259,7 @@ export class FakeBridge implements Api {
     restartRequired: (required: boolean, reason: string): void => {
       for (const fn of this.restartRequired) fn(required, reason)
     },
+    serverRestarting: (): void => { for (const fn of this.serverRestarting) fn() },
     usageReport: (snapshot: UsageSnapshot): void => {
       for (const fn of this.usageReport) fn(snapshot)
     },
@@ -421,6 +423,7 @@ export class FakeBridge implements Api {
     onUsageReport: (cb) => subscribe(this.usageReport, cb),
     onMobileBuildChanged: () => () => undefined,
     onReloadRequested: () => () => undefined,
+    onServerRestarting: (cb) => subscribe(this.serverRestarting, cb),
     usageReportStatus: () => this.reply('node.usageReportStatus', this.responses.usageReport),
     watchSystemStats: (cb) => subscribe(this.systemStats, cb),
     pauseCanvas: (paused) => this.record('node.pauseCanvas', paused)

@@ -29,7 +29,7 @@ import {
 } from '../../lib/dim-stale'
 import { useRestartRequiredStore } from '../../stores/restartRequiredStore'
 import { usePendingUpdates } from '../../stores/clientStalenessStore'
-import { useUpdateActionsStore } from '../../stores/updateActionsStore'
+import { restartUnderway, useUpdateActionsStore } from '../../stores/updateActionsStore'
 import { useNodeStore } from '../../stores/nodeStore'
 import { restartableAgentSurfaces } from '../../lib/rolling-restart'
 import { useRollingRestartStore } from '../../stores/rollingRestartStore'
@@ -532,18 +532,21 @@ export function RestartButton({ restarting, onRestart }: { restarting: boolean; 
 
 /**
  * Reload this page. Asked for when the Mac has rebuilt it since it loaded —
- * unless a server restart is also waiting, which reloads it anyway.
+ * unless a server restart is also waiting, which reloads it anyway. Busy while
+ * this page is reloading, and while a server restart is under way, which
+ * reloads it once the server is back: worked out here, with nothing asked of the server.
  */
 export function ReloadClientButton() {
   const pending = usePendingUpdates().reload
-  const reloading = useUpdateActionsStore(s => s.running.reload)
+  const reloading = useUpdateActionsStore(s => s.running.reload || restartUnderway(s))
+  const afterRestart = useUpdateActionsStore(s => !s.running.reload && restartUnderway(s))
   return (
     <button
       className={'toolbar__btn' + (reloading ? ' toolbar__btn--active' : '') + (pending && !reloading ? ' toolbar__btn--pending' : '')}
       onClick={() => useUpdateActionsStore.getState().reload()}
       disabled={reloading}
       aria-label="Reload client"
-      data-tooltip={pending ? 'Reload client — a newer page is waiting' : 'Reload client'}
+      data-tooltip={afterRestart ? 'Reloads once the server is back' : reloading ? 'Reloading…' : pending ? 'Reload client — a newer page is waiting' : 'Reload client'}
       data-tooltip-no-flip
     >
       <ReloadClientIcon />

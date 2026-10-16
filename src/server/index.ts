@@ -295,6 +295,8 @@ function restartServer(requestedBy: string, ack: () => void = () => {}): string 
   serverRestartScheduled = true
   serverLog(`[restart] Restart requested by ${requestedBy}`)
   ack()
+  // Every client, not only the one that asked: Control's restart_server has no button of its own.
+  broadcastToAll({ type: 'server-restarting' })
   setTimeout(() => void shutdownServer?.('restart'), 25)
   return undefined
 }

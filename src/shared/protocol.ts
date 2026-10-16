@@ -1450,6 +1450,14 @@ export interface ReloadPageMessage {
   type: 'reload-page'
 }
 
+/**
+ * Unsolicited broadcast: the server has taken a restart, whoever asked for it,
+ * and is on its way down, so every client's restart button shows it under way.
+ */
+export interface ServerRestartingMessage {
+  type: 'server-restarting'
+}
+
 /** To watching clients only: the system monitor, or null when mini-stats is not running (PUSH). */
 export interface SystemStatsMessage {
   type: 'system-stats'
@@ -2246,3 +2254,4 @@ export type ServerMessage =
   | MobileAppInstallResultMessage
   | MobileBuildChangedMessage
   | ReloadPageMessage
+  | ServerRestartingMessage

@@ -7,6 +7,7 @@ import {
 import { useNodeStore } from '../stores/nodeStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
 import { useRootCwdStore } from '../stores/rootCwdStore'
+import { blockingUpdate, resetUpdateActions, restartUnderway, useUpdateActionsStore } from '../stores/updateActionsStore'
 import { useNotificationSoundStore } from '../stores/notificationSoundStore'
 import { resetAudioAvailabilityForTest } from './sounds'
 import type { NodeData, ServerState } from '../../../../shared/state'
@@ -147,6 +148,15 @@ describe('server events reach the stores', () => {
   it('replaces saved viewports wholesale on a push', () => {
     bridge.emit.savedViewports({ '7': { x: 0, y: 0, width: 10, height: 10 } })
     expect(useSavedViewportStore.getState().viewports['7']).toBeDefined()
+  })
+
+  it('shows a restart asked for elsewhere as under way here, without blocking the page', () => {
+    resetUpdateActions()
+    bridge.emit.serverRestarting()
+    const state = useUpdateActionsStore.getState()
+    expect(restartUnderway(state)).toBe(true)
+    expect(blockingUpdate(state.running)).toBeNull()
+    resetUpdateActions()
   })
 })
 

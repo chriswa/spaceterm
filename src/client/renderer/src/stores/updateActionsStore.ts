@@ -25,6 +25,13 @@ function letGoOfControl(kind: UpdateKind): void {
 
 interface UpdateActionsState {
   running: Record<UpdateKind, boolean>
+  /**
+   * The server has taken a restart, asked for here or anywhere else (another
+   * client, Control's restart_server). Only shown, never blocking: the page
+   * reloads once the server is back (install-api.ts), which clears it.
+   */
+  serverRestarting: boolean
+  serverRestartBegun: () => void
   /** Restart the server. It reloads every client once it is back; only a failure comes back. */
   restart: () => Promise<void>
   /** Have the Mac build and install the phone app (src/server/mobile-install.ts). Success replaces this app. */
@@ -39,6 +46,8 @@ export const useUpdateActionsStore = create<UpdateActionsState>((set, get) => {
   const mark = (kind: UpdateKind, on: boolean) => set({ running: { ...get().running, [kind]: on } })
   return {
     running: IDLE,
+    serverRestarting: false,
+    serverRestartBegun: () => set({ serverRestarting: true }),
     restart: async () => {
       if (get().running.restart) return
       mark('restart', true)
@@ -80,7 +89,12 @@ export function blockingUpdate(running: Record<UpdateKind, boolean>): UpdateKind
   return running.install ? 'install' : running.restart ? 'restart' : running.reload ? 'reload' : null
 }
 
+/** Whether a server restart is under way, whichever client or Control asked for it. */
+export function restartUnderway(s: Pick<UpdateActionsState, 'running' | 'serverRestarting'>): boolean {
+  return s.running.restart || s.serverRestarting
+}
+
 /** For tests: nothing under way. */
 export function resetUpdateActions(): void {
-  useUpdateActionsStore.setState({ running: IDLE })
+  useUpdateActionsStore.setState({ running: IDLE, serverRestarting: false })
 }

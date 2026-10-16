@@ -215,6 +215,8 @@ export interface NodeApi {
   onMobileBuildChanged(callback: () => void): () => void
   /** The server asks every page to reload: Control's refresh_clients (PUSH). */
   onReloadRequested(callback: () => void): () => void
+  /** The server has taken a restart, from whichever client or from Control (PUSH). */
+  onServerRestarting(callback: () => void): () => void
   /** The latest AI usage reading (PULL), or null until there is one. */
   usageReportStatus(): Promise<UsageSnapshot | null>
   /**
