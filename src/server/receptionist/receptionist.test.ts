@@ -733,7 +733,7 @@ describe('Receptionist', () => {
     expect(h.turns).toHaveLength(2)
   })
 
-  it('searches the whole transcript, while a plain read stays recent', async () => {
+  it('searches the whole transcript', async () => {
     const h = harness({
       replies: [
         reply([], [{ tool: 'read', agent: KEVIN, search: 'ghost cells' }]),

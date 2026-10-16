@@ -36,7 +36,7 @@ import type { EndedAgent, EndedAgents } from './ended-agents'
 import type { Asking, PendingNews } from './pending-news'
 import { RESTARTED_MID_REPLY, type CarryOver } from './carry-over'
 import {
-  cacheWords, endedAskable, endedCacheWords, NO_SIDE_QUESTIONS, readAgent, renderAgentDetails, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
+  cacheWords, capMessage, endedAskable, endedCacheWords, NO_SIDE_QUESTIONS, readAgent, renderAgentDetails, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
 } from './roster'
 
 /**
@@ -359,7 +359,6 @@ const BUSY_RETRIES = 30
  */
 const RECAP_MESSAGES = 10
 const RECAP_MESSAGE_CHARS = 1_500
-const LAST_SAID_EVENT_CHARS = 1_500
 /** The tools that take an agent that is no longer live. */
 const ENDED_TOOLS: ReadonlySet<ToolCall['tool']> = new Set(['read', 'ask_agent', 'unarchive_agent'])
 /** Agents `find_agent` reports, best first. */
@@ -1425,7 +1424,7 @@ export class Receptionist {
     if (monitored) this.trace('fired', `Watch fired: ${token} ended`, lastSaid)
     const { claudeSessionId, cwd, cacheWarmUntil, cacheWarmTokens } = agent
     const cache = { claudeSessionId, cwd, cacheWarmUntil, cacheWarmTokens }
-    this.events.push({ kind: 'agent-ended', agent: token, archived, lastSaid: lastSaid.slice(-LAST_SAID_EVENT_CHARS), cache })
+    this.events.push({ kind: 'agent-ended', agent: token, archived, lastSaid: capMessage(lastSaid), cache })
     this.maybeSpeakUp()
   }
 
@@ -1590,7 +1589,7 @@ export class Receptionist {
     this.trace('fired', `Watch fired: ${token} is now ${STATE_WORDS[state]}`)
     this.events.push({
       kind: 'agent-stopped', agent: token, nodeId, state: STATE_WORDS[state],
-      lastSaid: lastSaid.slice(-LAST_SAID_EVENT_CHARS),
+      lastSaid: capMessage(lastSaid),
     })
     this.maybeSpeakUp()
   }
@@ -2142,7 +2141,7 @@ export class Receptionist {
       const nodeId = this.resolve(call.agent, handles, agents)
       const ended = nodeId ? undefined : this.resolveEnded(call.agent)
       if (ended && call.tool === 'read') {
-        results.push(this.read(ended.agent, agentToken(ended.handle, this.deps.names.get(ended.agent.nodeId)?.name), call.search, true))
+        results.push(this.read(ended.agent, agentToken(ended.handle, this.deps.names.get(ended.agent.nodeId)?.name), call, true))
         continue
       }
       if (ended && call.tool === 'ask_agent') {
@@ -2169,7 +2168,7 @@ export class Receptionist {
       const who = this.describe(agent, handles)
       switch (call.tool) {
         case 'read':
-          results.push(this.read(agent, this.token(agent.nodeId, handles), call.search, false))
+          results.push(this.read(agent, this.token(agent.nodeId, handles), call, false))
           break
         case 'agent_details':
           results.push(this.agentDetails(agent, handles))
@@ -2213,10 +2212,6 @@ export class Receptionist {
     return { results, done }
   }
 
-  /**
-   * The read tool: an agent's transcript, recent or searched. An ended agent's
-   * is read the same way, but without a cache to weigh: it cannot be asked.
-   */
   /**
    * The backlog_next tool: the backlog item that matters most now, or every
    * item about what `about` describes. `taken` collects them, so that a reply
@@ -2373,16 +2368,20 @@ export class Receptionist {
     return lastWords(conversation, CONVERSATION_WORDS)
   }
 
-  private read(agent: RosterAgent, token: string, search: string | undefined, ended: boolean): string {
-    // A search covers the whole session; a plain read is the recent part.
-    const read = search ? this.deps.readWholeTranscript : this.deps.readTranscript
-    const messages = agent.transcriptPath ? read(agent.transcriptPath) : []
+  /**
+   * The read tool: a page of an agent's transcript, plain or searched. An ended
+   * agent's is read the same way, but without a cache to weigh: it cannot be asked.
+   */
+  private read(agent: RosterAgent, token: string, { search, before }: { search?: string; before?: number }, ended: boolean): string {
+    // The whole session, paged: page by page, every word of it can be reached.
+    const messages = agent.transcriptPath ? this.deps.readWholeTranscript(agent.transcriptPath) : []
     // The cache comes with the transcript: it decides whether ask_agent is worth it.
     const cache = ended
       ? `\n${endedCacheWords(agent, Date.now())}`
       : (agent.cacheWarmUntil !== undefined ? `\ncache: ${cacheWords(agent, Date.now())}` : '')
         + (agent.takesSideQuestions === false ? `\n${NO_SIDE_QUESTIONS}` : '')
-    return `read ${token}${search ? ` for "${search}"` : ''}:${cache}\n${readAgent(messages, search)}`
+    const asked = `${search ? ` for "${search}"` : ''}${before !== undefined ? ` before message ${before}` : ''}`
+    return `read ${token}${asked}:${cache}\n${readAgent(messages, { search, before })}`
   }
 
   /** The unarchive_agent tool, for an agent that has ended or that Control archived. */

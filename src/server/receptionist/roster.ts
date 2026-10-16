@@ -54,10 +54,19 @@ export function renderDirectories(directories: readonly RosterDirectory[], handl
 const DETAILS_LAST_MESSAGE_CHARS = 1_500
 /** Characters of the request that message answered. */
 const DETAILS_LAST_REQUEST_CHARS = 500
-/** Characters a `read` returns, newest first, so the end of the turn survives. */
-const READ_CHARS = 6_000
-const SEARCH_HITS = 6
-const SEARCH_CONTEXT_CHARS = 400
+/**
+ * Characters of conversation one page of `read` holds. Pages hold whole
+ * messages, newest first, and the rest are a "before" away: Control's session
+ * keeps every result until compaction, so a long transcript is paged rather
+ * than handed over at once.
+ */
+const READ_PAGE_CHARS = 10_000
+/**
+ * The longest single message `read` or an event shows; past it, a note says
+ * how much was left out. Only a pasted log or a dump runs this long, and a
+ * page always holds at least one message, so this is what bounds a page.
+ */
+export const MESSAGE_CHARS = 40_000
 
 export const STATE_WORDS: Record<ClaudeState, string> = {
   stopped: 'stopped, waiting for the user',
@@ -187,40 +196,63 @@ export function ago(ms: number): string {
 }
 
 /**
- * The `read` tool: the agent's recent conversation, or the passages matching a
- * search. A plain read leaves out tool calls, so its budget goes to what the
- * agent and user said; a search covers both. Only the window the transcript
- * reader keeps is searchable (`readTranscript` in agent-transcript.ts), which
- * covers the current piece of work but not a long session's early hours.
+ * The `read` tool: one page of an agent's conversation, or of the messages
+ * matching a search, newest first. A plain read leaves out tool calls, so its
+ * pages go to what the agent and user said; a search covers both, and the
+ * whole session.
+ *
+ * Messages are never cut short to fit a page — an agent's words are read in
+ * order to be quoted, and a list missing its first entry, or an answer missing
+ * its end, cannot be — and their line breaks are kept, so a list still reads
+ * as one. Each message carries its number in the transcript, and `before`
+ * takes one: the page that ends just before it. Numbers rather than page
+ * counts, so that a working agent writing more between two reads does not
+ * shift the page asked for.
  */
-export function readAgent(messages: readonly TranscriptMessage[], search?: string): string {
-  if (!messages.length) return 'Nothing readable in this transcript yet.'
-  if (search) return searchMessages(messages, search)
-  const said = messages.filter(message => !isToolActivity(message))
-  if (!said.length) return 'Nothing readable in this transcript yet.'
-  const rendered: string[] = []
-  let budget = READ_CHARS
-  for (let i = said.length - 1; i >= 0 && budget > 0; i--) {
-    const line = `${speakerLabel(said[i])}: ${clip(said[i].text, budget)}`
-    rendered.unshift(line)
-    budget -= line.length
+export function readAgent(messages: readonly TranscriptMessage[], { search, before }: { search?: string; before?: number } = {}): string {
+  const numbered = messages.map((message, index) => ({ message, number: index + 1 }))
+  const candidates = search
+    ? matching(numbered, search)
+    : numbered.filter(({ message }) => !isToolActivity(message))
+  const earlier = before === undefined ? candidates : candidates.filter(({ number }) => number < before)
+  if (!earlier.length) {
+    if (before !== undefined && candidates.length) return `Nothing ${search ? 'matching' : 'readable'} before message ${before}.`
+    return search ? `No passage mentions "${search}".` : 'Nothing readable in this transcript yet.'
   }
-  return rendered.join('\n\n')
+  const page: string[] = []
+  let chars = 0
+  let next = earlier.length - 1
+  for (; next >= 0; next--) {
+    const line = `[${earlier[next].number}] ${speakerLabel(earlier[next].message)}: ${capMessage(earlier[next].message.text)}`
+    // At least one message, however long: a page that held nothing would never move.
+    if (page.length && chars + line.length > READ_PAGE_CHARS) break
+    page.unshift(line)
+    chars += line.length
+  }
+  const oldest = earlier[next + 1].number
+  const what = search ? 'matching messages' : 'messages'
+  const footer = next >= 0
+    ? `(${next + 1} earlier ${what} not shown: read again with "before": ${oldest} for the page before this one.)`
+    : search ? '(No earlier matching messages.)' : '(No earlier messages: this reaches the start of the conversation.)'
+  return `${page.join('\n\n')}\n\n${footer}`
 }
 
-function searchMessages(messages: readonly TranscriptMessage[], search: string): string {
+/**
+ * The messages a search finds: those with every word in it, or, when none has
+ * them all, those with any. Whole messages are returned, so a loose match
+ * costs a page of unrelated text; any word alone is the fallback, not the rule.
+ */
+function matching<T extends { message: TranscriptMessage }>(messages: readonly T[], search: string): T[] {
   const terms = search.toLowerCase().split(/\s+/).filter(Boolean)
-  const hits: string[] = []
-  for (let i = messages.length - 1; i >= 0 && hits.length < SEARCH_HITS; i--) {
-    const text = messages[i].text
-    const lower = text.toLowerCase()
-    const at = terms.map(term => lower.indexOf(term)).filter(index => index >= 0).sort((a, b) => a - b)[0]
-    if (at === undefined) continue
-    const start = Math.max(0, at - SEARCH_CONTEXT_CHARS / 2)
-    const excerpt = text.slice(start, start + SEARCH_CONTEXT_CHARS)
-    hits.push(`${speakerLabel(messages[i])}: ${start > 0 ? '…' : ''}${excerpt}${start + SEARCH_CONTEXT_CHARS < text.length ? '…' : ''}`)
-  }
-  return hits.length ? hits.join('\n\n') : `No recent passage mentions "${search}".`
+  const lower = messages.map(({ message }) => message.text.toLowerCase())
+  const all = messages.filter((_, i) => terms.every(term => lower[i].includes(term)))
+  return all.length ? all : messages.filter((_, i) => terms.some(term => lower[i].includes(term)))
+}
+
+/** A message whole, unless it runs past `MESSAGE_CHARS`, in which case a note says how much is missing. */
+export function capMessage(text: string): string {
+  if (text.length <= MESSAGE_CHARS) return text
+  return `${text.slice(0, MESSAGE_CHARS)}\n[… ${text.length - MESSAGE_CHARS} more characters of this message not shown]`
 }
 
 function speakerLabel(message: TranscriptMessage): string {

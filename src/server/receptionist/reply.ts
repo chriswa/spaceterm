@@ -24,7 +24,8 @@ export type GivenName = { name: string; gender: VoiceGender }
  * report them afterwards: see `Receptionist.speak`.
  */
 export type ToolCall = (
-  | { tool: 'read'; agent: string; search?: string }
+  /** `before`: a message number from an earlier read, for the page ending just before it. */
+  | { tool: 'read'; agent: string; search?: string; before?: number }
   | { tool: 'ask_agent'; agent: string; question: string }
   | { tool: 'monitor'; agent: string }
   | { tool: 'send'; agent: string; message: string }
@@ -228,10 +229,14 @@ function parseToolCall(value: unknown): ToolCall {
   const agent = typeof value.agent === 'string' ? stripBraces(value.agent) : ''
   if (!agent) throw new Error(`tool "${value.tool}" needs an "agent"`)
   switch (value.tool) {
-    case 'read':
-      return typeof value.search === 'string' && value.search.trim()
-        ? { tool: 'read', agent, search: value.search.trim() }
-        : { tool: 'read', agent }
+    case 'read': {
+      const search = typeof value.search === 'string' && value.search.trim() ? value.search.trim() : undefined
+      const before = value.before
+      if (before !== undefined && (typeof before !== 'number' || !Number.isInteger(before) || before < 1)) {
+        throw new Error('"read" takes "before" as a message number from an earlier read, such as 37')
+      }
+      return { tool: 'read', agent, ...(search && { search }), ...(before !== undefined && { before }) }
+    }
     case 'ask_agent':
       if (typeof value.question !== 'string' || !value.question.trim()) throw new Error('"ask_agent" needs a "question"')
       return { tool: 'ask_agent', agent, question: value.question.trim() }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { asNodeId } from '../../shared/ids'
 import { lastAgentProse, parseWholeTranscript, type TranscriptMessage } from '../agent-transcript'
-import { ago, readAgent, renderAgentDetails, renderRoster, type RosterAgent } from './roster'
+import { ago, capMessage, MESSAGE_CHARS, readAgent, renderAgentDetails, renderRoster, type RosterAgent } from './roster'
 
 const transcript: TranscriptMessage[] = [
   { role: 'user', text: 'Make the water simulation conserve volume.' },
@@ -118,15 +118,65 @@ describe('ago', () => {
 })
 
 describe('readAgent', () => {
-  it('returns the conversation, labelled', () => {
+  it('returns the conversation, labelled and numbered', () => {
     const text = readAgent(transcript)
-    expect(text).toMatch(/^USER: Make the water/)
-    expect(text).toContain('AGENT: The pressure solver')
+    expect(text).toMatch(/^\[1\] USER: Make the water/)
+    expect(text).toContain('[2] AGENT: The pressure solver')
+    expect(text).toMatch(/this reaches the start of the conversation/)
   })
 
-  it('finds passages for a search, and says when there are none', () => {
-    expect(readAgent(transcript, 'Bananas')).toContain('bananas float')
-    expect(readAgent(transcript, 'kiwis')).toMatch(/No recent passage/)
+  it('finds messages for a search, and says when there are none', () => {
+    expect(readAgent(transcript, { search: 'Bananas' })).toContain('bananas float')
+    expect(readAgent(transcript, { search: 'kiwis' })).toMatch(/No passage mentions "kiwis"/)
+  })
+
+  // What Control was given before: a list missing its first entry, each long message cut after a line or two.
+  const report = Array.from({ length: 8 }, (_, i) => `${i + 1}. Item ${i + 1}: ${'detail '.repeat(40).trim()}`).join('\n')
+  const long: TranscriptMessage[] = [
+    { role: 'user', text: 'Give me the report in batches.' },
+    ...Array.from({ length: 6 }, (_, i): TranscriptMessage => ({ role: 'assistant', text: `Batch ${i + 1}\n${report}` })),
+  ]
+
+  it('keeps every message whole, line breaks and all', () => {
+    const text = readAgent(long)
+    expect(text).toContain(`[7] AGENT: Batch 6\n${report}`)
+    expect(text).not.toContain('…')
+  })
+
+  it('pages back from the number a page ends on, until the start', () => {
+    const seen: string[] = []
+    let before: number | undefined
+    for (let pages = 0; pages < 10; pages++) {
+      const text = readAgent(long, { before })
+      seen.unshift(text)
+      const more = text.match(/"before": (\d+)/)
+      if (!more) break
+      before = Number(more[1])
+    }
+    expect(seen.length).toBeGreaterThan(1)
+    const all = seen.join('\n')
+    for (let i = 1; i <= 6; i++) expect(all).toContain(`AGENT: Batch ${i}\n${report}`)
+    expect(all.match(/\[\d+\]/g)).toEqual(['[1]', '[2]', '[3]', '[4]', '[5]', '[6]', '[7]'])
+    expect(seen[0]).toMatch(/this reaches the start of the conversation/)
+  })
+
+  it('finds a message by every word searched for, not any one of them', () => {
+    const text = readAgent(long, { search: 'Batch 3' })
+    expect(text).toMatch(/^\[4\] AGENT: Batch 3\n1\. Item 1/)
+    expect(text).not.toContain('Batch 2')
+  })
+
+  it('pages a search the same way, and says when nothing earlier matches', () => {
+    expect(readAgent(long, { search: 'batch', before: 1 })).toBe('Nothing matching before message 1.')
+    const text = readAgent(long, { search: 'batch', before: 3 })
+    expect(text).toContain('[1] USER: Give me the report in batches.\n\n[2] AGENT: Batch 1')
+    expect(text).toMatch(/No earlier matching messages\.\)$/)
+  })
+
+  it('cuts only a message past MESSAGE_CHARS, and says how much is missing', () => {
+    expect(capMessage(report)).toBe(report)
+    const dump = 'x'.repeat(MESSAGE_CHARS + 123)
+    expect(capMessage(dump)).toMatch(/\n\[… 123 more characters of this message not shown\]$/)
   })
 
   // An agent that says what it will do, then commits and self-terminates, writes nothing after its last tool call.
@@ -138,8 +188,8 @@ describe('readAgent', () => {
   ].map(entry => JSON.stringify(entry)).join('\n'))
 
   it('leaves tool calls out of a plain read, and keeps them searchable', () => {
-    expect(readAgent(selfTerminated)).toBe('USER: Edit the prompt, then commit, push and self-terminate.\n\nAGENT: The edit is in; committing and ending now.')
-    expect(readAgent(selfTerminated, 'git push')).toContain('git commit && git push')
+    expect(readAgent(selfTerminated)).toBe('[1] USER: Edit the prompt, then commit, push and self-terminate.\n\n[2] AGENT: The edit is in; committing and ending now.\n\n(No earlier messages: this reaches the start of the conversation.)')
+    expect(readAgent(selfTerminated, { search: 'git push' })).toContain('git commit && git push')
   })
 
   it('reports the last words an agent wrote before its final tool calls', () => {
