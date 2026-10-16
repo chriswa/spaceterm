@@ -85,6 +85,7 @@ import { NO_LISTENER, Receptionist, VOICE_FOLLOW_MS } from './receptionist/recep
 import { jevJudge } from './receptionist/self-interruption'
 import { Backlog, jevBacklogJudge } from './receptionist/backlog'
 import { Watches } from './receptionist/watches'
+import { DeferredReads } from './receptionist/deferred-reads'
 import { BackBurner } from './receptionist/back-burner'
 import { EndedAgents } from './receptionist/ended-agents'
 import { PendingNews } from './receptionist/pending-news'
@@ -3478,6 +3479,8 @@ async function startServer(): Promise<void> {
     backlog: receptionistBacklog,
     // Kept on disk too: a restart must not cost the user an answer Control promised them.
     watches: new Watches(),
+    // So is a read waiting on the user's answer to the report that asked for it.
+    deferredReads: new DeferredReads(),
     backBurner: new BackBurner(),
     ended: new EndedAgents(),
     news: new PendingNews(),

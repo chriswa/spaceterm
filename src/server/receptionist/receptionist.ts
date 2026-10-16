@@ -7,7 +7,7 @@ import { INTERRUPTED_MARKER } from '../unheard'
 import { joinSpeechParts, speechPartStarts, type SpeechBackend } from '../voice-operator'
 import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } from '../speech-channel'
 import { ConsumptionLedger, type ConsumedHow, type Via } from './consumption'
-import { DeferredReads, type DeferredRead } from './deferred-reads'
+import type { DeferredRead, DeferredReads } from './deferred-reads'
 import type { NamedVoice, VoiceGender } from './name-voice-table'
 import { RECEPTIONIST_NAME, RECEPTIONIST_VOICE } from './name-voice-table'
 import type { NameProblem } from './name-registry'
@@ -147,6 +147,8 @@ export interface ReceptionistDeps {
   backlog: Pick<Backlog, 'size' | 'all' | 'add' | 'take' | 'restore' | 'settle'>
   /** The agents being watched for their next stop, kept across server restarts: see watches.ts. */
   watches: Watches
+  /** Agents mark_read asked for, waiting on the user's answer, kept across server restarts: see deferred-reads.ts. */
+  deferredReads: DeferredReads
   /** Agents the user took out of Control's hands to work with directly: see back-burner.ts. */
   backBurner: BackBurner
   /** The agents known to have ended, kept across server restarts: see ended-agents.ts. */
@@ -572,7 +574,7 @@ export class Receptionist {
   /** What the user has taken in of each reply, against what the model believes: see consumption.ts. */
   private readonly ledger = new ConsumptionLedger()
   /** Agents told of, marked read once the user answers having heard it all: see deferred-reads.ts. */
-  private readonly reads = new DeferredReads()
+  private readonly reads: DeferredReads
   /** What mark_read asked for this turn, until its reply is written: see `stageReads`. */
   private staged: { attempt: Attempt; reads: DeferredRead[] } | undefined
   /** A replay is playing: Control holds its tongue, as while the user dictates. See `replay`. */
@@ -655,6 +657,7 @@ export class Receptionist {
     this.onSpeaking = opts.onSpeaking ?? (() => undefined)
     this.ledger.restore(deps.record.tail())
     this.monitors = deps.watches
+    this.reads = deps.deferredReads
     this.burner = deps.backBurner
     this.ended = deps.ended
     this.events = deps.news
@@ -876,6 +879,8 @@ export class Receptionist {
     await this.channel.cancel()
     // Said just ahead of how much was heard, which the note `noteInterruption` adds last says.
     if (await this.noteInterruption('lost')) this.notes.splice(-1, 0, RESTARTED_MID_REPLY)
+    // Cut or not, how much of the last reply was heard is on record: what it told waits on the user's answer alone.
+    this.reads.heardOut()
     const consumption = this.ledger.note(true)
     if (consumption) this.notes.push(consumption)
     this.deps.carryOver.leave(this.notes)
@@ -1635,6 +1640,8 @@ export class Receptionist {
     this.selfInterrupted = false
     if (selfInterrupted && this.listening && !this.reading) await this.channel.deliverInterim(attempt, [{ text: HANG_ON, voice: RECEPTIONIST_VOICE }])
     await this.noteInterruption(selfInterrupted ? 'self' : 'user')
+    // The last reply is over, and any cut in it noted: see `DeferredReads.heardOut`.
+    this.reads.heardOut()
     // Read after that await: the listener may have come or gone during it.
     const away = !this.listening
     const news = away ? undefined : this.returnNews
@@ -2917,7 +2924,10 @@ export class Receptionist {
     this.keepWatchingUntold(events, reply, withWords)
     this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools, ...(reading ? { muted: true } : {}) })
     // Muted, it is written, and that is all: there is nothing to cut off.
-    if (reading) return false
+    if (reading) {
+      this.reads.heardOut()
+      return false
+    }
     this.lastSpoken = spoken
     this.lastSpokenAt = at
     const parts = spoken.map(({ text, voice }) => ({ text, voice }))
@@ -2942,6 +2952,8 @@ export class Receptionist {
     const monitoring = await this.channel.deliver(attempt, parts, undefined, (progress) => {
       // The voice failed: whatever it did not say waits for the user to read, and the model is told.
       if (progress.kind === 'ended' && progress.state === 'synthesis_failed') void this.noteInterruption('failed')
+      // Said to the end: what it told waits on the user's answer alone, crash or not.
+      if (progress.kind === 'ended' && progress.state === 'completed') this.reads.heardOut()
       if (progress.kind !== 'playing') return
       const index = starts.filter(start => start <= progress.heard).length - 1
       const now = speakers[Math.max(0, index)]

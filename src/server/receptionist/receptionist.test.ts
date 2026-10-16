@@ -15,6 +15,7 @@ import { DIRECTORY_PREFIX, Handles, NODE_PREFIX } from './handles'
 import { Backlog } from './backlog'
 import { INTERRUPTION_QUIET_MS, MID_TOPIC_PAUSE_MS, PAUSE_MS } from './backlog-pause'
 import { Watches } from './watches'
+import { DeferredReads } from './deferred-reads'
 import { BackBurner, FORGOTTEN_MS } from './back-burner'
 import { EndedAgents } from './ended-agents'
 import { PendingNews } from './pending-news'
@@ -147,6 +148,10 @@ function harness(opts: {
   status?: () => StatusSample
   /** Agents with news the user has not looked at; by default none. */
   unread?: NodeId[]
+  /** Where reads waiting on the user are kept, from an earlier server; by default none wait. */
+  readsStore?: NameRegistryStore
+  /** The record as an earlier server left it, carried on; by default empty. */
+  record?: RecordedMessage[]
 }) {
   const world = opts.world ?? agentWorld()
   const states = world.states
@@ -182,7 +187,7 @@ function harness(opts: {
   const wire: string[] = []
   const notices: string[] = []
   let session: SavedSession | undefined = opts.saved
-  const record: RecordedMessage[] = []
+  const record: RecordedMessage[] = opts.record ?? []
   const heardMarks: Array<{ replyAt: number; parts: number[]; unread?: true }> = []
   const consumedMarks: Array<{ of: number; part: number; from: number; to: number; how: string }> = []
   const notDone: string[] = []
@@ -308,6 +313,7 @@ function harness(opts: {
     judgeInterruption: opts.judgeInterruption ?? (async () => 0),
     backlog,
     watches: new Watches({ store: opts.watchStore ?? memoryStore() }),
+    deferredReads: new DeferredReads({ store: opts.readsStore ?? memoryStore() }),
     backBurner: new BackBurner({ store: opts.burnerStore ?? memoryStore() }),
     ended: new EndedAgents({ store: opts.endedStore ?? memoryStore() }),
     news: new PendingNews({ store: opts.newsStore ?? memoryStore() }),
@@ -4692,5 +4698,88 @@ describe('Receptionist: mark_read waits on the user', () => {
     await spoken.receptionist.hear('push it', 'spoken')
     await flush()
     expect(reads(spoken)).toEqual([])
+  })
+
+  describe('across a server restart', () => {
+    /** What the next server's ledger restores from: the record carried on, and the cuts marked in it. */
+    const tailOf = (h: ReturnType<typeof harness>): ControlTranscriptEntry[] => [
+      ...h.record.flatMap((message, offset): ControlTranscriptEntry[] => {
+        if (message.role === 'user') return [{ offset, timestamp: '', kind: 'user', text: message.content }]
+        const say = (JSON.parse(message.content) as { say: Array<{ from: string; text: string }> }).say
+        return [{ offset, timestamp: '', kind: 'reply', parts: say, ...(message.delivery ? { delivery: message.delivery } : {}) }]
+      }),
+      ...h.heardMarks.map((mark): ControlTranscriptEntry => ({ offset: -1, timestamp: '', kind: 'heard', of: mark.replyAt, parts: mark.parts, ...(mark.unread ? { unread: true as const } : {}) })),
+    ]
+    /** The server after `before`, with Kevin still unread, answering the user's next message. */
+    const next = (before: ReturnType<typeof harness>, readsStore: ReturnType<typeof memoryStore>) => harness({
+      unread: [KEVIN_ID], readsStore, record: before.record, tail: tailOf(before), replies: [reply([{ from: 'control', text: 'Sure.' }])],
+    })
+
+    it('marks the agent read when the user answers the next server, having heard all of the report', async () => {
+      const readsStore = memoryStore()
+      const before = harness({ unread: [KEVIN_ID], readsStore, replies: [report()] })
+      await before.receptionist.hear('how is Kevin?', 'spoken')
+      await flush()
+      await before.receptionist.shutdown()
+      const after = next(before, readsStore)
+      await after.receptionist.hear('great, thanks', 'spoken')
+      await flush()
+      expect(reads(after)).toEqual([`read ${KEVIN_ID}`])
+    })
+
+    it('still marks it read after a crash, once the report was said to the end', async () => {
+      const readsStore = memoryStore()
+      const before = harness({ unread: [KEVIN_ID], readsStore, replies: [report()] })
+      await before.receptionist.hear('how is Kevin?', 'spoken')
+      await flush()
+      // No shutdown: the server crashed.
+      const after = next(before, readsStore)
+      await after.receptionist.hear('great, thanks', 'spoken')
+      await flush()
+      expect(reads(after)).toEqual([`read ${KEVIN_ID}`])
+    })
+
+    it('leaves it unread when a restart cut the report off', async () => {
+      const speech = handPlayed()
+      const readsStore = memoryStore()
+      const before = harness({ unread: [KEVIN_ID], readsStore, speech: speech.backend, replies: [report()] })
+      await before.receptionist.hear('how is Kevin?', 'spoken')
+      await flush()
+      speech.heard('Kevin here. Volume'.length)
+      await flush()
+      await before.receptionist.shutdown()
+      const after = next(before, readsStore)
+      await after.receptionist.hear('go on', 'typed')
+      await flush()
+      // Typed, the rest counts as read in the transcript; the cut still stands.
+      expect(reads(after)).toEqual([])
+    })
+
+    it('leaves it unread when the server crashed while the report was being said', async () => {
+      const speech = handPlayed()
+      const readsStore = memoryStore()
+      const before = harness({ unread: [KEVIN_ID], readsStore, speech: speech.backend, replies: [report()] })
+      await before.receptionist.hear('how is Kevin?', 'spoken')
+      await flush()
+      speech.heard('Kevin here. Volume'.length)
+      await flush()
+      // No shutdown, and nothing knows how much was heard: the record shows it whole.
+      const after = next(before, readsStore)
+      await after.receptionist.hear('go on', 'spoken')
+      await flush()
+      expect(reads(after)).toEqual([])
+    })
+
+    it('keeps a muted report waiting through a crash, for the user to read', async () => {
+      const readsStore = memoryStore()
+      const before = harness({ unread: [KEVIN_ID], readsStore, replies: [report()] })
+      before.receptionist.setListener({ ...before.listener, reading: true })
+      await before.receptionist.hear('how is Kevin?', 'spoken')
+      await flush()
+      const after = next(before, readsStore)
+      await after.receptionist.hear('push it', 'typed')
+      await flush()
+      expect(reads(after)).toEqual([`read ${KEVIN_ID}`])
+    })
   })
 })
