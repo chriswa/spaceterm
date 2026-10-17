@@ -22,7 +22,7 @@ import { hookPayloadAgentType, isForeignAgentHook } from './hook-agent'
 import { agentTypeOrDefault, type AgentType } from '../shared/agent-type'
 import { createAgentDrivers, driverFor, type AgentDriver, type AgentLaunchSpec } from './agent-drivers'
 import { REAL_AGENT_PROVISIONING } from './agent-provisioning'
-import { probeCapabilities, formatCapabilityReport } from './capabilities'
+import { probeCapabilities, formatCapabilityReport, REAL_CAPABILITY_DEPS } from './capabilities'
 import { asClaudeSessionId, asNodeId, asPtySessionId, nodeIdsOf, nodeIdFromFirstPtySession, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
 import { randomUUID } from 'crypto'
 import { SessionManager } from './session-manager'
@@ -102,7 +102,7 @@ import { nodesNearView, type NearbyNode } from './receptionist/nearby'
 import type { RosterAgent } from './receptionist/roster'
 import { readPeerNames } from './claude-peer-names'
 import { AutoStamper } from './auto-stamp'
-import { askClaudePrint } from './claude-print'
+import { askClaudePrint, setClaudePrintEnv } from './claude-print'
 import { DirectSpeech } from './direct-speech'
 import { VoiceOperator, DISCOVERY_PATH as VOICE_OPERATOR_DISCOVERY_PATH, type SpeechBackend } from './voice-operator'
 import { VoiceOperatorSubscription } from './voice-operator-subscription'
@@ -3112,10 +3112,6 @@ async function startServer(): Promise<void> {
   fs.mkdirSync(SOCKET_DIR, { recursive: true })
   fs.mkdirSync(HOOK_LOG_DIR, { recursive: true })
 
-  // Report which optional integrations this machine has. Several features
-  // degrade silently without them, and the log is where someone will look.
-  for (const line of formatCapabilityReport(probeCapabilities())) serverLog(line)
-
   // Remove stale socket files — but first check if another server is alive.
   // If we blindly unlink, we'd steal the socket from a running server: the running
   // server's FD stays open (existing connections work) but new connections (hooks
@@ -3175,6 +3171,13 @@ async function startServer(): Promise<void> {
 
   promptedCommands = new PromptedCommands({ write: (sessionId, data) => sessionManager.write(sessionId, data) })
   loginEnv = new LoginShellEnv()
+  setClaudePrintEnv(() => loginEnv.current() ?? process.env)
+  // Report which optional integrations this machine has. Several features
+  // degrade silently without them, and the log is where someone will look.
+  // Probed against the login env, which is what the tools are spawned with.
+  void loginEnv.firstCapture.then(() => {
+    for (const line of formatCapabilityReport(probeCapabilities(REAL_CAPABILITY_DEPS, loginEnv.current() ?? process.env))) serverLog(line)
+  })
   sessionManager = new SessionManager(daemonClient, {
     loginEnv,
     // broadcast to attached clients + feed snapshot manager

@@ -65,6 +65,13 @@ describe('probeCapabilities', () => {
       expect(c.detail).toBe('/home/me/go/bin/claude-print-daemon')
     })
 
+    it('is looked up on the PATH of the env it will be spawned with, not this process\'s', () => {
+      const which = (command: string, pathVar: string | undefined) =>
+        pathVar === '/login/bin' ? `/login/bin/${command}` : undefined
+      expect(byId(probeCapabilities(deps({ which }), { PATH: '/login/bin' }), 'claude-print-daemon').available).toBe(true)
+      expect(byId(probeCapabilities(deps({ which }), { PATH: '/usr/bin' }), 'claude-print-daemon').available).toBe(false)
+    })
+
     it('names Control and auto-stamps as what degrades, and says how to install it', () => {
       const c = byId(probeCapabilities(deps({ which: () => undefined })), 'claude-print-daemon')
       expect(c.available).toBe(false)
