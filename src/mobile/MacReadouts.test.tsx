@@ -61,6 +61,11 @@ describe('MacReadouts', () => {
       ['Codex unavailable', '']
     ])
 
+    // Out of the bar, which Control's transcript covers, and still its own: a touch on it is no touch elsewhere.
+    expect(panel.closest('.m-bar__readouts')).toBeNull()
+    fireEvent.pointerDown(panel)
+    expect(screen.getByRole('dialog')).toBe(panel)
+
     fireEvent.click(panel)
     expect(screen.queryByRole('dialog')).toBeNull()
   })

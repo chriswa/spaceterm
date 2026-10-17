@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { SystemStatsDetail, SystemStatsPicture, useSystemStats } from './SystemStatsReadout'
 import { UsageBars, UsageDetail, useUsageReport } from './UsageReadout'
 
@@ -7,6 +8,9 @@ import { UsageBars, UsageDetail, useUsageReport } from './UsageReadout'
  * AI usage over its system monitor. Tapping either opens one panel with
  * every set of figures; tapping again closes it, and so does touching
  * anything else on the page.
+ *
+ * The panel is portalled to the body: the bar is a stacking context under
+ * Control's transcript, so anything left inside it is drawn under that too.
  */
 export function MacReadouts() {
   const usage = useUsageReport()
@@ -14,6 +18,7 @@ export function MacReadouts() {
   const [open, setOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const root = useRef<HTMLDivElement>(null)
+  const panel = useRef<HTMLDivElement>(null)
 
   const hasUsage = usage !== null && usage.bars.length > 0
   const hasStats = stats !== null && stats.widgets.length > 0
@@ -30,7 +35,8 @@ export function MacReadouts() {
   useEffect(() => {
     if (!open) return
     const onPointerDown = (e: PointerEvent) => {
-      if (!root.current?.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      if (!root.current?.contains(target) && !panel.current?.contains(target)) setOpen(false)
     }
     document.addEventListener('pointerdown', onPointerDown, true)
     return () => document.removeEventListener('pointerdown', onPointerDown, true)
@@ -40,11 +46,13 @@ export function MacReadouts() {
 
   return (
     <div ref={root} className="m-bar__readouts" onClick={() => setOpen((o) => !o)}>
-      {open && (
-        <div className="m-detail" role="dialog" aria-label="Mac readouts">
+      {/* A portal's clicks still bubble to the readouts, so a tap on it closes it. */}
+      {open && createPortal(
+        <div ref={panel} className="m-detail" role="dialog" aria-label="Mac readouts">
           {hasStats && <SystemStatsDetail snapshot={stats} />}
           {hasUsage && <UsageDetail snapshot={usage} now={now} />}
-        </div>
+        </div>,
+        document.body
       )}
       {hasUsage && <UsageBars snapshot={usage} />}
       {hasStats && <SystemStatsPicture snapshot={stats} />}

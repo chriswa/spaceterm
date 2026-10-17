@@ -98,7 +98,9 @@ textarea, input, [contenteditable="true"], .cm-content {
   left: 0;
   right: 0;
   bottom: 0;
-  /* Over the toolbar sheet, whose rocket closes it again (MobileApp.tsx). */
+  /* Over the toolbar sheet, whose rocket closes it again (MobileApp.tsx).
+     A stacking context: nothing inside rises above this, whatever its own
+     z-index, so a popup that must clear the transcript is portalled out. */
   z-index: 2147483160;
   height: var(--m-bar-height);
   display: grid;
@@ -194,6 +196,8 @@ textarea, input, [contenteditable="true"], .cm-content {
   position: fixed;
   left: 8px;
   bottom: calc(var(--m-bar-height) + 6px);
+  /* Over the transcript, which the bar sits under; hence the portal. */
+  z-index: 2147483250;
   max-width: calc(100vw - 16px);
   display: flex;
   flex-direction: column;
