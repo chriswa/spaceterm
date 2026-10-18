@@ -4803,6 +4803,62 @@ describe('Receptionist: mark_read waits on the user', () => {
     expect(h.traces.some(trace => trace.what === 'mark-read' && trace.text.includes('cut off'))).toBe(true)
   })
 
+  describe('cut off after the agent\'s own words', () => {
+    const own = 'Kevin here. Volume is conserved now.'
+    /** Kevin's report in his own voice, then Control on Sally, cut off `heard` characters into the speech. */
+    const cutOff = async (say: Array<{ from: string; text: string }>, heard: number) => {
+      const speech = handPlayed()
+      const h = harness({
+        unread: [KEVIN_ID, SALLY_ID],
+        speech: speech.backend,
+        replies: [reply(say, [{ tool: 'mark_read', agent: KEVIN }, { tool: 'mark_read', agent: SALLY }]), reply([{ from: 'control', text: 'Sure.' }])],
+      })
+      await h.receptionist.hear('what is new?', 'spoken')
+      await flush()
+      speech.heard(heard)
+      await flush()
+      h.receptionist.userSpeaking(true)
+      await flush()
+      void h.receptionist.hear('ok, push it', 'spoken')
+      h.receptionist.userSpeaking(false)
+      await flush()
+      expect(h.turns).toHaveLength(2)
+      return h
+    }
+    const markReads = (h: ReturnType<typeof harness>): string[] => h.traces.filter(trace => trace.what === 'mark-read').map(trace => trace.text)
+
+    it('marks an agent read whose own words the user heard all of, and not one told of in Control\'s cut words', async () => {
+      const h = await cutOff([
+        { from: KEVIN, text: 'Volume is conserved now.' },
+        { from: 'control', text: 'And Sally has finished the login page.' },
+      ], `${own} And Sally`.length)
+      expect(reads(h)).toEqual([`read ${KEVIN_ID}`])
+      expect(markReads(h)).toEqual([
+        expect.stringMatching(new RegExp(`${SALLY}.* left unread: the reply that told you of it was cut off$`)),
+        expect.stringMatching(/Kevin.* marked read: you answered after hearing all it said in its own voice$/),
+      ])
+    })
+
+    it('marks it read when cut off in another agent\'s own words', async () => {
+      const h = await cutOff([
+        { from: KEVIN, text: 'Volume is conserved now.' },
+        { from: SALLY, text: 'The login page is done.' },
+      ], `${own} Sally here. The login`.length)
+      expect(reads(h)).toEqual([`read ${KEVIN_ID}`])
+      expect(markReads(h)).toContainEqual(expect.stringMatching(/Sally.* left unread: the reply was cut off before you had heard all it said in its own voice$/))
+    })
+
+    it('leaves it unread when cut off in its own words, even with the rest of them heard', async () => {
+      const h = await cutOff([
+        { from: KEVIN, text: 'Volume is conserved now.' },
+        { from: 'control', text: 'Sally is still working.' },
+        { from: KEVIN, text: 'One more thing: the tests are slow.' },
+      ], `${own} Sally is still working. Kevin here. One more`.length)
+      expect(reads(h)).toEqual([])
+      expect(markReads(h)).toContainEqual(expect.stringMatching(/Kevin.* left unread: the reply was cut off before you had heard all it said in its own voice$/))
+    })
+  })
+
   it('leaves an agent unread that has news since the reply that told of it', async () => {
     const h = harness({ unread: [KEVIN_ID], replies: [report(), reply([{ from: 'control', text: 'Sure.' }]), reply([], [])] })
     await h.receptionist.hear('how is Kevin?', 'spoken')

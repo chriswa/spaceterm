@@ -10,14 +10,18 @@ import { fileStore, type NameRegistryStore } from './name-registry'
  *
  * Control cannot mark an agent read itself: it writes a reply knowing all of
  * it, and has no way to know whether the user heard it. So mark_read only
- * asks, and the read waits on the reply that carried it. It is kept only if
- * nothing of that reply was cut off — talked over, cut short by Control for
+ * asks, and the read waits on the reply that carried it. What it waits on is
+ * the agent's own words: the parts of that reply spoken in its own voice, or,
+ * for an agent Control told of in its own voice, all of the reply. It is kept
+ * only if none of those was cut off — talked over, cut short by Control for
  * news, lost with the device, muted part-way, or failed by the voice — and
  * is done when the user next says something to Control, having taken in all
- * of it by then: heard it through, or, written to a muted device, read it
- * (see `ConsumptionLedger.settle`). A cut drops the read for good, even if
- * the rest is replayed later: an agent left unread is shown again, which is
- * the cheap mistake; one marked read on a report the user missed is lost.
+ * of them by then: heard them through, or, written to a muted device, read
+ * them (see `ConsumptionLedger.settle`). A cut after an agent's own words,
+ * in Control's or another agent's, leaves its read waiting. A cut into them
+ * drops the read for good, even if the rest is replayed later: an agent left
+ * unread is shown again, which is the cheap mistake; one marked read on a
+ * report the user missed is lost.
  *
  * Kept on disk, since the user is told to restart the server often: a read
  * waiting on their answer outlives the server, and is done or dropped by the
@@ -38,7 +42,16 @@ export interface DeferredRead {
    * is not marked read.
    */
   stateSince?: number
+  /**
+   * The reply's parts spoken in the agent's own voice, which are what the
+   * user must take in for it to be read; absent for none, and then it is all
+   * of the reply.
+   */
+  parts?: number[]
 }
+
+/** Whether the user took in all of what `read` waits on, of the reply it was told in. */
+export type TookIn = (read: DeferredRead) => boolean
 
 interface Saved {
   /** Reads by where the reply that told each agent is in the record. */
@@ -79,26 +92,35 @@ export class DeferredReads {
     this.save()
   }
 
-  /** The reply at `at` was cut off: what it told is not marked read, whatever the user takes in of it later. Returns what was dropped. */
-  cut(at: number): DeferredRead[] {
-    const dropped = this.byReply.get(at) ?? []
-    this.byReply.delete(at)
-    if (this.unsettled === at) this.unsettled = undefined
-    if (dropped.length) this.save()
+  /**
+   * The reply at `at` was cut off: an agent the user had not yet taken in all
+   * of (`tookIn`) is not marked read, whatever they take in of it later. The
+   * rest still wait on the user's answer. Returns what was dropped.
+   */
+  cut(at: number, tookIn: TookIn): DeferredRead[] {
+    const reads = this.byReply.get(at) ?? []
+    const kept = reads.filter(tookIn)
+    const dropped = reads.filter(read => !kept.includes(read))
+    if (kept.length) this.byReply.set(at, kept)
+    else this.byReply.delete(at)
+    const wasUnsettled = this.unsettled === at
+    if (wasUnsettled) this.unsettled = undefined
+    if (dropped.length || wasUnsettled) this.save()
     return dropped
   }
 
   /**
    * The user's message at `at` answers every reply before it. Returns the
-   * reads of those the user took in whole (`whole`), to be done, and the
-   * rest, dropped; either way none of them waits any longer.
+   * reads the user took in all of (`tookIn`, given the reply each was told
+   * in), to be done, and the rest, dropped; either way none of them waits
+   * any longer.
    */
-  settle(at: number, whole: (replyAt: number) => boolean): { done: DeferredRead[]; dropped: DeferredRead[] } {
+  settle(at: number, tookIn: (replyAt: number, read: DeferredRead) => boolean): { done: DeferredRead[]; dropped: DeferredRead[] } {
     const done: DeferredRead[] = []
     const dropped: DeferredRead[] = []
     for (const [replyAt, reads] of this.byReply) {
       if (replyAt >= at) continue
-      ;(whole(replyAt) ? done : dropped).push(...reads)
+      for (const read of reads) (tookIn(replyAt, read) ? done : dropped).push(read)
       this.byReply.delete(replyAt)
     }
     if (this.unsettled !== undefined && this.unsettled < at) this.unsettled = undefined
@@ -114,7 +136,11 @@ export class DeferredReads {
       for (const entry of Array.isArray(saved.replies) ? saved.replies : []) {
         if (!Array.isArray(entry) || typeof entry[0] !== 'number' || !Array.isArray(entry[1])) continue
         const reads = (entry[1] as Array<Partial<DeferredRead>>).flatMap(read => typeof read?.nodeId === 'string'
-          ? [{ nodeId: read.nodeId, ...(typeof read.stateSince === 'number' ? { stateSince: read.stateSince } : {}) }]
+          ? [{
+              nodeId: read.nodeId,
+              ...(typeof read.stateSince === 'number' ? { stateSince: read.stateSince } : {}),
+              ...(Array.isArray(read.parts) && read.parts.length && read.parts.every(part => typeof part === 'number') ? { parts: read.parts } : {}),
+            }]
           : [])
         if (reads.length) this.byReply.set(entry[0], reads)
       }

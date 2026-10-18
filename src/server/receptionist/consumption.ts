@@ -175,10 +175,15 @@ export class ConsumptionLedger {
     return { read: [], lost }
   }
 
-  /** Whether the user has taken in every word of the reply at `at`; false for one not followed. */
-  whole(at: number): boolean {
+  /**
+   * Whether the user has taken in every word of the reply at `at`, or of just
+   * its parts `parts` when given; false for one not followed.
+   */
+  whole(at: number, parts?: readonly number[]): boolean {
     const reply = this.replies.get(at)
-    return reply !== undefined && complete(reply)
+    if (!reply) return false
+    if (!parts) return complete(reply)
+    return parts.every(i => reply.texts[i] !== undefined && subtract([[0, reply.texts[i].length]], reply.consumed[i]).length === 0)
   }
 
   /** Replies with words waiting for the user, and where the oldest is. */

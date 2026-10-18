@@ -1020,9 +1020,9 @@ export class Receptionist {
       for (const { at: of, part, from, to } of read) this.deps.record.consumed(of, part, from, to, 'read')
       for (const { at: of, lengths } of lost) this.deps.record.amendHeard(of, lengths)
     })
-    const { done, dropped } = this.reads.settle(at, replyAt => this.ledger.whole(replyAt))
+    const { done, dropped } = this.reads.settle(at, (replyAt, read) => this.ledger.whole(replyAt, read.parts))
     this.markRead(done)
-    if (dropped.length) this.traceReads(dropped, 'left unread: you had not taken in all of what told you of it')
+    this.traceDropped(dropped, false)
   }
 
   /**
@@ -1067,8 +1067,22 @@ export class Receptionist {
       this.deps.markRead(read.nodeId)
       marked.push(read)
     }
-    if (marked.length) this.traceReads(marked, 'marked read: you answered after hearing all of what told you of it')
+    for (const [ownWords, reads] of byOwnWords(marked)) {
+      this.traceReads(reads, `marked read: you answered after hearing all ${ownWords ? 'it said in its own voice' : 'of what told you of it'}`)
+    }
     if (movedOn.length) this.traceReads(movedOn, 'left unread: it has news since what you heard')
+  }
+
+  /**
+   * Reads left unread, as the reply that told of them was `cut` off, or the
+   * user answered without taking in what the cut had left them to.
+   */
+  private traceDropped(reads: readonly DeferredRead[], cut: boolean): void {
+    for (const [ownWords, some] of byOwnWords(reads)) {
+      this.traceReads(some, `left unread: ${cut
+        ? ownWords ? 'the reply was cut off before you had heard all it said in its own voice' : 'the reply that told you of it was cut off'
+        : ownWords ? 'you had not taken in all it said in its own voice' : 'you had not taken in all of what told you of it'}`)
+    }
   }
 
   /** What became of mark_read, for the transcript's activity log and the log. */
@@ -2918,24 +2932,27 @@ export class Receptionist {
    */
   private render(say: readonly SayPart[], agents: readonly RosterAgent[]): {
     spoken: SpokenPart[]; mentioned: NodeId[]; speakers: string[]
+    /** The agent each part is spoken by in its own voice, or undefined for Control. */
+    voices: Array<NodeId | undefined>
   } {
     const handles = this.handles(agents)
     const byId = new Map(agents.map(agent => [agent.nodeId, agent]))
     const mentioned: NodeId[] = []
-    const resolve = (ref: string): { name: string; voice: string } | undefined => {
+    const resolve = (ref: string): { name: string; voice: string; nodeId: NodeId } | undefined => {
       const nodeId = this.resolve(ref, handles, agents)
       const agent = nodeId ? byId.get(nodeId) : undefined
       if (!agent) return undefined
       const named = this.named(agent.nodeId, handles)
       if (!named) return undefined
       if (!mentioned.includes(agent.nodeId)) mentioned.push(agent.nodeId)
-      return { name: named.name, voice: named.voice }
+      return { name: named.name, voice: named.voice, nodeId: agent.nodeId }
     }
     const spoken = renderSpeech(say, resolve, RECEPTIONIST_VOICE)
     // Who each part is heard as, for the speaking indicator: as `renderSpeech` decides, Control unless it is an agent's own.
-    const speakers = say.map(part => (part.from === CONTROL ? undefined : resolve(part.from)?.name) ?? RECEPTIONIST_NAME)
+    const owners = say.map(part => part.from === CONTROL ? undefined : resolve(part.from))
+    const speakers = owners.map(owner => owner?.name ?? RECEPTIONIST_NAME)
     for (const nodeId of mentioned) this.deps.names.touch(nodeId)
-    return { spoken, mentioned, speakers }
+    return { spoken, mentioned, speakers, voices: owners.map(owner => owner?.nodeId) }
   }
 
   /** The tokens of the agents being watched, for the turn's WATCHING line. */
@@ -2976,7 +2993,7 @@ export class Receptionist {
     // reason to move it. Only force_user_camera does, when they ask. Rendered
     // before the other actions run, since the words name agents as the model
     // saw them: "{Kevin} is now Ruth." says Kevin.
-    const { spoken, speakers } = this.render(reply.say, agents)
+    const { spoken, speakers, voices } = this.render(reply.say, agents)
     const froms = reply.say.map(part => part.from)
     // Being said: what backlog_next gave it is the user's now. Cut off, the note says to set it aside again.
     this.deps.backlog.settle(taken.splice(0))
@@ -2989,7 +3006,7 @@ export class Receptionist {
     // Read after the actions' awaits: muting while they ran writes this reply.
     const reading = this.reading
     const at = this.writeReply(froms, spoken, reading)
-    if (at !== undefined && spoken.length) this.reads.defer(at, reads)
+    if (at !== undefined && spoken.length) this.reads.defer(at, reads.map(read => withOwnParts(read, voices)))
     else if (reads.length) this.traceReads(reads, 'left unread: the reply that told you of it said nothing')
     // After the reply, so the transcript's activity log reads as it happened: silence, then the watch kept.
     this.keepWatchingUntold(events, reply, withWords)
@@ -3239,10 +3256,7 @@ export class Receptionist {
       this.deps.record.amendHeard(spokenAt, lengths, waiting)
       this.ledger.heard(spokenAt, lengths, waiting)
       if (waiting) this.onUnread(this.ledger.unread())
-      if (!this.ledger.whole(spokenAt)) {
-        const dropped = this.reads.cut(spokenAt)
-        if (dropped.length) this.traceReads(dropped, 'left unread: the reply that told you of it was cut off')
-      }
+      if (!this.ledger.whole(spokenAt)) this.traceDropped(this.reads.cut(spokenAt, read => this.ledger.whole(spokenAt, read.parts)), true)
     }
     const kept = redactSpoken(spoken, heard)
     const audible = kept.map(part => part.text).join(' ')
@@ -3266,6 +3280,19 @@ export class Receptionist {
     this.keepAway()
     return true
   }
+}
+
+/** `read` waiting on the parts of its reply spoken in its agent's own voice, if any: see `DeferredRead.parts`. */
+function withOwnParts(read: DeferredRead, voices: ReadonlyArray<NodeId | undefined>): DeferredRead {
+  const parts = voices.flatMap((nodeId, part) => nodeId === read.nodeId ? [part] : [])
+  return parts.length ? { ...read, parts } : read
+}
+
+/** Reads split by whether each waits on its agent's own words, for the activity log to say which. */
+function byOwnWords(reads: readonly DeferredRead[]): Array<[boolean, DeferredRead[]]> {
+  const own = reads.filter(read => read.parts)
+  const all = reads.filter(read => !read.parts)
+  return ([[true, own], [false, all]] as Array<[boolean, DeferredRead[]]>).filter(([, some]) => some.length)
 }
 
 /** Why a reply stopped short of the user: see `noteInterruption`. */
