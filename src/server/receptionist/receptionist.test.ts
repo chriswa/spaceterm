@@ -6,7 +6,7 @@ import type { SpeechBackend, SpeechContent, SpeechStatus } from '../voice-operat
 import type { SideQuestionResult } from '../side-questions'
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
-import { ASK_AGENT_REMINDER, BACK_REQUEST, HANDOVER_PROMPT, QUIET_OVER, RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
+import { ASK_AGENT_REMINDER, BACK_REQUEST, HANDOVER_PROMPT, HEARD_AGAIN, RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
 import {
   MAX_TURN_RETRIES, PROMPT_HASH, RETRYING_AFTER_ERROR, TURN_RETRY_MS, Receptionist, SessionBusy, sideQuestionPrompt, STOP_HOLD_MS, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type ReceptionistDeps, type RecordedMessage, type SavedSession, type SessionTurn,
 } from './receptionist'
@@ -1478,14 +1478,14 @@ describe('Receptionist', () => {
       replies: [
         reply([], [{ tool: 'monitor', agent: KEVIN }, { tool: 'refresh_clients' }]),
         (turn) => {
-          expect(turn.prompt.indexOf(QUIET_OVER)).toBeGreaterThanOrEqual(0)
-          expect(turn.prompt.indexOf(QUIET_OVER)).toBeLessThan(turn.prompt.indexOf('EVENTS:'))
+          expect(turn.prompt.indexOf(HEARD_AGAIN)).toBeGreaterThanOrEqual(0)
+          expect(turn.prompt.indexOf(HEARD_AGAIN)).toBeLessThan(turn.prompt.indexOf('EVENTS:'))
           expect(turn.prompt).not.toContain('THE USER IS BACK')
           return reply([{ from: 'control', text: `{${KEVIN}} stopped.` }])
         },
         (turn) => {
           // Told once.
-          expect(turn.prompt).not.toContain(QUIET_OVER)
+          expect(turn.prompt).not.toContain(HEARD_AGAIN)
           return reply([{ from: 'control', text: 'Sure.' }])
         },
       ],
@@ -1564,7 +1564,7 @@ describe('Receptionist', () => {
       replies: [
         reply([], [{ tool: 'restart_server' }]),
         (turn) => {
-          expect(turn.prompt).toContain(QUIET_OVER)
+          expect(turn.prompt).toContain(HEARD_AGAIN)
           expect(turn.prompt).toContain('restart_server did not restart the server: Server restart is already in progress')
           return reply([{ from: 'control', text: 'It was already restarting.' }])
         },
@@ -1598,7 +1598,7 @@ describe('Receptionist', () => {
       replies: [
         reply([], [{ tool: 'refresh_clients' }]),
         (turn) => {
-          expect(turn.prompt).toContain(QUIET_OVER)
+          expect(turn.prompt).toContain(HEARD_AGAIN)
           expect(turn.prompt).toContain('THE USER SAYS: how is Kevin?')
           // Nothing was missed: no catching up.
           expect(turn.prompt).not.toContain('THE USER IS BACK')
@@ -1623,11 +1623,11 @@ describe('Receptionist', () => {
         (turn) => {
           // Away: still quiet, and not told otherwise.
           expect(turn.prompt).toContain('THE USER IS AWAY')
-          expect(turn.prompt).not.toContain(QUIET_OVER)
+          expect(turn.prompt).not.toContain(HEARD_AGAIN)
           return reply([])
         },
         (turn) => {
-          expect(turn.prompt).toContain(QUIET_OVER)
+          expect(turn.prompt).toContain(HEARD_AGAIN)
           expect(turn.prompt).toContain('THE USER IS BACK')
           expect(turn.prompt).toContain(`They say: "${BACK_REQUEST}"`)
           expect(turn.prompt).toMatch(namedToken(KEVIN, ' is now stopped'))

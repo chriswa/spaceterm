@@ -232,11 +232,11 @@ function renderReturn(news: ReturnNews, spoke: boolean): string {
 }
 
 /**
- * Opens the first message the user can hear after Control went quiet with
- * restart_server or refresh_clients. Not a turn of its own: it waits for the next thing that needs
+ * Opens the first message the user can hear after restart_server or
+ * refresh_clients let go of Control. Not a turn of its own: it waits for the next thing that needs
  * Control, so a reconnection with nothing to tell says nothing.
  */
-export const QUIET_OVER = 'YOU ARE NO LONGER QUIET: the user has reconnected you since you went quiet, so they hear you again. Speak as usual from this message on.'
+export const HEARD_AGAIN = 'YOU ARE NO LONGER QUIET: the user has reconnected you since you went quiet, so they hear you again. Speak as usual from this message on.'
 
 const USER_SAYS = 'THE USER SAYS: '
 /** Opens a backlog item brought up at a pause: see backlog-pause.ts. */
@@ -251,16 +251,16 @@ const WATCHING_TRAILER = /\n\nWATCHING [^\n]*$/
 /**
  * One turn's message: any events, and then what the user said — or nothing, when the turn is the receptionist
  * deciding whether events are worth speaking up about. `listener` is `away` when nobody can hear the reply, or
- * what the user missed when they have just come back. `unquieted` opens it with `QUIET_OVER`. `watching` is the
+ * what the user missed when they have just come back. `heardAgain` opens it with `HEARD_AGAIN`. `watching` is the
  * tokens of the agents Control is watching. `pulled` is the backlog item the system took off for Control to bring
  * up, as backlog_next would describe it: see backlog-pause.ts.
  */
 export function renderTurnBody(
-  events: readonly ReceptionistEvent[], heard: string | undefined, listener?: 'away' | ReturnNews, unquieted = false, backlog = 0,
+  events: readonly ReceptionistEvent[], heard: string | undefined, listener?: 'away' | ReturnNews, heardAgain = false, backlog = 0,
   watching: readonly string[] = [], pulled?: string,
 ): string {
   const sections: string[] = []
-  if (unquieted) sections.push(QUIET_OVER)
+  if (heardAgain) sections.push(HEARD_AGAIN)
   if (listener && listener !== 'away') sections.push(renderReturn(listener, heard !== undefined))
   if (events.length) sections.push(`EVENTS:\n${events.map(renderEvent).join('\n')}`)
   if (pulled !== undefined) sections.push(`${FROM_BACKLOG}${pulled}`)

@@ -26,8 +26,8 @@ import {
   CONVERSATION_WORDS, decideInterruption, HANG_ON, lastWords, splitAtOffset, type InterruptionContext, type InterruptionVerdict,
 } from './self-interruption'
 import {
-  actionHeadline, CONTROL, heardLengths, isAction, playedLengths, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, goesQuiet, waitsForWords,
-  type QuietTool, type Reply, type SayPart, type SpokenPart, type ToolCall,
+  actionHeadline, CONTROL, heardLengths, isAction, playedLengths, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, letsGo,
+  type LetGoTool, type Reply, type SayPart, type SpokenPart, type ToolCall,
 } from './reply'
 import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
 import { decidePause, INTERRUPTION_QUIET_MS, PAUSE_WAIT_MS, pauseDialogue, type PauseJudgement, type PauseVerdict } from './backlog-pause'
@@ -646,11 +646,11 @@ export class Receptionist {
   /** The words the turn under way said while it looked things up, and how far the listener got: see `noteInterimCut`. */
   private interim: { attempt: Attempt; spoken: SpokenPart[]; at?: number; text: string; heard: number; ended: boolean } | undefined
   /**
-   * Control went quiet with restart_server or refresh_clients and has not yet been told it is heard
+   * Control was let go of by restart_server or refresh_clients and has not yet been told it is heard
    * again. Told with the first turn the user can hear, whatever starts it: a
    * reconnection with nothing missed starts none.
    */
-  private quieted = false
+  private letGoUntold = false
   /** What backlog_next gave the latest turn, until its reply is said; see `putBack`. */
   private taken: { attempt: Attempt; items: BacklogItem[] } | undefined
   /**
@@ -1300,8 +1300,8 @@ export class Receptionist {
    * The listener is here: if they missed something — events, a reply cut off
    * or never spoken — that gets a turn, framed on a return as their asking
    * what they missed (see `BACK_REQUEST`). Nothing missed, nothing is said:
-   * Control has nothing new to say, and having gone quiet is told with
-   * whatever next gives it a turn (see `quieted`).
+   * Control has nothing new to say, and being heard again is told with
+   * whatever next gives it a turn (see `letGoUntold`).
    *
    * The turn waits a moment: coming back by talking to Control, the user's
    * words are on their way in the same breath, and what they missed goes with
@@ -1585,8 +1585,8 @@ export class Receptionist {
     this.maybeSpeakUp()
   }
 
-  /** What a tool that goes quiet does once Control is let go of, and the line saying so. */
-  private goQuiet(tool: QuietTool): string {
+  /** What a tool that lets go of Control does once it has, and the line saying so. */
+  private letGoFor(tool: LetGoTool): string {
     const unheard = 'no device holds Control, so nobody hears you'
     switch (tool) {
       case 'restart_server': {
@@ -1704,12 +1704,12 @@ export class Receptionist {
     // Held on disk as this turn's until it is over: see pending-news.ts.
     const events = this.events.take(attempt, words, news)
     this.keepAway()
-    const unquieted = !away && this.quieted
-    if (unquieted) this.quieted = false
+    const heardAgain = !away && this.letGoUntold
+    if (heardAgain) this.letGoUntold = false
     // As things stand at the turn's start, however late its message leaves: words carried to it change, nothing else does.
     const backlogSize = this.deps.backlog.size
     const watching = this.watching()
-    const render = (said: string | undefined) => renderTurnBody(events, said, away ? 'away' : news, unquieted, backlogSize, watching, pulled?.described)
+    const render = (said: string | undefined) => renderTurnBody(events, said, away ? 'away' : news, heardAgain, backlogSize, watching, pulled?.described)
     // With the user's words, the events are in the transcript already, as what came with them.
     if (words === undefined && (events.length || news)) {
       this.trace('events', `${events.length ? `News: ${events.map(eventHeadline).join('; ')}` : 'You were back'}${away ? ', with nobody listening' : ''}`,
@@ -1734,7 +1734,7 @@ export class Receptionist {
     try {
       const reply = await this.converse(attempt, opening, earlier, away, taken)
       if (!attempt.isCurrent) {
-        this.requeue(attempt, events, news, unquieted)
+        this.requeue(attempt, events, news, heardAgain)
         this.putBack(taken)
         return
       }
@@ -1755,7 +1755,7 @@ export class Receptionist {
       this.putBack(taken)
       // Stopped before the session got the user's words, `ask` carried them on to the next message.
       const unsent = err instanceof Unsent && err.first
-      if (!attempt.isCurrent) { this.requeue(attempt, events, news, unquieted); return }
+      if (!attempt.isCurrent) { this.requeue(attempt, events, news, heardAgain); return }
       // Failed with the words, and any carried to them: tried again a little later, unless they have been tried enough.
       const { words: sent, failures } = opening
       const givenUp = sent !== undefined && !unsent && failures >= MAX_TURN_RETRIES
@@ -1832,8 +1832,8 @@ export class Receptionist {
    * that superseded this one may already be over by now — so this has to
    * offer them a turn of their own, not just wait for the next phase change.
    */
-  private requeue(attempt: Attempt, events: readonly ReceptionistEvent[], news: ReturnNews | undefined, unquieted: boolean): void {
-    if (unquieted) this.quieted = true
+  private requeue(attempt: Attempt, events: readonly ReceptionistEvent[], news: ReturnNews | undefined, heardAgain: boolean): void {
+    if (heardAgain) this.letGoUntold = true
     if (news) this.returnNews = mergeNews(news, this.returnNews)
     this.keepAway()
     if (!events.length && !news) return
@@ -2157,12 +2157,12 @@ export class Receptionist {
       }
       // Taken down by `stageReads`, with the turn it waits on.
       if (call.tool === 'mark_read') continue
-      if (goesQuiet(call)) {
+      if (letsGo(call)) {
         // Away first, so that nothing more is said, whatever happens next.
         serverLog(`[receptionist] ${call.tool}: letting go of Control`)
-        this.quieted = true
+        this.letGoUntold = true
         this.deps.letGo()
-        done.push(this.goQuiet(call.tool))
+        done.push(this.letGoFor(call.tool))
         continue
       }
       const nodeId = this.resolve(call.agent, handles, agents)
@@ -3000,7 +3000,7 @@ export class Receptionist {
     // page: those wait for them to be heard. On 2026-10-18 Iris's answer came
     // with the restart Control had promised to hold until the user heard it,
     // and the restart ran first and silenced it.
-    const afterWords: ToolCall[] = spoken.length ? actions.filter(waitsForWords) : []
+    const afterWords: ToolCall[] = spoken.length ? actions.filter(letsGo) : []
     // Done before a word is said, and reported by the words: the user never
     // waits through "Sent to Kevin" for the send. Talking over the words
     // undoes nothing, which is why Control asks first when it is unsure.

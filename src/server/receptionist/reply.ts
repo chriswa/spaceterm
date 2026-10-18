@@ -23,7 +23,7 @@ export type GivenName = { name: string; gender: VoiceGender }
 /**
  * A tool call. Actions run before any of the reply's words are said, which
  * report them afterwards, except those that wait for the words
- * (`waitsForWords`): see `Receptionist.speak`.
+ * (`letsGo`): see `Receptionist.speak`.
  */
 export type ToolCall = (
   /** `before`: a message number from an earlier read, for the page ending just before it. */
@@ -59,25 +59,17 @@ export interface Reply {
   tools: ToolCall[]
 }
 
-const QUIET_TOOLS = ['restart_server', 'refresh_clients'] as const
-export type QuietTool = typeof QUIET_TOOLS[number]
+const LET_GO_TOOLS = ['restart_server', 'refresh_clients'] as const
+export type LetGoTool = typeof LET_GO_TOOLS[number]
 
 /**
  * Tools after which nobody hears Control: restart_server and refresh_clients,
- * which take every client away. Each lets go of Control the moment it runs: see `waitsForWords` for
- * when that is.
+ * which take every client away. Each lets go of Control the moment it runs.
+ * They take the user's page away, not the user: the words that came with one
+ * are said first, and it runs once they have been heard.
  */
-export function goesQuiet(call: ToolCall): call is { tool: QuietTool } {
-  return (QUIET_TOOLS as readonly string[]).includes(call.tool)
-}
-
-/**
- * restart_server and refresh_clients take the user's page away, not the user:
- * the words that came with one are said first, and it runs once they have
- * been heard.
- */
-export function waitsForWords(call: ToolCall): call is { tool: 'restart_server' | 'refresh_clients' } {
-  return call.tool === 'restart_server' || call.tool === 'refresh_clients'
+export function letsGo(call: ToolCall): call is { tool: LetGoTool } {
+  return (LET_GO_TOOLS as readonly string[]).includes(call.tool)
 }
 
 /**
@@ -202,7 +194,7 @@ function parseToolCall(value: unknown): ToolCall {
   // The shape of a native tool call, which a model without its instructions falls back on.
   if ('input' in value) throw new Error(`a tool call's fields go beside "tool", not under "input"`)
   if (value.tool === 'nearby') return { tool: 'nearby' }
-  if ((QUIET_TOOLS as readonly string[]).includes(value.tool)) return { tool: value.tool as QuietTool }
+  if ((LET_GO_TOOLS as readonly string[]).includes(value.tool)) return { tool: value.tool as LetGoTool }
   if (value.tool === 'backlog_next') {
     const about = typeof value.about === 'string' ? value.about.trim() : ''
     return about ? { tool: 'backlog_next', about } : { tool: 'backlog_next' }
