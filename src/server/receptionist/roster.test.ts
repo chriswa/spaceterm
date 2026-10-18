@@ -78,7 +78,7 @@ describe('renderAgentDetails', () => {
       unread: true, stateSince: NOW - 12 * min, lastActivityAt: NOW - 3 * min,
       cacheWarmUntil: NOW + 41 * min, cacheWarmTokens: 120_000, startedAt: NOW - 125 * min, messagingId: 'spaceterm-43',
     })
-    const text = renderAgentDetails(a, () => 'Kevin', transcript, H, NOW)
+    const text = renderAgentDetails(a, () => 'Kevin', transcript, H, undefined, NOW)
     expect(text).toContain(`{Kevin:${H(a.nodeId)}}: water sim`)
     expect(text).toContain('UNREAD')
     expect(text).toContain('directory: fluids')

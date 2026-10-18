@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { asNodeId, type NodeId } from '../../shared/ids'
-import type { ClaudeState } from '../../shared/state'
+import { asNodeId, asPtySessionId, ROOT_NODE_ID, type NodeId } from '../../shared/ids'
+import type { ClaudeState, NodeData } from '../../shared/state'
 import type { TranscriptMessage } from '../agent-transcript'
 import type { SpeechBackend, SpeechContent, SpeechStatus } from '../voice-operator'
 import type { SideQuestionResult } from '../side-questions'
@@ -11,7 +11,7 @@ import {
   MAX_TURN_RETRIES, PROMPT_HASH, RETRYING_AFTER_ERROR, TURN_RETRY_MS, Receptionist, SessionBusy, sideQuestionPrompt, STOP_HOLD_MS, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type ReceptionistDeps, type RecordedMessage, type SavedSession, type SessionTurn,
 } from './receptionist'
 import type { RosterAgent } from './roster'
-import { DIRECTORY_PREFIX, Handles, NODE_PREFIX } from './handles'
+import { Handles, NODE_PREFIX } from './handles'
 import { Backlog } from './backlog'
 import { INTERRUPTION_QUIET_MS, MID_TOPIC_PAUSE_MS, PAUSE_MS } from './backlog-pause'
 import { Watches } from './watches'
@@ -32,13 +32,28 @@ const DIR_ID = asNodeId('33333333-0000-4000-8000-000000000000')
 const HANDLES = new Handles([KEVIN_ID, SALLY_ID])
 const KEVIN = HANDLES.of(KEVIN_ID)!
 const SALLY = HANDLES.of(SALLY_ID)!
-const DIR = new Handles([DIR_ID], DIRECTORY_PREFIX).of(DIR_ID)!
+const TITLE_ID = asNodeId('title-1')
 const NOTE_ID = asNodeId('note-1')
 const SHELL_ID = asNodeId('shell-1')
-/** Every node on the fake canvas. */
-const NODE_IDS = [KEVIN_ID, SALLY_ID, DIR_ID, NOTE_ID, SHELL_ID]
-const NOTE = new Handles(NODE_IDS, NODE_PREFIX).of(NOTE_ID)!
-const SHELL = new Handles(NODE_IDS, NODE_PREFIX).of(SHELL_ID)!
+const placed = (id: NodeId, parentId: NodeId) => ({ id, parentId, x: 0, y: 0, zIndex: 1, archivedChildren: [] })
+const agentSurface = (id: NodeId, parentId: NodeId, name: string) => ({
+  ...placed(id, parentId), type: 'terminal', name, alive: true, sessionId: asPtySessionId(id), cols: 80, rows: 24, claudeState: 'stopped',
+  claudeStatusUnread: false, claudeStatusAsleep: false, sortOrder: 0, terminalSessions: [], claudeSessionHistory: [], shellTitleHistory: [],
+}) as unknown as NodeData
+/** The fake canvas: the spaceterm directory, a Fleet title under it, and the agents, a note and a shell. */
+const CANVAS: NodeData[] = [
+  { ...placed(DIR_ID, ROOT_NODE_ID), type: 'directory', cwd: '/Users/me/spaceterm' },
+  { ...placed(TITLE_ID, DIR_ID), type: 'title', text: 'Fleet' },
+  agentSurface(KEVIN_ID, TITLE_ID, 'water sim'),
+  agentSurface(SALLY_ID, DIR_ID, 'login page'),
+  { ...placed(NOTE_ID, DIR_ID), type: 'markdown', width: 400, height: 300, content: 'Design notes\nand much more' },
+  agentSurface(SHELL_ID, ROOT_NODE_ID, 'zsh'),
+]
+const NODE_HANDLES = new Handles(CANVAS.map(node => node.id), NODE_PREFIX)
+const DIR = NODE_HANDLES.of(DIR_ID)!
+const TITLE = NODE_HANDLES.of(TITLE_ID)!
+const NOTE = NODE_HANDLES.of(NOTE_ID)!
+const SHELL = NODE_HANDLES.of(SHELL_ID)!
 
 const TRANSCRIPTS: Record<string, TranscriptMessage[]> = {
   '/t/kevin.jsonl': [
@@ -313,7 +328,8 @@ function harness(opts: {
       return { result: { ok: true, text: 'It was 42 litres exactly.', usage: { cache_read_input_tokens: 38_291, cache_creation_input_tokens: 1_500, input_tokens: 2 } } }
     },
     focus: (nodeId) => focused.push(nodeId),
-    nodeIds: () => NODE_IDS,
+    nodes: () => CANVAS,
+    rootCwd: () => '/Users/me',
     judgeInterruption: opts.judgeInterruption ?? (async () => 0),
     backlog,
     watches: new Watches({ store: opts.watchStore ?? memoryStore() }),
@@ -339,9 +355,11 @@ function harness(opts: {
     letGo: () => { wire.push('let go'); receptionist.setListener(undefined) },
     restartServer: () => { wire.push('restart server'); return opts.restartRefused },
     reloadPages: () => wire.push('reload pages'),
-    directories: () => [{ nodeId: DIR_ID, cwd: '/Users/me/spaceterm' }],
     userView: opts.userView ?? (() => undefined),
-    spawn: (directory, title, prompt) => { wire.push(`spawn ${directory} ${title}: ${prompt}`); return SALLY_ID },
+    spawn: (parent, title, prompt) => {
+      wire.push(`spawn ${parent} ${title}: ${prompt}`)
+      return { nodeId: SALLY_ID, cwd: '/Users/me/spaceterm' }
+    },
     retitle: (nodeId, title) => wire.push(`retitle ${nodeId} ${title}`),
     log: () => {},
     sleep: opts.sleep ?? (async () => {}),
@@ -631,14 +649,15 @@ describe('Receptionist', () => {
     })
   })
 
-  it('lists the agents and directories when asked', async () => {
+  it('lists only the agents in list_agents', async () => {
     const h = harness({
       replies: [
         reply([], [{ tool: 'list_agents' }]),
         (turn) => {
           expect(turn.prompt).toContain(`{${KEVIN}} (no name yet): water sim`)
           expect(turn.prompt).toContain('state: working')
-          expect(turn.prompt).toContain(`[${DIR}] /Users/me/spaceterm`)
+          expect(turn.prompt).not.toContain(DIR)
+          expect(turn.prompt).not.toContain('/Users/me/spaceterm')
           return reply([{ from: 'control', text: 'Two agents.' }])
         },
       ],
@@ -646,6 +665,40 @@ describe('Receptionist', () => {
     await h.receptionist.hear("what's everyone up to?", 'spoken')
     await flush()
     expect(h.spoken).toHaveLength(1)
+  })
+
+  it('lists the directories and titles, each with what it sits under, by the same handles nearby gives', async () => {
+    const h = harness({
+      replies: [
+        reply([], [{ tool: 'list_nodes', show: 'directories and titles' }, { tool: 'list_nodes', show: 'everything' }]),
+        (turn) => {
+          expect(turn.prompt).toContain(`list_nodes (directories and titles):\n[${DIR}] directory /Users/me/spaceterm | at the top level`)
+          expect(turn.prompt).toContain(`[${TITLE}] title "Fleet" | under: directory /Users/me/spaceterm | agents started here run in /Users/me/spaceterm`)
+          // Everything adds the agents, by their tokens, and the note, by its first line alone.
+          expect(turn.prompt).toContain(`{${KEVIN}} agent "water sim" | under: directory /Users/me/spaceterm > title "Fleet"`)
+          expect(turn.prompt).toContain(`[${NOTE}] note "Design notes"`)
+          expect(turn.prompt).not.toContain('and much more')
+          return reply([{ from: 'control', text: 'One directory.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('where can you start agents?', 'spoken')
+    await flush()
+    expect(h.spoken).toHaveLength(1)
+  })
+
+  it('says in agent_details what the agent sits under', async () => {
+    const h = harness({
+      replies: [
+        reply([], [{ tool: 'agent_details', agent: KEVIN }]),
+        (turn) => {
+          expect(turn.prompt).toContain('under: directory /Users/me/spaceterm > title "Fleet"')
+          return reply([{ from: 'control', text: 'Under Fleet.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('where is Kevin?', 'spoken')
+    await flush()
   })
 
   it('lists each agent on one line, leaving its last exchange to agent_details', async () => {
@@ -1880,7 +1933,7 @@ describe('Receptionist', () => {
     const h = harness({
       replies: [
         reply([], [
-          { tool: 'spawn', directory: DIR, title: 'shorter answers', prompt: 'Make Control answer in one sentence.' },
+          { tool: 'spawn', under: DIR, title: 'shorter answers', prompt: 'Make Control answer in one sentence.' },
         ]),
         () => reply([{ from: 'control', text: `Started {${SALLY}}.` }]),
         (turn) => {
@@ -1897,14 +1950,44 @@ describe('Receptionist', () => {
     expect(h.turns).toHaveLength(3)
   })
 
+  it('starts a new agent under a title, and says the directory it runs in', async () => {
+    const h = harness({
+      replies: [
+        reply([], [{ tool: 'spawn', under: `[${TITLE}]`, title: 'fleet work', prompt: 'Tidy the fleet.' }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(/spawn started \{Kevin:[-\w]+\} "fleet work" under title "Fleet", running in \/Users\/me\/spaceterm\./)
+          return reply([{ from: 'control', text: `Started {Kevin:${SALLY}} under Fleet.` }])
+        },
+      ],
+    })
+    await h.receptionist.hear('start one under Fleet', 'spoken')
+    await flush()
+    expect(h.wire).toEqual([`spawn ${TITLE_ID} fleet work: Tidy the fleet.`])
+  })
+
+  it('refuses to spawn under anything but a directory or a title, before anything runs', async () => {
+    const h = harness({
+      replies: [
+        reply([], [{ tool: 'spawn', under: NOTE, title: 'notes', prompt: 'Read the notes.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain(`"${NOTE}" (in spawn) is not a directory's or title's handle.`)
+          return reply([{ from: 'control', text: 'Where should it go?' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('start one on the notes', 'spoken')
+    await flush()
+    expect(h.wire).toEqual([])
+  })
+
   it('names an agent it starts at once, and is told the name before it confirms', async () => {
     const h = harness({
       replies: [
-        reply([], [{ tool: 'spawn', directory: DIR, title: 'login page', prompt: 'Fix the login page.' }]),
+        reply([], [{ tool: 'spawn', under: DIR, title: 'login page', prompt: 'Fix the login page.' }]),
         (turn) => {
           // Within the same turn: the result comes back before anything is said.
           // The fake spawns onto Sally's node, so the new handle is hers with a suffix.
-          expect(turn.prompt).toMatch(new RegExp(`spawn started \\{Kevin:${SALLY}[-\\w]*\\} "login page" in /Users/me/spaceterm\\. It is called Kevin\\.`))
+          expect(turn.prompt).toMatch(new RegExp(`spawn started \\{Kevin:${SALLY}[-\\w]*\\} "login page" under directory /Users/me/spaceterm\\. It is called Kevin\\.`))
           return reply([{ from: 'control', text: `Started {Kevin:${SALLY}} in the spaceterm directory.` }])
         },
       ],
@@ -1915,7 +1998,7 @@ describe('Receptionist', () => {
     expect(h.turns).toHaveLength(2)
     expect(said(h)).toEqual([JSON.stringify([{ text: 'Started Kevin in the spaceterm directory.', voice: RECEPTIONIST_VOICE }])])
     // The record says who was started, for recall.
-    expect(h.record.some(message => message.content.startsWith(`STARTED {Kevin:${SALLY}`) && message.content.endsWith(' in /Users/me/spaceterm: Fix the login page.'))).toBe(true)
+    expect(h.record.some(message => message.content.startsWith(`STARTED {Kevin:${SALLY}`) && message.content.endsWith(' under directory /Users/me/spaceterm: Fix the login page.'))).toBe(true)
   })
 
   it('is told of an agent it started even when the user talks before its result is sent', async () => {
@@ -1924,7 +2007,7 @@ describe('Receptionist', () => {
       replies: [
         // The lookup beside it runs after the spawn: the user talks while it does.
         reply([], [
-          { tool: 'spawn', directory: DIR, title: 'login page', prompt: 'Fix the login page.' },
+          { tool: 'spawn', under: DIR, title: 'login page', prompt: 'Fix the login page.' },
           { tool: 'find_agent', query: 'the login page' },
         ]),
         (turn) => {
@@ -1944,11 +2027,11 @@ describe('Receptionist', () => {
     const h = harness({
       replies: [
         reply([], [
-          { tool: 'spawn', directory: DIR, title: 'login page', prompt: 'Fix the login page.', name: 'Bob', gender: 'masculine' },
+          { tool: 'spawn', under: DIR, title: 'login page', prompt: 'Fix the login page.', name: 'Bob', gender: 'masculine' },
         ]),
         (turn) => {
           // The fake spawns onto Sally's node, so the new handle is hers with a suffix.
-          expect(turn.prompt).toMatch(new RegExp(`spawn started \\{Bob:${SALLY}[-\\w]*\\} "login page" in /Users/me/spaceterm\\. It is called Bob\\.`))
+          expect(turn.prompt).toMatch(new RegExp(`spawn started \\{Bob:${SALLY}[-\\w]*\\} "login page" under directory /Users/me/spaceterm\\. It is called Bob\\.`))
           return reply([{ from: 'control', text: `Started {Bob:${SALLY}} on the login page.` }])
         },
       ],
@@ -2350,7 +2433,7 @@ describe('Receptionist', () => {
       replies: [
         reply([{ from: 'control', text: 'Going there.' }], [{ tool: 'force_user_camera', target: 'node-nowhere-at-all' }]),
         (turn) => {
-          expect(turn.prompt).toContain('"node-nowhere-at-all" (in force_user_camera) is not a live agent, a directory, or a node from nearby')
+          expect(turn.prompt).toContain('"node-nowhere-at-all" (in force_user_camera) is not a live agent, or a node from list_nodes or nearby')
           return reply([{ from: 'control', text: 'I could not find that.' }])
         },
       ],
@@ -2824,7 +2907,7 @@ describe('Receptionist: agents it started, and agents that end', () => {
     const h = harness({
       replies: [
         reply([], [
-          { tool: 'spawn', directory: DIR, title: 'tidy', prompt: 'Tidy the imports.' },
+          { tool: 'spawn', under: DIR, title: 'tidy', prompt: 'Tidy the imports.' },
         ]),
         (turn) => {
           expect(turn.prompt).toContain('It is now watched for its next stop')
@@ -2859,7 +2942,7 @@ describe('Receptionist: agents it started, and agents that end', () => {
     const h = harness({
       replies: [
         reply([], [
-          { tool: 'spawn', directory: DIR, title: 'login page', prompt: 'Fix the login page.' },
+          { tool: 'spawn', under: DIR, title: 'login page', prompt: 'Fix the login page.' },
         ]),
         () => reply([{ from: 'control', text: `Started {${SALLY}}.` }]),
         (turn) => {

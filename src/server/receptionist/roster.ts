@@ -40,16 +40,6 @@ export interface RosterAgent {
   messagingId?: string
 }
 
-/** A directory node on the canvas: somewhere a new agent can be started. */
-export interface RosterDirectory {
-  nodeId: NodeId
-  cwd: string
-}
-
-export function renderDirectories(directories: readonly RosterDirectory[], handleOf: (nodeId: NodeId) => string): string {
-  return directories.map(directory => `[${handleOf(directory.nodeId)}] ${directory.cwd}`).join('\n')
-}
-
 /** Characters of an agent's last message that agent_details shows. */
 const DETAILS_LAST_MESSAGE_CHARS = 1_500
 /** Characters of the request that message answered. */
@@ -113,10 +103,13 @@ export function renderAgentDetails(
   nameOf: (nodeId: NodeId) => string | undefined,
   messages: TranscriptMessage[],
   handleOf: (nodeId: NodeId) => string,
+  /** Where it sits on the canvas, outermost first: see `pathWords`. */
+  under?: string,
   now = Date.now(),
 ): string {
   const lines = [`${agentHeading(agent, nameOf, handleOf)}: ${agent.title}`]
   if (agent.unread) lines.push('  UNREAD: it has news the user has not looked at')
+  if (under) lines.push(`  under: ${under}`)
   if (agent.cwd) lines.push(`  directory: ${path.basename(agent.cwd)}`)
   lines.push(`  state: ${stateWords(agent, now)}`)
   if (agent.lastActivityAt) lines.push(`  last active: ${ago(now - agent.lastActivityAt)} ago`)

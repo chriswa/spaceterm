@@ -10,6 +10,7 @@
 import { interruptedWordStart, redactUnheard } from '../unheard'
 import { AGENT_TOKEN, stripBraces } from './agent-token'
 import type { VoiceGender } from './name-voice-table'
+import { DEFAULT_NODE_LIST_SHOW, NODE_LIST_SHOWS, type NodeListShow } from './node-list'
 
 /** Who a spoken part comes from: the receptionist itself, or an agent by its token. */
 export const CONTROL = 'control'
@@ -32,11 +33,13 @@ export type ToolCall = (
   | { tool: 'interrupt'; agent: string }
   | { tool: 'archive_agent'; agent: string }
   | { tool: 'unarchive_agent'; agent: string }
-  | { tool: 'spawn'; directory: string; title: string; prompt: string; name?: GivenName }
+  /** `under`: the handle of the directory or title the new agent goes under. */
+  | { tool: 'spawn'; under: string; title: string; prompt: string; name?: GivenName }
   /** At least one of `title` and `name`. */
   | { tool: 'rename_agent'; agent: string; title?: string; name?: GivenName }
   | { tool: 'recall'; search: string }
   | { tool: 'list_agents' }
+  | { tool: 'list_nodes'; show: NodeListShow }
   | { tool: 'agent_details'; agent: string }
   | { tool: 'find_agent'; query: string }
   | { tool: 'nearby' }
@@ -82,7 +85,7 @@ export function silencedIfQuiet(reply: Reply): Reply {
  * so they run at once, never waiting for speech.
  */
 export function isLookup(call: ToolCall): boolean {
-  return call.tool === 'read' || call.tool === 'recall' || call.tool === 'list_agents' || call.tool === 'agent_details' || call.tool === 'find_agent' || call.tool === 'nearby' ||
+  return call.tool === 'read' || call.tool === 'recall' || call.tool === 'list_agents' || call.tool === 'list_nodes' || call.tool === 'agent_details' || call.tool === 'find_agent' || call.tool === 'nearby' ||
     call.tool === 'backlog_next'
 }
 
@@ -125,7 +128,7 @@ export function actionHeadline(call: ToolCall): string {
     case 'interrupt': return `INTERRUPTED ${who(call.agent)}`
     case 'archive_agent': return `ARCHIVED ${who(call.agent)}`
     case 'unarchive_agent': return `UNARCHIVED ${who(call.agent)}`
-    case 'spawn': return `STARTED AN AGENT in ${call.directory}: ${call.prompt}`
+    case 'spawn': return `STARTED AN AGENT under ${call.under}: ${call.prompt}`
     case 'rename_agent': return `RENAMED ${who(call.agent)}: ${[call.name?.name, call.title && `"${call.title}"`].filter(Boolean).join(' ')}`
     case 'force_user_camera': return `TOOK YOU TO ${call.target}`
     case 'go_quiet': return 'WENT QUIET'
@@ -180,11 +183,17 @@ function parseSayPart(value: unknown): SayPart {
 /** Every tool, so a wrong name is answered with the right ones rather than a guess at its fields. */
 const TOOL_NAMES: Record<ToolCall['tool'], true> = {
   read: true, ask_agent: true, monitor: true, send: true, interrupt: true, archive_agent: true, unarchive_agent: true,
-  spawn: true, rename_agent: true, recall: true, list_agents: true, agent_details: true, find_agent: true, nearby: true, force_user_camera: true, go_quiet: true,
+  spawn: true, rename_agent: true, recall: true, list_agents: true, list_nodes: true, agent_details: true, find_agent: true, nearby: true, force_user_camera: true, go_quiet: true,
   restart_server: true, refresh_clients: true,
   backlog_add: true, backlog_next: true, mark_read: true,
 }
 const TOOL_LIST = Object.keys(TOOL_NAMES).join(', ')
+
+/** A node's handle as list_nodes shows it, `[node-amber-otter]`, or as a token, `{node-amber-otter}`, bare. */
+function stripBrackets(written: string): string {
+  const bare = stripBraces(written)
+  return bare.startsWith('[') && bare.endsWith(']') ? bare.slice(1, -1).trim() : bare
+}
 
 function parseToolCall(value: unknown): ToolCall {
   if (!isRecord(value) || typeof value.tool !== 'string') {
@@ -209,6 +218,13 @@ function parseToolCall(value: unknown): ToolCall {
     return { tool: 'force_user_camera', target }
   }
   if (value.tool === 'list_agents') return { tool: 'list_agents' }
+  if (value.tool === 'list_nodes') {
+    if (value.show === undefined) return { tool: 'list_nodes', show: DEFAULT_NODE_LIST_SHOW }
+    const show = typeof value.show === 'string' ? value.show.trim().toLowerCase() : ''
+    const known = NODE_LIST_SHOWS.find(option => option === show)
+    if (!known) throw new Error(`"list_nodes" takes "show" as one of: ${NODE_LIST_SHOWS.map(option => `"${option}"`).join(', ')}`)
+    return { tool: 'list_nodes', show: known }
+  }
   if (value.tool === 'find_agent') {
     if (typeof value.query !== 'string' || !value.query.trim()) throw new Error('"find_agent" needs a "query"')
     return { tool: 'find_agent', query: value.query.trim() }
@@ -220,11 +236,11 @@ function parseToolCall(value: unknown): ToolCall {
   if (value.tool === 'spawn') {
     const field = (name: string): string => {
       const text = typeof value[name] === 'string' ? (value[name] as string).trim() : ''
-      if (!text) throw new Error(`"spawn" needs a "${name}"`)
+      if (!text) throw new Error(`"spawn" needs ${/^[aeiou]/.test(name) ? 'an' : 'a'} "${name}"`)
       return text
     }
     const name = givenName(value, 'spawn')
-    return { tool: 'spawn', directory: stripBraces(field('directory')), title: field('title'), prompt: field('prompt'), ...(name && { name }) }
+    return { tool: 'spawn', under: stripBrackets(field('under')), title: field('title'), prompt: field('prompt'), ...(name && { name }) }
   }
   const agent = typeof value.agent === 'string' ? stripBraces(value.agent) : ''
   if (!agent) throw new Error(`tool "${value.tool}" needs an "agent"`)

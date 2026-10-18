@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'crypto'
 import type { NodeId } from '../../shared/ids'
-import type { ClaudeState } from '../../shared/state'
+import type { ClaudeState, NodeData } from '../../shared/state'
 import { serverLog } from '../server-log'
 import { lastAgentProse, type TranscriptMessage } from '../agent-transcript'
 import { INTERRUPTED_MARKER } from '../unheard'
@@ -11,7 +11,8 @@ import type { DeferredRead, DeferredReads } from './deferred-reads'
 import type { NamedVoice, VoiceGender } from './name-voice-table'
 import { RECEPTIONIST_NAME, RECEPTIONIST_VOICE } from './name-voice-table'
 import type { NameProblem } from './name-registry'
-import { DIRECTORY_PREFIX, editDistance, Handles, NODE_PREFIX } from './handles'
+import { editDistance, Handles, NODE_PREFIX } from './handles'
+import { isPlace, pathWords, renderNodeList, type NodeListContext, type NodeListShow } from './node-list'
 import { AGENT_TOKEN, agentToken, parseAgentRef, stripBraces } from './agent-token'
 import { whereWords, type NearbyNode } from './nearby'
 import { NOTHING_PENDING, sameStatus, statusOf, statusToTell, type SpacetermStatus, type StatusSample } from './spaceterm-status'
@@ -37,7 +38,7 @@ import type { Asking, PendingNews } from './pending-news'
 import { RESTARTED_MID_REPLY, type CarryOver } from './carry-over'
 import { compactionTrace, type Compaction } from './compaction'
 import {
-  cacheWords, capMessage, endedAskable, endedCacheWords, NO_SIDE_QUESTIONS, readAgent, renderAgentDetails, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
+  cacheWords, capMessage, endedAskable, endedCacheWords, NO_SIDE_QUESTIONS, readAgent, renderAgentDetails, renderRoster, STATE_WORDS, type RosterAgent,
 } from './roster'
 
 /**
@@ -258,8 +259,10 @@ export interface ReceptionistDeps {
    * asked to be taken there: see the force_user_camera tool.
    */
   focus(nodeId: NodeId): void
-  /** Every node on the canvas, for the handles force_user_camera takes. */
-  nodeIds(): NodeId[]
+  /** Every live node on the canvas: for list_nodes, for the handles nodes go by, and for where an agent sits. */
+  nodes(): NodeData[]
+  /** The root's default working directory, which a node with no directory above it hands on. */
+  rootCwd(): string | undefined
   /** Archive a node and everything under it, as the user's own archive does. Returns how many nodes went. */
   archive(nodeId: NodeId): number
   /**
@@ -297,10 +300,11 @@ export interface ReceptionistDeps {
    * its middle. Undefined when no screen has reported where it is.
    */
   userView(): { view: CameraBounds; nodes: NearbyNode[] } | undefined
-  /** Directory nodes, where a new agent can be started. */
-  directories(): RosterDirectory[]
-  /** Start a new Claude surface under a directory node. Returns its node. */
-  spawn(directoryNodeId: NodeId, title: string, prompt: string): NodeId
+  /**
+   * Start a new Claude surface under a directory or title node, in the working
+   * directory it inherits. Returns its node and that directory.
+   */
+  spawn(parentNodeId: NodeId, title: string, prompt: string): { nodeId: NodeId; cwd?: string }
   /** Change an agent surface's title, as the user's own rename does. */
   retitle(nodeId: NodeId, title: string): void
   /** Append-only record of every turn. Best-effort. */
@@ -2103,6 +2107,10 @@ export class Receptionist {
         results.push(this.listAgents(agents, handles))
         continue
       }
+      if (call.tool === 'list_nodes') {
+        results.push(this.listNodes(call.show, agents, handles))
+        continue
+      }
       if (call.tool === 'nearby') {
         results.push(this.nearby(agents, handles))
         continue
@@ -2174,7 +2182,7 @@ export class Receptionist {
           results.push(this.read(agent, this.token(agent.nodeId, handles), call, false))
           break
         case 'agent_details':
-          results.push(this.agentDetails(agent, handles))
+          results.push(this.agentDetails(agent, agents, handles))
           break
         case 'monitor':
           done.push(this.watchFromNow(agent, 'Control called monitor') === 'reported'
@@ -2423,12 +2431,12 @@ export class Receptionist {
 
   /** Start a new agent, and watch for its first answer as for a send. */
   private spawn(call: Extract<ToolCall, { tool: 'spawn' }>, agents: readonly RosterAgent[]): string {
-    const directories = this.deps.directories()
-    const directoryId = this.directoryHandles(directories).find(call.directory)
-    const directory = directories.find(candidate => candidate.nodeId === directoryId)
-    if (!directory) return `spawn [${call.directory}]: that directory is gone.`
+    const place = this.place(call.under)
+    if (!place) return `spawn [${call.under}]: that directory or title is gone.`
+    const where = place.type === 'directory' ? `directory ${place.cwd}` : `title "${place.text}"`
     try {
-      const nodeId = this.deps.spawn(directory.nodeId, call.title, call.prompt)
+      const { nodeId, cwd } = this.deps.spawn(place.id, call.title, call.prompt)
+      const runsIn = place.type === 'directory' ? '' : cwd ? `, running in ${cwd}` : ', with no directory to run in'
       // Named now, not lazily as other agents are: the result carries the
       // name, so the confirmation that follows it can introduce the agent.
       // checkNames has passed a chosen name; only one taken since then fails
@@ -2437,16 +2445,24 @@ export class Receptionist {
       const named = chosen && chosen.ok ? chosen.named : this.deps.names.assign(nodeId)
       const handle = this.handles([...agents.map(agent => agent.nodeId), nodeId].map(id => ({ nodeId: id }))).of(nodeId)
       const token = agentToken(handle ?? nodeId, named?.name)
-      this.deps.log({ event: 'spawned', nodeId, directory: directory.cwd, title: call.title, prompt: call.prompt, name: named?.name ?? null, chosen: call.name ?? null })
-      this.deps.record.append([{ role: 'assistant', content: `STARTED ${token} in ${directory.cwd}: ${call.prompt}` }])
+      this.deps.log({ event: 'spawned', nodeId, under: place.id, directory: cwd ?? null, title: call.title, prompt: call.prompt, name: named?.name ?? null, chosen: call.name ?? null })
+      this.deps.record.append([{ role: 'assistant', content: `STARTED ${token} under ${where}${runsIn}: ${call.prompt}` }])
       // After its name: the activity line names it as the STARTED line does.
       this.watch(nodeId, 'after-work', 'Control started it')
       const refused = chosen && !chosen.ok ? `, not ${call.name!.name}: ${this.nameProblemWords(chosen.problem)}` : ''
       const name = named ? `. It is called ${named.name}${refused}` : ''
-      return `spawn started ${token} "${call.title}" in ${directory.cwd}${name}. It is now watched for its next stop`
+      return `spawn started ${token} "${call.title}" under ${where}${runsIn}${name}. It is now watched for its next stop`
     } catch (err) {
-      return `spawn in ${directory.cwd} failed: ${err instanceof Error ? err.message : String(err)}`
+      return `spawn under ${where} failed: ${err instanceof Error ? err.message : String(err)}`
     }
+  }
+
+  /** The directory or title a handle names, if it is still on the canvas. */
+  private place(handle: string): (NodeData & { type: 'directory' | 'title' }) | undefined {
+    const nodes = this.deps.nodes()
+    const nodeId = this.nodeHandles(nodes).find(handle)
+    const node = nodes.find(candidate => candidate.id === nodeId)
+    return node && isPlace(node) ? node : undefined
   }
 
   /**
@@ -2683,21 +2699,19 @@ export class Receptionist {
     return new Handles(agents.map(agent => agent.nodeId))
   }
 
-  private directoryHandles(directories: readonly RosterDirectory[]): Handles {
-    return new Handles(directories.map(directory => directory.nodeId), DIRECTORY_PREFIX)
+  /**
+   * Handles for the nodes on the canvas, as list_nodes and nearby give them
+   * for what is not an agent. Always over every live node, never a filtered
+   * few, so a node has the same handle in every list.
+   */
+  private nodeHandles(nodes: readonly NodeData[] = this.deps.nodes()): Handles {
+    return new Handles(nodes.map(node => node.id), NODE_PREFIX)
   }
 
-  /** Handles for any node on the canvas, as nearby gives them for what is not an agent. */
-  private nodeHandles(): Handles {
-    return new Handles(this.deps.nodeIds(), NODE_PREFIX)
-  }
-
-  /** Whatever force_user_camera can take the user to: an agent by its token, a directory, or any node. */
+  /** Whatever force_user_camera can take the user to: an agent by its token, or any node by its handle. */
   private resolveTarget(ref: string, handles: Handles, agents: readonly RosterAgent[]): NodeId | undefined {
     const { key } = parseAgentRef(ref)
-    return this.resolve(ref, handles, agents)
-      ?? this.directoryHandles(this.deps.directories()).find(key)
-      ?? this.nodeHandles().find(key)
+    return this.resolve(ref, handles, agents) ?? this.nodeHandles().find(key)
   }
 
   /**
@@ -2766,7 +2780,7 @@ export class Receptionist {
   /**
    * Every handle a reply uses — in tool calls, in placeholders, and as who a
    * spoken part comes from — that is not a live agent's (or, for spawn, a
-   * directory's). One sentence per problem, with the nearest real handles.
+   * directory's or title's). One sentence per problem, with the nearest real handles.
    */
   private checkHandles(reply: Reply, handles: Handles, agents: readonly RosterAgent[]): string[] {
     const problems: string[] = []
@@ -2790,17 +2804,17 @@ export class Receptionist {
       return near.length ? ` Did you mean ${near.join(' or ')}?` : ' Use list_agents or find_agent to look it up.'
     }
     for (const call of reply.tools) {
-      if (call.tool !== 'spawn') continue
-      const directories = this.directoryHandles(this.deps.directories())
-      if (!directories.find(call.directory)) {
-        const near = directories.nearest(call.directory)
-        problems.push(`"${call.directory}" (in spawn) is not a directory's handle.${near.length ? ` Did you mean ${near.join(' or ')}?` : ' Use list_agents to see the directories.'}`)
-      }
+      if (call.tool !== 'spawn' || this.place(call.under)) continue
+      const nodes = this.deps.nodes()
+      const nodeHandles = this.nodeHandles(nodes)
+      const places = new Set(nodes.filter(isPlace).map(node => node.id))
+      const near = nodeHandles.nearest(call.under, nodes.length).filter(handle => places.has(nodeHandles.find(handle)!)).slice(0, 2)
+      problems.push(`"${call.under}" (in spawn) is not a directory's or title's handle.${near.length ? ` Did you mean ${near.join(' or ')}?` : ' Use list_nodes to see the directories and titles.'}`)
     }
     for (const { ref, where, camera, tool } of this.agentRefs(reply)) {
       if (camera) {
         if (!this.resolveTarget(ref, handles, agents)) {
-          problems.push(`"${ref}" (${where}) is not a live agent, a directory, or a node from nearby.${suggest(ref)}`)
+          problems.push(`"${ref}" (${where}) is not a live agent, or a node from list_nodes or nearby.${suggest(ref)}`)
         }
       } else if (this.resolve(ref, handles, agents)) {
         continue
@@ -2835,21 +2849,41 @@ export class Receptionist {
     return `nearby:\n${lines.length ? lines.join('\n') : 'nothing is on the canvas.'}`
   }
 
-  /** The list_agents tool: every live agent, a line each, and the directories. */
+  /** The list_agents tool: every live agent, a line each. */
   private listAgents(agents: readonly RosterAgent[], handles: Handles): string {
     const handleOf = (nodeId: NodeId) => handles.of(nodeId) ?? nodeId
-    const sections = [`AGENTS:\n${renderRoster(agents, nodeId => this.deps.names.get(nodeId)?.name, handleOf)}`]
-    const directoryList = this.deps.directories()
-    const directoryHandles = this.directoryHandles(directoryList)
-    const directories = renderDirectories(directoryList, nodeId => directoryHandles.of(nodeId) ?? nodeId)
-    if (directories) sections.push(`DIRECTORIES:\n${directories}`)
-    return `list_agents:\n${sections.join('\n\n')}`
+    return `list_agents:\n${renderRoster(agents, nodeId => this.deps.names.get(nodeId)?.name, handleOf)}`
+  }
+
+  /**
+   * The list_nodes tool: the directories, the titles, or everything on the
+   * canvas, each with its path. Logged with its size, since every result stays
+   * in Control's session until compaction: a canvas big enough to near the cap
+   * is the sign the tool needs rethinking.
+   */
+  private listNodes(show: NodeListShow, agents: readonly RosterAgent[], handles: Handles): string {
+    const nodes = this.deps.nodes()
+    const list = renderNodeList(nodes, show, this.nodeListContext(nodes, agents, handles))
+    this.deps.log({ event: 'list-nodes', show, nodes: nodes.length, matched: list.matched, omitted: list.omitted, chars: list.text.length })
+    return `list_nodes (${show}):\n${list.text}`
+  }
+
+  private nodeListContext(nodes: readonly NodeData[], agents: readonly RosterAgent[], handles: Handles): NodeListContext {
+    const nodeHandles = this.nodeHandles(nodes)
+    const live = new Set(agents.map(agent => agent.nodeId))
+    return {
+      rootCwd: this.deps.rootCwd(),
+      handleOf: nodeId => nodeHandles.of(nodeId) ?? nodeId,
+      agentTokenOf: nodeId => live.has(nodeId) ? this.token(nodeId, handles) : undefined,
+    }
   }
 
   /** The agent_details tool: one agent in depth, up to the start of its last exchange. */
-  private agentDetails(agent: RosterAgent, handles: Handles): string {
+  private agentDetails(agent: RosterAgent, agents: readonly RosterAgent[], handles: Handles): string {
     const messages = agent.transcriptPath ? this.deps.readTranscript(agent.transcriptPath) : []
-    const details = renderAgentDetails(agent, nodeId => this.deps.names.get(nodeId)?.name, messages, nodeId => handles.of(nodeId) ?? nodeId)
+    const nodes = this.deps.nodes()
+    const under = pathWords(agent.nodeId, new Map(nodes.map(node => [node.id, node])), this.nodeListContext(nodes, agents, handles))
+    const details = renderAgentDetails(agent, nodeId => this.deps.names.get(nodeId)?.name, messages, nodeId => handles.of(nodeId) ?? nodeId, under || 'the top level')
     return `agent_details:\n${details}`
   }
 

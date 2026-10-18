@@ -71,13 +71,25 @@ describe('parseReply', () => {
   })
 
   it('reads a name given in spawn, which needs a gender with it', () => {
-    const spawn = (extra: string): string => `{"tools":[{"tool":"spawn","directory":"dir-x","title":"t","prompt":"p"${extra}}]}`
-    expect(parseReply(spawn('')).tools).toEqual([{ tool: 'spawn', directory: 'dir-x', title: 't', prompt: 'p' }])
+    const spawn = (extra: string): string => `{"tools":[{"tool":"spawn","under":"node-x","title":"t","prompt":"p"${extra}}]}`
+    expect(parseReply(spawn('')).tools).toEqual([{ tool: 'spawn', under: 'node-x', title: 't', prompt: 'p' }])
     expect(parseReply(spawn(',"name":"Bob","gender":"masculine"')).tools)
-      .toEqual([{ tool: 'spawn', directory: 'dir-x', title: 't', prompt: 'p', name: { name: 'Bob', gender: 'masculine' } }])
+      .toEqual([{ tool: 'spawn', under: 'node-x', title: 't', prompt: 'p', name: { name: 'Bob', gender: 'masculine' } }])
     expect(() => parseReply(spawn(',"name":"Bob"'))).toThrow('"spawn" with a "name" needs a "gender" for it, "masculine" or "feminine"')
     expect(() => parseReply(spawn(',"name":"Bob","gender":"male"'))).toThrow(/"masculine" or "feminine"/)
     expect(() => parseReply(spawn(',"gender":"feminine"'))).toThrow('"spawn" has a "gender" but no "name"')
+  })
+
+  it('reads spawn under a handle written as list_nodes shows it', () => {
+    const tools = parseReply('{"tools":[{"tool":"spawn","under":"[node-x]","title":"t","prompt":"p"}]}').tools
+    expect(tools).toEqual([{ tool: 'spawn', under: 'node-x', title: 't', prompt: 'p' }])
+    expect(() => parseReply('{"tools":[{"tool":"spawn","directory":"node-x","title":"t","prompt":"p"}]}')).toThrow('"spawn" needs an "under"')
+  })
+
+  it('reads list_nodes, defaulting to directories and titles, and refuses a filter it does not know', () => {
+    expect(parseReply('{"tools":[{"tool":"list_nodes"}]}').tools).toEqual([{ tool: 'list_nodes', show: 'directories and titles' }])
+    expect(parseReply('{"tools":[{"tool":"list_nodes","show":"Titles"}]}').tools).toEqual([{ tool: 'list_nodes', show: 'titles' }])
+    expect(() => parseReply('{"tools":[{"tool":"list_nodes","show":"notes"}]}')).toThrow(/"list_nodes" takes "show" as one of: "directories", "titles"/)
   })
 
   it('reads rename_agent: a title, a name with its gender, or both', () => {

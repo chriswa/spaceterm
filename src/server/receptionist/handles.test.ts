@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { asNodeId } from '../../shared/ids'
-import { ADJECTIVES, baseHandle, DIRECTORY_PREFIX, Handles, NOUNS } from './handles'
+import { ADJECTIVES, baseHandle, NODE_PREFIX, Handles, NOUNS } from './handles'
 import { NAME_VOICE_TABLE } from './name-voice-table'
 
 const ids = Array.from({ length: 40 }, (_, i) => asNodeId(`${i.toString(16).padStart(8, '0')}-0000-4000-8000-000000000000`))
@@ -61,7 +61,7 @@ describe('Handles', () => {
     expect(handles.nearest('completely-unrelated-words-here')).toEqual([])
   })
 
-  it('prefixes directory handles so they never look like an agent', () => {
-    expect(new Handles([ids[0]], DIRECTORY_PREFIX).of(ids[0])).toMatch(/^dir-[a-z]+-[a-z]+$/)
+  it('prefixes node handles so they never look like an agent', () => {
+    expect(new Handles([ids[0]], NODE_PREFIX).of(ids[0])).toMatch(/^node-[a-z]+-[a-z]+$/)
   })
 })

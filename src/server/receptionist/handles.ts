@@ -2,7 +2,7 @@ import { createHash } from 'crypto'
 import type { NodeId } from '../../shared/ids'
 
 /**
- * The ids the receptionist's model uses for agents and directories:
+ * The ids the receptionist's model uses for agents and the other nodes:
  * `amber-otter`, not `a3f9a2c`.
  *
  * Hex prefixes of node ids looked alike — many began with the same few
@@ -94,9 +94,11 @@ export class Handles {
   }
 }
 
-/** Directory handles carry a prefix, so an agent's and a directory's can never be confused. */
-export const DIRECTORY_PREFIX = 'dir-'
-/** As do handles for any other node — a note, a title — which only the camera can go to. */
+/**
+ * Every node's handle — a directory, a title, a note — carries a prefix, so it
+ * can never be confused with an agent's. One prefix for every type, over one
+ * set of every live node, so a node has a single handle wherever it is shown.
+ */
 export const NODE_PREFIX = 'node-'
 
 /** Levenshtein distance, for "did you mean". */

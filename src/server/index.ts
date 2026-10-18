@@ -76,7 +76,7 @@ import { AgentMetaAvailability } from './agent-meta-availability'
 import { SessionStatusObserver, type ObservedSurface } from './claude-state/session-status-observer'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { ancestorsOf, lookupIn } from '../shared/node-ancestry'
-import { DESKTOP_DEVICE, isNodeStamp, type DirectoryNodeData, type MarkdownNodeData, type NodeData, type ReceptionistHolder, type TerminalNodeData } from '../shared/state'
+import { DESKTOP_DEVICE, isNodeStamp, type MarkdownNodeData, type NodeData, type ReceptionistHolder, type TerminalNodeData } from '../shared/state'
 import { forkSession, sessionFilePath } from './session-fork'
 import { ForkTitler, forkName, surfaceTitle, FORK_LABEL } from './fork-title'
 import { parse as shellParse } from 'shell-quote'
@@ -3523,7 +3523,8 @@ async function startServer(): Promise<void> {
     focus: (nodeId) => {
       for (const client of holderClients()) send(client.link, { type: 'camera-follow', nodeId })
     },
-    nodeIds: () => Object.keys(stateManager.getState().nodes) as NodeId[],
+    nodes: () => stateManager.getNodes(),
+    rootCwd: () => stateManager.getRootCwd(),
     archive: (nodeId) => archiveNode(nodeId),
     unarchive: async (nodeId) => {
       const found = stateManager.findArchivedNode(nodeId)
@@ -3546,13 +3547,12 @@ async function startServer(): Promise<void> {
       if (node?.type === 'terminal' && node.alive) shipToSession(node.sessionId, text, true)
     },
     userView: receptionistView,
-    directories: () => stateManager.getNodes()
-      .filter((node): node is DirectoryNodeData => node.type === 'directory')
-      .map((node) => ({ nodeId: node.id, cwd: node.cwd })),
-    spawn: (directoryNodeId, title, prompt) => {
-      const directory = stateManager.getNode(directoryNodeId)
-      if (directory?.type !== 'directory') throw new Error('that is not a directory node')
-      return spawnClaudeSurface(directory.id, expandTilde(directory.cwd) ?? directory.cwd, prompt, title).id
+    spawn: (parentNodeId, title, prompt) => {
+      const parent = stateManager.getNode(parentNodeId)
+      if (parent?.type !== 'directory' && parent?.type !== 'title') throw new Error('that is not a directory or a title')
+      const inherited = ancestorCwd(stateManager.getState().nodes, parent.id)
+      const cwd = inherited && (expandTilde(inherited) ?? inherited)
+      return { nodeId: spawnClaudeSurface(parent.id, cwd, prompt, title).id, ...(inherited ? { cwd: inherited } : {}) }
     },
     retitle: (nodeId, title) => stateManager.renameNode(nodeId, title),
     interrupt: (nodeId) => {
