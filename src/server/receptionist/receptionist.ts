@@ -26,7 +26,7 @@ import {
   CONVERSATION_WORDS, decideInterruption, HANG_ON, lastWords, splitAtOffset, type InterruptionContext, type InterruptionVerdict,
 } from './self-interruption'
 import {
-  actionHeadline, CONTROL, heardLengths, isAction, playedLengths, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, silencedIfQuiet, goesQuiet, waitsForWords,
+  actionHeadline, CONTROL, heardLengths, isAction, playedLengths, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, goesQuiet, waitsForWords,
   type QuietTool, type Reply, type SayPart, type SpokenPart, type ToolCall,
 } from './reply'
 import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
@@ -287,7 +287,7 @@ export interface ReceptionistDeps {
   markRead(nodeId: NodeId): void
   /**
    * Let go of Control, exactly as the Control button does when it lets go:
-   * no device holds it, every button shows it, and nobody hears it. See go_quiet.
+   * no device holds it, every button shows it, and nobody hears it. See restart_server and refresh_clients.
    */
   letGo(): void
   /** Restart the server gracefully, as the ↻ button does. Returns why it cannot, if it cannot. */
@@ -646,7 +646,7 @@ export class Receptionist {
   /** The words the turn under way said while it looked things up, and how far the listener got: see `noteInterimCut`. */
   private interim: { attempt: Attempt; spoken: SpokenPart[]; at?: number; text: string; heard: number; ended: boolean } | undefined
   /**
-   * Control went quiet with go_quiet and has not yet been told it is heard
+   * Control went quiet with restart_server or refresh_clients and has not yet been told it is heard
    * again. Told with the first turn the user can hear, whatever starts it: a
    * reconnection with nothing missed starts none.
    */
@@ -1589,8 +1589,6 @@ export class Receptionist {
   private goQuiet(tool: QuietTool): string {
     const unheard = 'no device holds Control, so nobody hears you'
     switch (tool) {
-      case 'go_quiet':
-        return `go_quiet disconnected you at once, saying nothing: ${unheard}`
       case 'restart_server': {
         const refused = this.deps.restartServer()
         this.deps.log({ event: 'restart-server', ...(refused ? { refused } : {}) })
@@ -1870,15 +1868,6 @@ export class Receptionist {
         message = `That reply was not usable: ${err instanceof Error ? err.message : String(err)}. Reply with the JSON object only.`
         continue
       }
-      // Asked to go quiet: nothing more is said, not even a confirmation.
-      const quiet = silencedIfQuiet(reply)
-      if (quiet !== reply && reply.say.length) {
-        this.deps.log({ event: 'go-quiet-dropped-words', step, say: reply.say })
-        // The session keeps the words it wrote, and would take them as said.
-        this.notes.push('Nothing you wrote in "say" beside go_quiet was spoken: the user heard none of it.')
-        this.traceUnspoken(reply.say, 'go_quiet drops every word written beside it')
-      }
-      reply = quiet
       const agents = this.deps.agents()
       const handles = this.handles(agents)
       // A handle the model miscopied would send to nobody, or to the wrong

@@ -1473,10 +1473,10 @@ describe('Receptionist', () => {
     expect(h.turns).toHaveLength(1)
   })
 
-  it('after go_quiet with nothing missed, says nothing on return, and is told it is heard again with the next event', async () => {
+  it('after refresh_clients with nothing missed, says nothing on return, and is told it is heard again with the next event', async () => {
     const h = harness({
       replies: [
-        reply([], [{ tool: 'monitor', agent: KEVIN }, { tool: 'go_quiet' }]),
+        reply([], [{ tool: 'monitor', agent: KEVIN }, { tool: 'refresh_clients' }]),
         (turn) => {
           expect(turn.prompt.indexOf(QUIET_OVER)).toBeGreaterThanOrEqual(0)
           expect(turn.prompt.indexOf(QUIET_OVER)).toBeLessThan(turn.prompt.indexOf('EVENTS:'))
@@ -1492,9 +1492,9 @@ describe('Receptionist', () => {
     })
     // Working, so the monitor waits for its next stop.
     h.setState(KEVIN_ID, 'working')
-    await h.receptionist.hear('watch Kevin, and be quiet', 'spoken')
+    await h.receptionist.hear('watch Kevin, and refresh the pages', 'spoken')
     await flush()
-    expect(h.wire).toEqual(['let go'])
+    expect(h.wire).toEqual(['let go', 'reload pages'])
     h.receptionist.setListener(h.listener)
     await flush()
     expect(h.turns).toHaveLength(1)
@@ -1593,10 +1593,10 @@ describe('Receptionist', () => {
     expect(h.traces.filter(trace => trace.what === 'server').map(trace => trace.text)).toEqual(['Server started', 'Server shutting down to restart'])
   })
 
-  it('after go_quiet, coming back by talking tells it it is heard again with the user\'s words, in one turn', async () => {
+  it('after refresh_clients, coming back by talking tells it it is heard again with the user\'s words, in one turn', async () => {
     const h = harness({
       replies: [
-        reply([], [{ tool: 'go_quiet' }]),
+        reply([], [{ tool: 'refresh_clients' }]),
         (turn) => {
           expect(turn.prompt).toContain(QUIET_OVER)
           expect(turn.prompt).toContain('THE USER SAYS: how is Kevin?')
@@ -1606,7 +1606,7 @@ describe('Receptionist', () => {
         },
       ],
     })
-    await h.receptionist.hear('be quiet', 'spoken')
+    await h.receptionist.hear('refresh the pages', 'spoken')
     await flush()
     // As the server does: speaking to Control takes it back, then is heard.
     h.receptionist.setListener(h.listener)
@@ -1616,10 +1616,10 @@ describe('Receptionist', () => {
     expect(said(h)).toHaveLength(1)
   })
 
-  it('after go_quiet, news that came while away gets a turn on return, which says it is heard again', async () => {
+  it('after refresh_clients, news that came while away gets a turn on return, which says it is heard again', async () => {
     const h = harness({
       replies: [
-        reply([], [{ tool: 'monitor', agent: KEVIN }, { tool: 'go_quiet' }]),
+        reply([], [{ tool: 'monitor', agent: KEVIN }, { tool: 'refresh_clients' }]),
         (turn) => {
           // Away: still quiet, and not told otherwise.
           expect(turn.prompt).toContain('THE USER IS AWAY')
@@ -1636,7 +1636,7 @@ describe('Receptionist', () => {
       ],
     })
     h.setState(KEVIN_ID, 'working')
-    await h.receptionist.hear('watch Kevin, and be quiet', 'spoken')
+    await h.receptionist.hear('watch Kevin, and refresh the pages', 'spoken')
     await flush()
     h.setState(KEVIN_ID, 'stopped')
     await flush()
@@ -2458,35 +2458,6 @@ describe('Receptionist', () => {
     await h.receptionist.hear('what is this one doing?', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
-  })
-
-  it('goes quiet with go_quiet at once, saying nothing, even when the model wrote words around it', async () => {
-    const h = harness({
-      replies: [
-        // Words before the call, among the parts, and after it: none of them is spoken.
-        JSON.stringify({
-          say: [{ from: 'control', text: 'Going quiet.' }, { tool: 'go_quiet' }, { from: 'control', text: 'Talk to me when you want me back.' }],
-          tools: [{ tool: 'send', agent: KEVIN, message: 'carry on' }],
-        }),
-        (turn) => {
-          expect(turn.prompt).toContain('go_quiet disconnected you at once, saying nothing')
-          // The session holds the words it wrote: it must not take them for said.
-          expect(turn.prompt).toContain('Nothing you wrote in "say" beside go_quiet was spoken')
-          return reply([])
-        },
-      ],
-    })
-    await h.receptionist.hear('send Kevin carry on, then be quiet', 'spoken')
-    await flush()
-    expect(h.spoken).toEqual([])
-    // The other actions in the reply still run; they just go unannounced.
-    expect(h.wire).toEqual(['let go', `send ${KEVIN_ID} carry on`])
-    expect(h.receptionist.phase).toBe('ready')
-    // Disconnected: nothing it says from now on is heard.
-    await h.receptionist.hear('anything?', 'spoken')
-    await flush()
-    expect(h.spoken).toEqual([])
-    expect(h.wire).toEqual(['let go', `send ${KEVIN_ID} carry on`])
   })
 
   it('moves the camera only with force_user_camera: to an agent, a directory, or a node from nearby', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseAgentRef } from './agent-token'
-import { CONTROL, isBlocking, parseReply, playedLengths, redactSpoken, renderSpeech, silencedIfQuiet, type Speaker } from './reply'
+import { CONTROL, isBlocking, parseReply, playedLengths, redactSpoken, renderSpeech, type Speaker } from './reply'
 
 const KEVIN: Speaker = { name: 'Kevin', voice: 'am_michael' }
 const resolveKevin = (handle: string): Speaker | undefined => handle === 'a1' ? KEVIN : undefined
@@ -16,14 +16,13 @@ describe('parseReply', () => {
     expect(parseReply('Sure:\n```json\n{"say":[{"text":"Hi."}]}\n```').say).toEqual([{ from: CONTROL, text: 'Hi.' }])
   })
 
-  it('reads go_quiet, which takes nothing', () => {
-    expect(parseReply('{"say":[{"from":"control","text":"Going quiet."}],"tools":[{"tool":"go_quiet"}]}').tools).toEqual([{ tool: 'go_quiet' }])
-  })
-
-  it('reads restart_server and refresh_clients, which take nothing and keep the words they wait for', () => {
+  it('reads restart_server and refresh_clients, which take nothing', () => {
     const parsed = parseReply('{"say":[{"text":"Restarting."}],"tools":[{"tool":"restart_server"},{"tool":"refresh_clients"}]}')
     expect(parsed.tools).toEqual([{ tool: 'restart_server' }, { tool: 'refresh_clients' }])
-    expect(silencedIfQuiet(parsed)).toBe(parsed)
+  })
+
+  it('refuses go_quiet, which is no longer a tool', () => {
+    expect(() => parseReply('{"tools":[{"tool":"go_quiet"}]}')).toThrow('unknown tool "go_quiet"')
   })
 
   it('reads a call written among the parts as one in "tools", in the order written', () => {
@@ -32,13 +31,6 @@ describe('parseReply', () => {
       say: [{ from: CONTROL, text: 'Sent.' }],
       tools: [{ tool: 'send', agent: 'a1', message: 'm' }, { tool: 'monitor', agent: 'a2' }],
     })
-  })
-
-  it('drops every word of a reply that goes quiet', () => {
-    const quiet = silencedIfQuiet(parseReply('{"say":[{"from":"control","text":"Going quiet."},{"tool":"go_quiet"},{"from":"control","text":"Bye."}],"tools":[{"tool":"interrupt","agent":"a1"}]}'))
-    expect(quiet).toEqual({ say: [], tools: [{ tool: 'go_quiet' }, { tool: 'interrupt', agent: 'a1' }] })
-    const loud = parseReply('{"say":[{"from":"control","text":"Sent."}],"tools":[{"tool":"send","agent":"a1","message":"m"}]}')
-    expect(silencedIfQuiet(loud)).toBe(loud)
   })
 
   it('treats missing say and tools as empty, and drops blank parts', () => {

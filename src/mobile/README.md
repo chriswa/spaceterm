@@ -556,8 +556,8 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   takes it from another.) It is a fixed phrase, matched on the whole
   of what was said by the phone and the server (`src/shared/control-shutdown.ts`) —
   never inside a longer request — and the model is only told it happened.
-  Asking in other words ("Control, be quiet") still goes to the model, whose
-  `go_quiet` sends it away the same way, but leaves the window to run out.
+  Asking in other words ("Control, be quiet") goes to the model, which has
+  no way to send itself away: only the phrase, Away, or the Control button do.
 - **"Control." on its own, then a breath** is fine: that first pause is not
   put to the turn model (which would call "Control." finished), and it waits
   five seconds (`afterWakeWordMs`) for the rest.
