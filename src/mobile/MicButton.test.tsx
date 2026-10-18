@@ -152,6 +152,7 @@ describe('a tap, from press to sound', () => {
     await screen.findByRole('alert')
     expect(container.querySelector('.m-mic--error')).not.toBeNull()
     expect(screen.getByRole('alert').textContent).toMatch(/did not start/)
+    expect(container.contains(screen.getByRole('alert'))).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: /Failed — tap to try again/ }))
     expect(container.querySelector('.m-mic--connecting')).not.toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()

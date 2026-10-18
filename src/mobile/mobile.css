@@ -89,9 +89,6 @@ textarea, input, [contenteditable="true"], .cm-content {
  * screen's rounded corners: an item centred in the bar is well up the curve,
  * where it is far narrower than --m-corner-radius, and 0.3 of it clears every
  * item here with a few points to spare.
- *
- * No transform or filter on the bar: the microphone's error, inside it, is
- * fixed to the screen.
  */
 .m-bar {
   position: fixed;
@@ -426,6 +423,7 @@ textarea, input, [contenteditable="true"], .cm-content {
   left: 50%;
   bottom: calc(var(--m-bar-height) + 10px);
   transform: translateX(-50%);
+  /* Over the transcript, which the bar sits under; hence the portal. */
   z-index: 2147483300;
   max-width: calc(100% - 32px);
   padding: 8px 12px;

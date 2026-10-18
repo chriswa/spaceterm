@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useReceptionistStore } from '@/stores/receptionistStore'
 import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { Dictation, useMicActivity, whenHearing } from './dictation'
@@ -195,7 +196,8 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
 
   return (
     <>
-      {error && <div className="m-mic__error" role="alert">{error}</div>}
+      {/* Portalled out of the bar, which Control's transcript covers. */}
+      {error && createPortal(<div className="m-mic__error" role="alert">{error}</div>, document.body)}
       <button
         ref={buttonRef}
         className={`m-mic m-mic--${look}`}
