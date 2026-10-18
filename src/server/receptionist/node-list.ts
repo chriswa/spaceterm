@@ -34,8 +34,8 @@ const PATH_NOTE_CHARS = 40
  */
 export const NODE_LIST_CHARS = 12_000
 
-/** Somewhere an agent can be started: under a directory or a title. */
-export function isPlace(node: NodeData): node is DirectoryNodeData | TitleNodeData {
+/** What the default list shows: the directories and titles, which the canvas is organised by. */
+function isPlace(node: NodeData): node is DirectoryNodeData | TitleNodeData {
   return node.type === 'directory' || node.type === 'title'
 }
 
@@ -98,14 +98,24 @@ export function pathWords(nodeId: NodeId, byId: ReadonlyMap<NodeId, NodeData>, c
     seen.add(parentId)
     const parent = byId.get(parentId)
     if (!parent) break
-    chain.unshift(nodeWords(parent, context, PATH_NOTE_CHARS))
+    chain.unshift(describeNode(parent, context))
     parentId = parent.parentId
   }
   return chain.join(' > ')
 }
 
+/** A node generated from files on disk (the agent docs branch): never listed, and nothing can go under it. */
+export function isGenerated(node: NodeData): boolean {
+  return !!node.ephemeral || node.type === 'meta-group' || node.type === 'meta-doc'
+}
+
+/** A node as a path or a result names it: `title "Fleet"`, `{Kevin:amber-otter} agent "water sim"`. */
+export function describeNode(node: NodeData, context: NodeListContext): string {
+  return nodeWords(node, context, PATH_NOTE_CHARS)
+}
+
 function shows(show: NodeListShow, node: NodeData): boolean {
-  if (node.ephemeral || node.type === 'meta-group' || node.type === 'meta-doc') return false
+  if (isGenerated(node)) return false
   switch (show) {
     case 'directories': return node.type === 'directory'
     case 'titles': return node.type === 'title'

@@ -23,7 +23,7 @@ import { agentTypeOrDefault, type AgentType } from '../shared/agent-type'
 import { createAgentDrivers, driverFor, type AgentDriver, type AgentLaunchSpec } from './agent-drivers'
 import { REAL_AGENT_PROVISIONING } from './agent-provisioning'
 import { probeCapabilities, formatCapabilityReport, REAL_CAPABILITY_DEPS } from './capabilities'
-import { asClaudeSessionId, asNodeId, asPtySessionId, nodeIdsOf, nodeIdFromFirstPtySession, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
+import { asClaudeSessionId, asNodeId, asPtySessionId, nodeIdsOf, nodeIdFromFirstPtySession, ROOT_NODE_ID, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
 import { randomUUID } from 'crypto'
 import { SessionManager } from './session-manager'
 import { LoginShellEnv } from './login-env'
@@ -3547,12 +3547,18 @@ async function startServer(): Promise<void> {
       if (node?.type === 'terminal' && node.alive) shipToSession(node.sessionId, text, true)
     },
     userView: receptionistView,
+    // Anywhere the user could start one: the root, or any live node but a
+    // generated one. The cwd is the one the canvas would give it — the
+    // parent's own, if it is a directory or a terminal (where the terminal is
+    // now), else the nearest above it, else the root's default.
     spawn: (parentNodeId, title, prompt) => {
-      const parent = stateManager.getNode(parentNodeId)
-      if (parent?.type !== 'directory' && parent?.type !== 'title') throw new Error('that is not a directory or a title')
-      const inherited = ancestorCwd(stateManager.getState().nodes, parent.id)
+      if (parentNodeId !== ROOT_NODE_ID) {
+        const parent = stateManager.getNode(parentNodeId)
+        if (!parent || parent.ephemeral) throw new Error('that is not on the canvas')
+      }
+      const inherited = ancestorCwd(stateManager.getState().nodes, parentNodeId)
       const cwd = inherited && (expandTilde(inherited) ?? inherited)
-      return { nodeId: spawnClaudeSurface(parent.id, cwd, prompt, title).id, ...(inherited ? { cwd: inherited } : {}) }
+      return { nodeId: spawnClaudeSurface(parentNodeId, cwd, prompt, title).id, ...(inherited ? { cwd: inherited } : {}) }
     },
     retitle: (nodeId, title) => stateManager.renameNode(nodeId, title),
     interrupt: (nodeId) => {

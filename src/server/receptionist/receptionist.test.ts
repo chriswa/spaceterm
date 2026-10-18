@@ -2020,17 +2020,42 @@ describe('Receptionist', () => {
     expect(h.wire).toEqual([`spawn ${TITLE_ID} fleet work: Tidy the fleet.`])
   })
 
-  it('refuses to spawn under anything but a directory or a title, before anything runs', async () => {
+  it('starts a new agent under anything the user could: an agent, a note, or the root', async () => {
     const h = harness({
       replies: [
-        reply([], [{ tool: 'spawn', under: NOTE, title: 'notes', prompt: 'Read the notes.' }]),
+        reply([], [
+          { tool: 'spawn', under: `{${KEVIN}}`, title: 'helper', prompt: 'Help Kevin.' },
+          { tool: 'spawn', under: NOTE, title: 'notes', prompt: 'Act on the notes.' },
+          { tool: 'spawn', under: 'root', title: 'loose', prompt: 'Something new.' },
+        ]),
         (turn) => {
-          expect(turn.prompt).toContain(`"${NOTE}" (in spawn) is not a directory's or title's handle.`)
+          expect(turn.prompt).toMatch(new RegExp(`"helper" under \\{${KEVIN}\\} agent "water sim", running in /Users/me/spaceterm\\.`))
+          expect(turn.prompt).toContain('"notes" under note "Design notes", running in /Users/me/spaceterm.')
+          expect(turn.prompt).toContain('"loose" under the top level of the canvas, running in /Users/me/spaceterm.')
+          return reply([{ from: 'control', text: 'Started three.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('start three', 'spoken')
+    await flush()
+    expect(h.wire).toEqual([
+      `spawn ${KEVIN_ID} helper: Help Kevin.`,
+      `spawn ${NOTE_ID} notes: Act on the notes.`,
+      'spawn root loose: Something new.',
+    ])
+  })
+
+  it('refuses to spawn under something that is not on the canvas, before anything runs', async () => {
+    const h = harness({
+      replies: [
+        reply([], [{ tool: 'spawn', under: 'node-nowhere-at-all', title: 'lost', prompt: 'Go nowhere.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('"node-nowhere-at-all" (in spawn) is not root, a live agent\'s token, or a node\'s handle.')
           return reply([{ from: 'control', text: 'Where should it go?' }])
         },
       ],
     })
-    await h.receptionist.hear('start one on the notes', 'spoken')
+    await h.receptionist.hear('start one over there', 'spoken')
     await flush()
     expect(h.wire).toEqual([])
   })

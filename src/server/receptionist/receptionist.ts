@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'crypto'
-import type { NodeId } from '../../shared/ids'
+import { ROOT_NODE_ID, type NodeId } from '../../shared/ids'
 import type { ClaudeState, NodeData } from '../../shared/state'
 import { serverLog } from '../server-log'
 import { lastAgentProse, type TranscriptMessage } from '../agent-transcript'
@@ -12,7 +12,7 @@ import type { NamedVoice, VoiceGender } from './name-voice-table'
 import { RECEPTIONIST_NAME, RECEPTIONIST_VOICE } from './name-voice-table'
 import type { NameProblem } from './name-registry'
 import { editDistance, Handles, NODE_PREFIX } from './handles'
-import { isPlace, pathWords, renderNodeList, type NodeListContext, type NodeListShow } from './node-list'
+import { describeNode, isGenerated, pathWords, renderNodeList, type NodeListContext, type NodeListShow } from './node-list'
 import { AGENT_TOKEN, agentToken, parseAgentRef, stripBraces } from './agent-token'
 import { whereWords, type NearbyNode } from './nearby'
 import { NOTHING_PENDING, sameStatus, statusOf, statusToTell, type SpacetermStatus, type StatusSample } from './spaceterm-status'
@@ -2123,7 +2123,7 @@ export class Receptionist {
     const done: string[] = []
     for (const call of calls) {
       if (call.tool === 'spawn') {
-        done.push(this.spawn(call, agents))
+        done.push(this.spawn(call, agents, handles))
         continue
       }
       if (call.tool === 'recall') {
@@ -2457,13 +2457,13 @@ export class Receptionist {
   }
 
   /** Start a new agent, and watch for its first answer as for a send. */
-  private spawn(call: Extract<ToolCall, { tool: 'spawn' }>, agents: readonly RosterAgent[]): string {
-    const place = this.place(call.under)
-    if (!place) return `spawn [${call.under}]: that directory or title is gone.`
-    const where = place.type === 'directory' ? `directory ${place.cwd}` : `title "${place.text}"`
+  private spawn(call: Extract<ToolCall, { tool: 'spawn' }>, agents: readonly RosterAgent[], handles: Handles): string {
+    const parent = this.spawnParent(call.under, agents, handles)
+    if (!parent) return `spawn [${call.under}]: that is no longer on the canvas.`
+    const where = parent.node ? describeNode(parent.node, this.nodeListContext(this.deps.nodes(), agents, handles)) : 'the top level of the canvas'
     try {
-      const { nodeId, cwd } = this.deps.spawn(place.id, call.title, call.prompt)
-      const runsIn = place.type === 'directory' ? '' : cwd ? `, running in ${cwd}` : ', with no directory to run in'
+      const { nodeId, cwd } = this.deps.spawn(parent.id, call.title, call.prompt)
+      const runsIn = parent.node?.type === 'directory' ? '' : cwd ? `, running in ${cwd}` : ', with no directory to run in'
       // Named now, not lazily as other agents are: the result carries the
       // name, so the confirmation that follows it can introduce the agent.
       // checkNames has passed a chosen name; only one taken since then fails
@@ -2472,7 +2472,7 @@ export class Receptionist {
       const named = chosen && chosen.ok ? chosen.named : this.deps.names.assign(nodeId)
       const handle = this.handles([...agents.map(agent => agent.nodeId), nodeId].map(id => ({ nodeId: id }))).of(nodeId)
       const token = agentToken(handle ?? nodeId, named?.name)
-      this.deps.log({ event: 'spawned', nodeId, under: place.id, directory: cwd ?? null, title: call.title, prompt: call.prompt, name: named?.name ?? null, chosen: call.name ?? null })
+      this.deps.log({ event: 'spawned', nodeId, under: parent.id, directory: cwd ?? null, title: call.title, prompt: call.prompt, name: named?.name ?? null, chosen: call.name ?? null })
       this.deps.record.append([{ role: 'assistant', content: `STARTED ${token} under ${where}${runsIn}: ${call.prompt}` }])
       // After its name: the activity line names it as the STARTED line does.
       this.watch(nodeId, 'after-work', 'Control started it')
@@ -2484,12 +2484,18 @@ export class Receptionist {
     }
   }
 
-  /** The directory or title a handle names, if it is still on the canvas. */
-  private place(handle: string): (NodeData & { type: 'directory' | 'title' }) | undefined {
+  /**
+   * Where spawn's "under" puts the new agent: anywhere the user could put one
+   * themselves — the root, a live agent by its token, or any node on the
+   * canvas by its handle — but never a generated node, which nothing can
+   * persist under. `node` is undefined for the root.
+   */
+  private spawnParent(ref: string, agents: readonly RosterAgent[], handles: Handles): { id: NodeId; node?: NodeData } | undefined {
+    if (ref.trim().toLowerCase() === ROOT_NODE_ID) return { id: ROOT_NODE_ID }
     const nodes = this.deps.nodes()
-    const nodeId = this.nodeHandles(nodes).find(handle)
+    const nodeId = this.resolve(ref, handles, agents) ?? this.nodeHandles(nodes).find(parseAgentRef(ref).key)
     const node = nodes.find(candidate => candidate.id === nodeId)
-    return node && isPlace(node) ? node : undefined
+    return node && !isGenerated(node) ? { id: node.id, node } : undefined
   }
 
   /**
@@ -2806,8 +2812,8 @@ export class Receptionist {
 
   /**
    * Every handle a reply uses — in tool calls, in placeholders, and as who a
-   * spoken part comes from — that is not a live agent's (or, for spawn, a
-   * directory's or title's). One sentence per problem, with the nearest real handles.
+   * spoken part comes from — that is not a live agent's (or, for spawn, any
+   * node's, or the root). One sentence per problem, with the nearest real handles.
    */
   private checkHandles(reply: Reply, handles: Handles, agents: readonly RosterAgent[]): string[] {
     const problems: string[] = []
@@ -2831,12 +2837,9 @@ export class Receptionist {
       return near.length ? ` Did you mean ${near.join(' or ')}?` : ' Use list_agents or find_agent to look it up.'
     }
     for (const call of reply.tools) {
-      if (call.tool !== 'spawn' || this.place(call.under)) continue
-      const nodes = this.deps.nodes()
-      const nodeHandles = this.nodeHandles(nodes)
-      const places = new Set(nodes.filter(isPlace).map(node => node.id))
-      const near = nodeHandles.nearest(call.under, nodes.length).filter(handle => places.has(nodeHandles.find(handle)!)).slice(0, 2)
-      problems.push(`"${call.under}" (in spawn) is not a directory's or title's handle.${near.length ? ` Did you mean ${near.join(' or ')}?` : ' Use list_nodes to see the directories and titles.'}`)
+      if (call.tool !== 'spawn' || this.spawnParent(call.under, agents, handles)) continue
+      const near = this.nodeHandles().nearest(parseAgentRef(call.under).key)
+      problems.push(`"${call.under}" (in spawn) is not root, a live agent's token, or a node's handle.${near.length ? ` Did you mean ${near.join(' or ')}?` : ' Use list_nodes to look it up.'}`)
     }
     for (const { ref, where, camera, tool } of this.agentRefs(reply)) {
       if (camera) {
