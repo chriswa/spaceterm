@@ -27,7 +27,7 @@ const NO_SPEAKERS: Speakers = { nameOf: () => undefined, nodeOf: () => undefined
 /** Every kind of activity entry; a line of any other is one this build cannot draw, and is skipped. */
 const TRACE_KINDS: ReadonlySet<ControlTraceKind> = new Set<ControlTraceKind>([
   'events', 'requeued', 'backlog-add', 'backlog-take', 'backlog-back', 'backlog-dropped', 'backlog-wait',
-  'watch', 'fired', 'unwatch', 'unspoken', 'cut-in', 'stopped', 'resumed', 'failed', 'compacted', 'mark-read',
+  'watch', 'fired', 'unwatch', 'unspoken', 'cut-in', 'stopped', 'resumed', 'failed', 'compacted', 'mark-read', 'server',
 ])
 
 /** The record, as bytes. A seam so tests need no file. */

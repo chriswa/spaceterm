@@ -1795,7 +1795,7 @@ export interface ControlImage {
  * even with the activity hidden, since Control said so out loud; Control's
  * session compacted to a summary (`compacted`), also always shown; an agent
  * Control told of marked read once the user answered, or left unread
- * (`mark-read`).
+ * (`mark-read`); the server shutting down or starting up (`server`).
  */
 export type ControlTraceKind =
   | 'events' | 'requeued'
@@ -1804,6 +1804,7 @@ export type ControlTraceKind =
   | 'unspoken' | 'cut-in' | 'stopped' | 'resumed'
   | 'failed' | 'compacted'
   | 'mark-read'
+  | 'server'
 
 /** One activity entry: a line, and the detail behind it when there is more to say. */
 export interface ControlTrace {

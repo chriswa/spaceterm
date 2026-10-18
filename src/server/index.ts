@@ -3709,6 +3709,7 @@ async function startServer(): Promise<void> {
 
   // Only now are the live agents known: what Control was watching before the
   // restart is picked up, and any stop it missed while down is reported.
+  receptionist?.serverStarted()
   receptionist?.resumeWatches()
 
   // --- Claude Code's own session status, paired with ours ---
@@ -3912,7 +3913,7 @@ async function startServer(): Promise<void> {
     // Awaited: Voice Operator is a separate process, so quitting mid-answer
     // without waiting for the cancellation to land leaves it talking on behalf
     // of an app that no longer exists. Bounded by the request timeout.
-    await receptionist?.shutdown()
+    await receptionist?.shutdown(then === 'restart')
     sideQuestionServer?.close()
     snapshotManager.dispose()
     stateManager.persistImmediate()

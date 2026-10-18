@@ -1536,6 +1536,21 @@ describe('Receptionist', () => {
     void h.receptionist.hear('did it work?', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
+    expect(h.record.map(message => message.content)).toContain('RESTART REFUSED: Server restart is already in progress')
+  })
+
+  it('puts restart_server in the record, for the transcript to show as an action', async () => {
+    const h = harness({ replies: [reply([], [{ tool: 'restart_server' }])] })
+    await h.receptionist.hear('restart the server', 'spoken')
+    await flush()
+    expect(h.record).toContainEqual({ role: 'assistant', content: 'RESTARTED THE SERVER' })
+  })
+
+  it('shows the server starting up and shutting down in the activity log', async () => {
+    const h = harness({ replies: [] })
+    h.receptionist.serverStarted()
+    await h.receptionist.shutdown(true)
+    expect(h.traces.filter(trace => trace.what === 'server').map(trace => trace.text)).toEqual(['Server started', 'Server shutting down to restart'])
   })
 
   it('after go_quiet, coming back by talking tells it it is heard again with the user\'s words, in one turn', async () => {
