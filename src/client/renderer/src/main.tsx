@@ -18,9 +18,8 @@ void installApi(electronTransport(host.pipe), host.platform, 'spaceterm-electron
   installDesktopMemoryProbe(message => window.api.log(message))
   window.api.log(`[Supersample] display ratio ${realDevicePixelRatio()}, ${isSupersampleActive() ? 'on' : 'off'}`)
   const { App } = await import('./App')
-  // Every start, a reload included, opens on Control's transcript.
-  const { useControlTranscriptStore } = await import('./stores/controlTranscriptStore')
-  useControlTranscriptStore.getState().setOpen(true)
+  // The desktop opens on the canvas where it was left; only the phone opens on
+  // Control's transcript (src/mobile/main.tsx).
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <App />
