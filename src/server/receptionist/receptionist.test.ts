@@ -20,6 +20,7 @@ import { BackBurner, FORGOTTEN_MS } from './back-burner'
 import { EndedAgents } from './ended-agents'
 import { PendingNews } from './pending-news'
 import { CarryOver, CRASHED_MID_REPLY, RESTARTED_MID_REPLY } from './carry-over'
+import type { Compaction } from './compaction'
 import type { NameRegistryStore } from './name-registry'
 import type { ControlImage, ControlTrace, ControlTranscriptEntry } from '../../shared/protocol'
 import { spokenPart } from './transcript'
@@ -109,6 +110,8 @@ function harness(opts: {
   lostSessions?: string[]
   /** When each answer says the daemon will compact the session (epoch ms); by default it never does. */
   compactsAt?: number
+  /** The compaction the daemon reports to each message continuing a session, and the model's window; by default none. */
+  compaction?: { report: Compaction; contextWindow: number }
   /** Messages the model fails to answer, as when its safeguards flag one. */
   failWhen?: (turn: SessionTurn) => boolean
   /** How many messages find the session busy with a turn some earlier server left behind. */
@@ -243,6 +246,7 @@ function harness(opts: {
         return {
           text, sessionId: turn.sessionId ?? `session-${++sessions}`,
           ...(opts.compactsAt !== undefined ? { compactsAt: opts.compactsAt } : {}),
+          ...(opts.compaction && turn.sessionId ? { compaction: opts.compaction.report, contextWindow: opts.compaction.contextWindow } : {}),
         }
       })().finally(() => { if (busy === turn) busy = undefined })
       return new Promise((resolve, reject) => {
@@ -520,6 +524,27 @@ describe('Receptionist', () => {
     await flush()
     expect(h.traces.filter(trace => trace.what === 'compacted').map(trace => trace.text))
       .toEqual(['Memory compacted 5 min ago: its last few messages were repeated to it word for word'])
+  })
+
+  it('shows how a compaction went, as the daemon reported it, in place of when it was due', async () => {
+    const report: Compaction = {
+      trigger: 'idle', lastActivity: Date.now() - 60 * 60_000, finishedBeforeMs: 5 * 60_000, durationMs: 15_000,
+      tokensBefore: 14_831, tokensAfter: 1_830, thresholdTokens: 40_000, costUsd: 0.0358, cachedTokens: 9_306, uncachedTokens: 4_872,
+    }
+    const h = harness({
+      compactsAt: Date.now() - 5 * 60_000,
+      compaction: { report, contextWindow: 1_000_000 },
+      replies: [reply([{ from: 'control', text: 'Kevin is on it.' }]), reply([{ from: 'control', text: 'Sent.' }])],
+    })
+    await h.receptionist.hear('what is Kevin doing?', 'spoken')
+    await flush()
+    await h.receptionist.hear('tell him to do that now', 'spoken')
+    await flush()
+    const traces = h.traces.filter(trace => trace.what === 'compacted')
+    expect(traces.map(trace => trace.text)).toEqual([
+      'Memory compacted (idle 55 minutes): 14.8k → 1.8k tokens, 1% (37% threshold) · idle 1 hour before this message',
+    ])
+    expect(traces[0].detail).toContain('repeated to it word for word')
   })
 
   describe('Spaceterm status', () => {

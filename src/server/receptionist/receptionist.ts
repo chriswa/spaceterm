@@ -35,6 +35,7 @@ import { FORGOTTEN_MS, type BackBurner } from './back-burner'
 import type { EndedAgent, EndedAgents } from './ended-agents'
 import type { Asking, PendingNews } from './pending-news'
 import { RESTARTED_MID_REPLY, type CarryOver } from './carry-over'
+import { compactionTrace, type Compaction } from './compaction'
 import {
   cacheWords, capMessage, endedAskable, endedCacheWords, NO_SIDE_QUESTIONS, readAgent, renderAgentDetails, renderDirectories, renderRoster, STATE_WORDS, type RosterAgent, type RosterDirectory,
 } from './roster'
@@ -86,6 +87,8 @@ export interface SessionAnswer {
   sessionId: string
   /** The session's context after this turn, which is what compaction keeps down. */
   contextTokens?: number
+  /** The model's context window, when the daemon said. */
+  contextWindow?: number
   source?: string
   wallMs?: number
   costUsd?: number
@@ -94,6 +97,8 @@ export interface SessionAnswer {
    * compaction this turn started; an hour on, for the one it scheduled.
    */
   compactsAt?: number
+  /** A compaction that finished, or failed, since the session's last answer: the daemon tells only the message after it. */
+  compaction?: Compaction
   /**
    * The message was aborted before its answer was finished, and `text` is
    * empty. An abort is not a rewind: `promptInSession` says whether the
@@ -1941,12 +1946,8 @@ export class Receptionist {
       if (consumption) notes.push(consumption)
       // Words that never reached the session are this message's own to say, not the recap's.
       const recap = forgets(session) ? renderRecap(opening ? withoutUnsent(earlier, opening.unsent) : earlier) : undefined
-      if (recap && session?.compactsAt !== undefined && session.compactsAt !== this.compactionShown) {
-        // Shown when the compacted session is next used, which can be an hour after the compaction itself.
-        this.compactionShown = session.compactsAt
-        const minutes = Math.round((Date.now() - session.compactsAt) / 60_000)
-        this.trace('compacted', `Memory compacted ${minutes < 1 ? 'just now' : `${minutes} min ago`}: its last few messages were repeated to it word for word`)
-      }
+      // The compaction this message is first to reach, by the session's own clock; the daemon's answer says how it went.
+      const compacted = recap && session?.compactsAt !== undefined && session.compactsAt !== this.compactionShown ? session.compactsAt : undefined
       // The old session's notes go to the first message of the new one.
       const handover = sessionId ? undefined : this.handover
       // Sampled now, as notes are, and said only when the session does not know it already.
@@ -1957,6 +1958,7 @@ export class Receptionist {
         recap, statusNote, notes.length ? `NOTE: ${notes.join(' ')}` : undefined, opening ? opening.render(opening.words) : prompt,
       ].filter(Boolean).join('\n\n')
       try {
+        const sentAt = Date.now()
         const answer = await this.askWhenFree(
           { prompt: message, systemPrompt: RECEPTIONIST_SYSTEM_PROMPT, turnId: randomUUID(), ...(sessionId ? { sessionId } : {}) }, signal, attempt.signal,
         )
@@ -1966,6 +1968,7 @@ export class Receptionist {
           if (opening) this.carryUnsent(opening)
           throw new Unsent(first)
         }
+        this.traceCompaction(answer, compacted, sentAt, recap !== undefined)
         if (handover !== undefined) this.handover = undefined
         // The message is in the session, so the session knows the status now:
         // told it just now, or told it before and nothing changed. A session
@@ -3129,6 +3132,23 @@ export class Receptionist {
   /** A reply that was written and never said, word for word, for the transcript's activity log. */
   private traceUnspoken(say: readonly SayPart[], why: string): void {
     this.trace('unspoken', `Never spoken: ${why}`, say.map(part => `${part.from === CONTROL ? 'Control' : `{${stripBraces(part.from)}}`}: ${part.text}`).join('\n\n'))
+  }
+
+  /**
+   * A compaction, into the transcript, when the session is next used — which
+   * can be an hour after the compaction itself. `expected` is the one the
+   * session's clock said was due: the daemon keeps what it compacted in
+   * memory only, so after a restart of its own it has nothing to report.
+   */
+  private traceCompaction(answer: SessionAnswer, expected: number | undefined, sentAt: number, recapped: boolean): void {
+    if (answer.compaction) {
+      const { text, detail } = compactionTrace(answer.compaction, answer.contextWindow, sentAt, recapped)
+      this.trace('compacted', text, detail)
+    } else if (expected !== undefined) {
+      const minutes = Math.round((sentAt - expected) / 60_000)
+      this.trace('compacted', `Memory compacted ${minutes < 1 ? 'just now' : `${minutes} min ago`}: its last few messages were repeated to it word for word`)
+    }
+    if (expected !== undefined) this.compactionShown = expected
   }
 
   /** Why Control did or did not speak, into the transcript: see `ReceptionistDeps.record.trace`. */

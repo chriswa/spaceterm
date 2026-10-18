@@ -82,6 +82,8 @@ export interface ClaudePrintResponse {
   wall_ms: number
   /** The session's context after the turn. */
   context_tokens?: number
+  /** The model's context window, as Claude Code reported it. */
+  context_window?: number
   /** This turn's tokens, as the API reported them. */
   usage?: {
     input_tokens?: number
@@ -89,6 +91,23 @@ export interface ClaudePrintResponse {
     cache_read_input_tokens?: number
     output_tokens?: number
     output_tokens_details?: { thinking_tokens?: number }
+  }
+  /** A compaction of the session that finished, or failed, since its previous turn. */
+  compaction?: {
+    trigger: 'auto' | 'size'
+    /** How long before this turn began it finished. */
+    compacted_before_ms: number
+    /** When the turn before it ended. */
+    last_activity?: string
+    /** How long this request waited for it. */
+    waited_ms?: number
+    context_tokens_before: number
+    context_tokens_after: number
+    duration_ms: number
+    cost_usd: number
+    cache_read_tokens: number
+    input_tokens: number
+    error?: string
   }
   /** What this turn arranged: a compaction started now (`size`), or scheduled for `at` (`auto`). */
   next_compaction?: { trigger: 'auto' | 'size'; at: string }

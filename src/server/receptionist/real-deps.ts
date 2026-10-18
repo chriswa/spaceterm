@@ -1,10 +1,11 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { SOCKET_DIR } from '../../shared/protocol'
-import { askClaudePrint, ClaudePrintBusy } from '../claude-print'
+import { askClaudePrint, ClaudePrintBusy, type ClaudePrintResponse } from '../claude-print'
 import { serverLog } from '../server-log'
 import { SessionBusy, type RecordedMessage, type SavedSession, type SessionAnswer, type SessionTurn } from './receptionist'
 import { parseRecordBytes, spokenPart, transcriptPage, type RecordFile, type Speakers } from './transcript'
+import type { Compaction } from './compaction'
 import type { ConsumedHow } from './consumption'
 import type { SpacetermStatus } from './spaceterm-status'
 import type { HandleNames } from './transcript-names'
@@ -60,8 +61,28 @@ export async function askReceptionistModel(turn: SessionTurn, signal: AbortSigna
     source: response.source,
     wallMs: response.wall_ms,
     costUsd: response.total_cost_usd,
+    ...(response.context_window ? { contextWindow: response.context_window } : {}),
     ...(response.next_compaction ? { compactsAt: Date.parse(response.next_compaction.at) } : {}),
+    ...(response.compaction ? { compaction: compactionOf(response.compaction) } : {}),
     ...(response.abort ? { aborted: { promptInSession: response.abort.prompt_in_session } } : {}),
+  }
+}
+
+function compactionOf(c: NonNullable<ClaudePrintResponse['compaction']>): Compaction {
+  const lastActivity = c.last_activity !== undefined ? Date.parse(c.last_activity) : NaN
+  return {
+    trigger: c.trigger === 'auto' ? 'idle' : 'size',
+    ...(Number.isFinite(lastActivity) ? { lastActivity } : {}),
+    finishedBeforeMs: c.compacted_before_ms,
+    ...(c.waited_ms ? { waitedMs: c.waited_ms } : {}),
+    durationMs: c.duration_ms,
+    tokensBefore: c.context_tokens_before,
+    tokensAfter: c.context_tokens_after,
+    thresholdTokens: RECEPTIONIST_COMPACT_ABOVE_TOKENS,
+    costUsd: c.cost_usd,
+    cachedTokens: c.cache_read_tokens,
+    uncachedTokens: c.input_tokens,
+    ...(c.error ? { error: c.error } : {}),
   }
 }
 
