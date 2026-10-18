@@ -26,7 +26,7 @@ import {
   CONVERSATION_WORDS, decideInterruption, HANG_ON, lastWords, splitAtOffset, type InterruptionContext, type InterruptionVerdict,
 } from './self-interruption'
 import {
-  actionHeadline, CONTROL, heardLengths, isAction, playedLengths, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, silencedIfQuiet, goesQuiet,
+  actionHeadline, CONTROL, heardLengths, isAction, playedLengths, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, silencedIfQuiet, goesQuiet, waitsForWords,
   type QuietTool, type Reply, type SayPart, type SpokenPart, type ToolCall,
 } from './reply'
 import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
@@ -1872,7 +1872,12 @@ export class Receptionist {
       }
       // Asked to go quiet: nothing more is said, not even a confirmation.
       const quiet = silencedIfQuiet(reply)
-      if (quiet !== reply && reply.say.length) this.deps.log({ event: 'go-quiet-dropped-words', step, say: reply.say })
+      if (quiet !== reply && reply.say.length) {
+        this.deps.log({ event: 'go-quiet-dropped-words', step, say: reply.say })
+        // The session keeps the words it wrote, and would take them as said.
+        this.notes.push('Nothing you wrote in "say" beside go_quiet was spoken: the user heard none of it.')
+        this.traceUnspoken(reply.say, 'go_quiet drops every word written beside it')
+      }
       reply = quiet
       const agents = this.deps.agents()
       const handles = this.handles(agents)
@@ -2999,10 +3004,15 @@ export class Receptionist {
     this.deps.backlog.settle(taken.splice(0))
     // And so is what the turn was about. A server that stops from here on says it was cut off: see carry-over.ts.
     this.events.told(attempt)
+    // Except a restart or a refresh, which would take the words away with the
+    // page: those wait for them to be heard. On 2026-10-18 Iris's answer came
+    // with the restart Control had promised to hold until the user heard it,
+    // and the restart ran first and silenced it.
+    const afterWords: ToolCall[] = spoken.length ? actions.filter(waitsForWords) : []
     // Done before a word is said, and reported by the words: the user never
     // waits through "Sent to Kevin" for the send. Talking over the words
     // undoes nothing, which is why Control asks first when it is unsure.
-    await this.runActions(actions)
+    await this.runActions(actions.filter(call => !afterWords.includes(call)))
     // Read after the actions' awaits: muting while they ran writes this reply.
     const reading = this.reading
     const at = this.writeReply(froms, spoken, reading)
@@ -3011,15 +3021,17 @@ export class Receptionist {
     // After the reply, so the transcript's activity log reads as it happened: silence, then the watch kept.
     this.keepWatchingUntold(events, reply, withWords)
     this.deps.log({ event: 'turn', body, say: reply.say, spoken, tools: reply.tools, ...(reading ? { muted: true } : {}) })
-    // Muted, it is written, and that is all: there is nothing to cut off.
+    // Muted, it is written, and that is all: there is nothing to cut off, nor to wait for.
     if (reading) {
       this.reads.heardOut()
+      await this.runActions(afterWords)
       return false
     }
     this.lastSpoken = spoken
     this.lastSpokenAt = at
     const parts = spoken.map(({ text, voice }) => ({ text, voice }))
     if (!parts.length) return false
+    const heardOut = this.whenHeardOut(attempt, afterWords)
     this.deps.carryOver.speaking(true)
     const starts = speechPartStarts(parts)
     let speaker: string | undefined
@@ -3042,13 +3054,45 @@ export class Receptionist {
       if (progress.kind === 'ended' && progress.state === 'synthesis_failed') void this.noteInterruption('failed')
       // Said to the end: what it told waits on the user's answer alone, crash or not.
       if (progress.kind === 'ended' && progress.state === 'completed') this.reads.heardOut()
+      if (progress.kind === 'ended') heardOut(progress.state === 'completed' || progress.state === 'synthesis_failed' || progress.state === 'lost')
       if (progress.kind !== 'playing') return
       const index = starts.filter(start => start <= progress.heard).length - 1
       const now = speakers[Math.max(0, index)]
       if (now !== speaker) this.onSpeaker(speaker = now)
     })
     if (monitoring) void this.followVoice(spoken, reached)
+    // Never followed, but not talked over either: the voice refused it or is not
+    // running, so the words wait as text, and there is nothing to wait for.
+    else if (attempt.isCurrent) heardOut(true)
     return monitoring
+  }
+
+  /**
+   * Hold `calls` — the restart or refresh a spoken reply came with — until its
+   * words end: run once they were said to the end, or could not be said (the
+   * transcript holds them), and dropped when the user cut them off, the turn
+   * was superseded, or the listener left. A dropped one is struck out in the
+   * transcript and the model told, so it is run again only if still wanted.
+   * Returns the call that settles it, with whether to run them.
+   */
+  private whenHeardOut(attempt: Attempt, calls: readonly ToolCall[]): (run: boolean) => void {
+    if (!calls.length) return () => {}
+    let settled = false
+    const settle = (run: boolean): void => {
+      if (settled) return
+      settled = true
+      if (run) {
+        void this.runActions(calls)
+        return
+      }
+      this.deps.log({ event: 'held-for-words-dropped', tools: calls })
+      this.deps.record.notDone(calls.map(actionHeadline))
+      this.notes.push(`${calls.map(call => call.tool).join(' and ')} did not run: it waited for the words it came with, and the user did not hear them out. Run it again only if they still want it.`)
+    }
+    // Settled first, any abort after is a no-op.
+    if (attempt.signal.aborted) settle(false)
+    else attempt.signal.addEventListener('abort', () => settle(false), { once: true })
+    return settle
   }
 
   /**

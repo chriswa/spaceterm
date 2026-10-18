@@ -1510,12 +1510,52 @@ describe('Receptionist', () => {
   it.each([
     ['restart_server', 'restart server'],
     ['refresh_clients', 'reload pages'],
-  ] as const)('%s lets go of Control before it runs, and says nothing', async (tool, done) => {
-    const h = harness({ replies: [reply([{ from: 'control', text: 'Done.' }], [{ tool }])] })
+  ] as const)('%s lets go of Control before it runs, once the words it came with are heard out', async (tool, done) => {
+    const speech = handPlayed()
+    const h = harness({ speech: speech.backend, replies: [reply([{ from: 'control', text: 'Here is the answer first.' }], [{ tool }])] })
     await h.receptionist.hear(tool === 'restart_server' ? 'restart the server' : 'refresh the pages', 'spoken')
     await flush()
+    expect(speech.spoken).toEqual([[{ text: 'Here is the answer first.', voice: RECEPTIONIST_VOICE }]])
+    expect(h.wire).toEqual([])
+    speech.end('completed')
+    await flush()
     expect(h.wire).toEqual(['let go', done])
-    expect(said(h)).toEqual([])
+  })
+
+  it.each([
+    ['restart_server', 'RESTARTED THE SERVER'],
+    ['refresh_clients', 'REFRESHED EVERY PAGE'],
+  ] as const)('%s does not run when the user talks over the words it waited for, and the model is told', async (tool, headline) => {
+    const speech = handPlayed()
+    const h = harness({
+      speech: speech.backend,
+      replies: [
+        reply([{ from: 'control', text: 'Here is the answer first.' }], [{ tool }]),
+        (turn) => {
+          expect(turn.prompt).toContain(`${tool} did not run: it waited for the words it came with`)
+          return reply([{ from: 'control', text: 'Holding off.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('do it once I have heard it', 'spoken')
+    await flush()
+    speech.heard('Here is'.length)
+    await flush()
+    await h.receptionist.cancel()
+    await h.receptionist.hear('wait', 'spoken')
+    await flush()
+    expect(h.wire).toEqual([])
+    expect(h.notDone).toEqual([headline])
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it('runs restart_server at once when the words it came with are muted, and so only written', async () => {
+    const h = harness({ replies: [reply([{ from: 'control', text: 'Here is the answer first.' }], [{ tool: 'restart_server' }])] })
+    h.receptionist.setListener({ ...h.listener, reading: true })
+    await h.receptionist.hear('restart the server', 'typed')
+    await flush()
+    expect(h.wire).toEqual(['let go', 'restart server'])
+    expect(h.spoken).toEqual([])
   })
 
   it('tells the model when restart_server could not restart the server', async () => {
@@ -2405,6 +2445,8 @@ describe('Receptionist', () => {
         }),
         (turn) => {
           expect(turn.prompt).toContain('go_quiet disconnected you at once, saying nothing')
+          // The session holds the words it wrote: it must not take them for said.
+          expect(turn.prompt).toContain('Nothing you wrote in "say" beside go_quiet was spoken')
           return reply([])
         },
       ],

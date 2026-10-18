@@ -20,10 +20,10 @@ describe('parseReply', () => {
     expect(parseReply('{"say":[{"from":"control","text":"Going quiet."}],"tools":[{"tool":"go_quiet"}]}').tools).toEqual([{ tool: 'go_quiet' }])
   })
 
-  it('reads restart_server and refresh_clients, which take nothing and go quiet as go_quiet does', () => {
+  it('reads restart_server and refresh_clients, which take nothing and keep the words they wait for', () => {
     const parsed = parseReply('{"say":[{"text":"Restarting."}],"tools":[{"tool":"restart_server"},{"tool":"refresh_clients"}]}')
     expect(parsed.tools).toEqual([{ tool: 'restart_server' }, { tool: 'refresh_clients' }])
-    expect(silencedIfQuiet(parsed)).toEqual({ say: [], tools: parsed.tools })
+    expect(silencedIfQuiet(parsed)).toBe(parsed)
   })
 
   it('reads a call written among the parts as one in "tools", in the order written', () => {

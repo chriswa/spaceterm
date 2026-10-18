@@ -22,7 +22,8 @@ export type GivenName = { name: string; gender: VoiceGender }
 
 /**
  * A tool call. Actions run before any of the reply's words are said, which
- * report them afterwards: see `Receptionist.speak`.
+ * report them afterwards, except those that wait for the words
+ * (`waitsForWords`): see `Receptionist.speak`.
  */
 export type ToolCall = (
   /** `before`: a message number from an earlier read, for the page ending just before it. */
@@ -65,18 +66,28 @@ export type QuietTool = typeof QUIET_TOOLS[number]
 /**
  * Tools after which nobody hears Control: go_quiet, because the user asked for
  * silence, and restart_server and refresh_clients, which take every client
- * away. Each lets go of Control the moment it runs.
+ * away. Each lets go of Control the moment it runs: see `waitsForWords` for
+ * when that is.
  */
 export function goesQuiet(call: ToolCall): call is { tool: QuietTool } {
   return (QUIET_TOOLS as readonly string[]).includes(call.tool)
 }
 
 /**
- * A reply that goes quiet, with nothing said: not one more word is spoken,
- * whatever the model wrote, since nobody is left to hear it.
+ * restart_server and refresh_clients take the user's page away, not the user:
+ * the words that came with one are said first, and it runs once they have
+ * been heard. go_quiet does not wait, since the user asked for silence.
+ */
+export function waitsForWords(call: ToolCall): call is { tool: 'restart_server' | 'refresh_clients' } {
+  return call.tool === 'restart_server' || call.tool === 'refresh_clients'
+}
+
+/**
+ * A reply that goes quiet with go_quiet, with nothing said: not one more word
+ * is spoken, whatever the model wrote, since the user asked for silence.
  */
 export function silencedIfQuiet(reply: Reply): Reply {
-  if (!reply.tools.some(goesQuiet)) return reply
+  if (!reply.tools.some(call => call.tool === 'go_quiet')) return reply
   return { say: [], tools: reply.tools }
 }
 
