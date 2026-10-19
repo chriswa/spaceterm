@@ -209,6 +209,11 @@ const LEVELS_REPORT_MS = 30_000
  * longer. One question at a time: the Mac answers in 60–180 ms.
  */
 const TURN_SAMPLE_MS = 500
+/**
+ * Listening this long with no audio at all from the microphone is recorded:
+ * the button shows hands-free on, so nothing else would say it is deaf.
+ */
+const DEAF_AFTER_MS = 5000
 /** Frames waiting on a slow speech detector beyond this (about 3 s) are dropped, and listening starts afresh. */
 const MAX_QUEUED_FRAMES = 100
 /** Frames without speech (about half a second) before Control, turned down for someone talking, comes back up. */
@@ -835,6 +840,12 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     if (useHandsFree.getState().phase === 'off') setPhase('listening')
     log(`listening for "${WAKE_WORD}" (${next.describe()})`)
     record('hands-free-mic', { listening: true, capture: next.describe() })
+    const heardBefore = heardSamples
+    void deps.sleep(DEAF_AFTER_MS).then(() => {
+      if (capture !== next || heardSamples !== heardBefore) return
+      log(`no audio from the microphone in ${DEAF_AFTER_MS / 1000}s of listening (${next.describe()})`)
+      record('hands-free-deaf', { afterMs: DEAF_AFTER_MS, capture: next.describe() })
+    })
     if (!reopening) openConversation()
     reopening = false
   }

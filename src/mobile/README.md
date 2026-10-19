@@ -16,13 +16,16 @@ second client: as much as possible is literally the same code.
 | Canvas | `App` | same `App`, plus touch (`useTouchCamera`) |
 | A focused terminal | live in its card | the same `TerminalCard`, chromeless, full screen (`TerminalView.tsx`) |
 | Ship it | `src/server/ship-it.ts` | same |
+| Hands-free (below) | `hands-free-mode.ts` from `renderer/src/lib/desktop-hands-free.ts`; the button in the toolbar, beside Control | `hands-free-mode.ts` from `main.tsx`; the button on the bottom bar |
 
 The one switch is `surfacePresenterStore`: with `external` set, `App` keeps
 every canvas card on snapshots and publishes which terminal is focused, and
 `MobileApp` draws it. Focus, unread handling and the camera stay `App`'s.
 
 Phone-only: the gestures, the key row, the composer (dictate → edit → ship),
-the surface list, dictation capture, and hands-free mode (below).
+the surface list, and the microphone button's dictation capture. Hands-free
+is the phone's code run on the Mac as well (see "On the Mac" below), so a
+change to it changes both.
 
 ## The terminal view
 
@@ -614,6 +617,31 @@ front, and the rest goes to Control, which comes to this phone. The dictation it
   played (`speechPercent`, `longestSpeechMs`), the microphone's level, the
   voice's own level (`outputDb`), and whether echo cancellation was on — which
   says whether interrupting can work. Never what was said. The server log's `[turn]` lines give each pause's verdict.
+
+### On the Mac
+
+The same hands-free runs in the desktop client, switched on by the same button
+(`HandsFreeButton.tsx`, `chrome="toolbar"`) right of Control in the toolbar:
+`installHandsFreeMode(api, 'desktop')`, the one place both start it. Nothing
+about listening, the conversation window, Smart Turn or what goes to Control
+differs. What does, all of it the host:
+
+- **The microphone** (`installHeldMicrophone('desktop')`): the Mac's current
+  input, headset or not, through Chromium's getUserMedia. It comes back by
+  itself, without a click — within five seconds once it stops delivering, and
+  at once when the Mac's input moves (AirPods connecting). After a refusal it
+  waits for a device to change before asking again.
+- **Control's voice** is Voice Operator's, not the page's, so hands-free hears
+  straight through it and can cut it off by voice. That relies on a headset,
+  where nothing played reaches the microphone; on the Mac's speakers Control
+  would hear itself.
+- **No haptics, no app**: every native hook (`native-microphone.ts`) does
+  nothing outside the iPhone app, so its tones play in the page.
+- **The window is not background-throttled** while the microphone is held
+  (`ElectronHost.microphoneHeld`): a dictation streams on timers, which
+  Chromium slows to a crawl in a window behind others.
+- **The record**: the Mac's events go to `mobile-events.jsonl` too, each line's
+  `client` starting `spaceterm-electron` where the phone's is `spaceterm-mobile`.
 
 ## Notifications
 

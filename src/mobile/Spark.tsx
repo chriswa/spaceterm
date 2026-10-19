@@ -1,3 +1,5 @@
+import './Spark.css'
+
 /**
  * A spark running round a round button's rim: a press was taken and what it
  * asked for is on its way — the microphone starting, the words being

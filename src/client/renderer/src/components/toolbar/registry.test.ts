@@ -90,6 +90,14 @@ describe('widgetsInSlot', () => {
   })
 })
 
+describe('hands-free', () => {
+  it('is on the Mac\'s toolbar beside Control, and left out of the phone\'s sheet, whose bottom bar has its own', () => {
+    const surfaces = widgetsInSlot('surfaces').map((w) => w.id)
+    expect(surfaces.indexOf('hands-free')).toBe(surfaces.indexOf('control') + 1)
+    expect(TOOLBAR_WIDGETS.find((w) => w.id === 'hands-free')?.desktopOnly).toBe(true)
+  })
+})
+
 describe('renderToolbarWidget', () => {
   it('withholds the host from a standalone widget', () => {
     const reads: string[] = []

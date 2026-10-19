@@ -23,6 +23,12 @@ import { recordMobileEvent } from './mobile-events'
  * would come out as a whisper. Voice Operator has the same rule ("Only When
  * Using AirPods").
  *
+ * On the Mac (installHeldMicrophone('desktop')), whatever input the Mac is
+ * using: there is no earpiece to fall back to, and it is only used with a
+ * headset, so nothing played is heard back. Chromium opens a microphone
+ * without a gesture, so the hold comes back by itself — when the input stops
+ * delivering, or the Mac moves to another one (AirPods coming or going).
+ *
  * Off at every launch: not remembered, so a relaunched app never starts
  * listening on its own. iOS only opens a microphone inside a tap, so after iOS
  * takes the microphone away in the background, the hold comes back on the
@@ -30,6 +36,16 @@ import { recordMobileEvent } from './mobile-events'
  */
 
 const log = (message: string) => window.api?.log(`[held-mic] ${message}`)
+
+/** Where the hold runs: the phone (the iPhone app, or a browser on the phone), or the Mac's desktop client. */
+export type HoldHost = 'phone' | 'desktop'
+
+/** Set once, by `installHeldMicrophone`. */
+let host: HoldHost = 'phone'
+
+export function holdHost(): HoldHost {
+  return host
+}
 
 /** A microphone label that is a headset rather than the phone itself. */
 export function isHeadset(label: string): boolean {
@@ -40,13 +56,18 @@ export function isHeadset(label: string): boolean {
 export interface Capture {
   /** Hz of the blocks `listen` hands out. */
   readonly sampleRate: number
-  /** Blocks of audio from now on, until the returned function is called. */
+  /**
+   * Blocks of audio from now on, until the returned function is called. A
+   * held capture has several listeners at once — hands-free, and a dictation
+   * on top — so each stops only its own, with that function.
+   */
   listen(fn: (block: Float32Array) => void): () => void
   /** Whether it is still delivering: not closed, and its track still live. */
   healthy(): boolean
   /**
    * Done with it for this dictation. A held capture stays open unless it is
-   * `broken` (it went silent); a capture that is not held closes.
+   * `broken` (it went silent); a capture that is not held closes. Never stops
+   * anyone else hearing it: hands-free listens throughout.
    */
   release(broken?: boolean): void
   /** Its state, for the log. */
@@ -173,7 +194,6 @@ function captureOf(opened: Awaited<ReturnType<typeof openCapture>>, release: (br
       return opened.context.state !== 'closed' && opened.stream.getAudioTracks().some((t) => t.readyState === 'live')
     },
     release(broken = false) {
-      listeners.clear()
       release(broken)
     },
   }
@@ -193,7 +213,7 @@ let wanted = false
  * `native`: the app's own, which the page never closes while the hold is on —
  * see `installNativeHold`.
  */
-let held: { capture: Capture; close: () => void; headset?: string; native?: boolean } | undefined
+let held: { capture: Capture; close: () => void; headset?: string; native?: boolean; group?: string } | undefined
 let opening: Promise<Capture> | undefined
 const stateListeners = new Set<(state: HoldState) => void>()
 let lastState: HoldState = 'off'
@@ -292,10 +312,11 @@ export function acquire(): Promise<Capture> {
     // freeze of the page while its microphone starts.
     if (nativeMicrophoneAvailable()) return openAppCapture()
     const opened = await openCapture()
-    const label = opened.stream.getAudioTracks()[0]?.label ?? ''
-    if (wanted && isHeadset(label)) {
+    const track = opened.stream.getAudioTracks()[0]
+    const label = track?.label ?? ''
+    if (wanted && (host === 'desktop' || isHeadset(label))) {
       const capture = captureOf(opened, (broken) => { if (broken) closeHeld('it went silent') })
-      held = { capture, close: opened.close, headset: label }
+      held = { capture, close: opened.close, headset: label, group: track?.getSettings?.().groupId || undefined }
       log(`holding "${label}" open`)
       recordMobileEvent('hold-opened', { source: 'web', input: label })
       announce()
@@ -392,12 +413,69 @@ function installNativeHold(): () => void {
   }
 }
 
+/** How often the Mac's hold is checked on: reopened if it has stopped delivering. */
+const DESKTOP_CHECK_MS = 5000
+
+/** The device group of the input the Mac is using now, or undefined when the browser does not say. */
+async function defaultInputGroup(): Promise<string | undefined> {
+  const devices = await navigator.mediaDevices?.enumerateDevices?.() ?? []
+  return devices.find((d) => d.kind === 'audioinput' && d.deviceId === 'default')?.groupId || undefined
+}
+
+/**
+ * The Mac: no tap is needed to open a microphone, so the hold is brought back
+ * from here — every `DESKTOP_CHECK_MS` if it has stopped delivering, and at
+ * once when a device comes or goes. A device change that moves the Mac's
+ * input elsewhere (AirPods connecting, say) closes the held one and opens the
+ * new one: the stream stays on the device it was opened on. After a failure
+ * (permission refused, no microphone at all) it waits for a device to change,
+ * rather than asking again every few seconds.
+ */
+function installDesktopHold(): () => void {
+  let waitForDevice = false
+  let checking = false
+  const check = async (devicesChanged: boolean) => {
+    announce()
+    if (!wanted || opening || checking || (waitForDevice && !devicesChanged)) return
+    checking = true
+    try {
+      if (held?.capture.healthy()) {
+        if (!devicesChanged || !held.group) return
+        const now = await defaultInputGroup()
+        if (!held || !now || now === held.group) return
+        closeHeld(`the Mac's input moved from "${held.headset ?? '?'}"`)
+      }
+      await acquire().then((capture) => {
+        waitForDevice = false
+        capture.release()
+      }, (err) => {
+        waitForDevice = true
+        const error = err instanceof Error ? err.message : String(err)
+        log(`could not reopen: ${error}`)
+        recordMobileEvent('mic-open-failed', { source: 'web', error, retry: 'on a device change' })
+      })
+    } finally {
+      checking = false
+    }
+  }
+  const timer = setInterval(() => void check(false), DESKTOP_CHECK_MS)
+  const onDeviceChange = () => void check(true)
+  navigator.mediaDevices?.addEventListener?.('devicechange', onDeviceChange)
+  return () => {
+    clearInterval(timer)
+    navigator.mediaDevices?.removeEventListener?.('devicechange', onDeviceChange)
+  }
+}
+
 /**
  * Bring the hold back after a background trip. In a browser iOS
  * opens a microphone only inside a gesture, so the next tap anywhere does it,
- * and a headset coming or going is rechecked too.
+ * and a headset coming or going is rechecked too. On the Mac, see
+ * `installDesktopHold`.
  */
-export function installHeldMicrophone(): () => void {
+export function installHeldMicrophone(on: HoldHost = 'phone'): () => void {
+  host = on
+  if (on === 'desktop') return installDesktopHold()
   if (nativeMicrophoneAvailable()) return installNativeHold()
   /**
    * Set when an attempt found no headset to hold (or no microphone at all):

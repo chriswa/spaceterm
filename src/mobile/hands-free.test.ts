@@ -187,6 +187,21 @@ let h: ReturnType<typeof harness> | undefined
 beforeEach(() => useHandsFree.setState({ phase: 'off', conversation: false, secondsLeft: null, turn: null, sampling: null }))
 afterEach(() => { h?.uninstall(); h = undefined })
 
+describe('a microphone that delivers nothing', () => {
+  it('is recorded once listening has heard no audio at all for five seconds', async () => {
+    h = harness({ justTurnedOn: true })
+    await h.elapse(5000)
+    expect(h.records.filter((r) => r.kind === 'hands-free-deaf')).toHaveLength(1)
+  })
+
+  it('is not, once any audio has come', async () => {
+    h = harness({ justTurnedOn: true })
+    await h.hear(quiet(100))
+    await h.elapse(5000)
+    expect(h.records.filter((r) => r.kind === 'hands-free-deaf')).toEqual([])
+  })
+})
+
 describe('hands-free mode', () => {
   it('"Control, …" said straight through: dictated from its first syllable, ended by quiet', async () => {
     h = harness({ transcript: 'Control, what is Kevin doing?' })

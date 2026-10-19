@@ -4449,6 +4449,23 @@ html, body, #root {
   filter: drop-shadow(0 0 4px rgba(245, 215, 90, 0.9));
 }
 
+/* The hands-free button (src/mobile/HandsFreeButton.tsx), right of Control:
+   round, as on the phone, so its two half-disc gauges fill it. Its look per
+   state is HandsFreeButton.css; these keep the toolbar's hover from covering
+   it. */
+.toolbar__hands-free {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.toolbar__hands-free.m-hands-free--held:hover { background: #ddd; }
+.toolbar__hands-free.m-hands-free--preparing:hover { background: #222; }
+
 /* What lies over the Control button (ControlBadges.tsx), on the Mac's toolbar
    and the phone's bar alike. The headset gives off sound while Control speaks here.
    A big red X lies across the button while Control is not here, the holder's
