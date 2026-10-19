@@ -49,8 +49,10 @@ export function thresholdLine(at: number): { x1: number; x2: number; y: number }
  *
  * The same button on the Mac, in the toolbar beside Control (`chrome:
  * 'toolbar'`): there it holds the Mac's input, and holding it is hands-free.
+ * `unavailable` says why it cannot run there; the button then does nothing
+ * and its tooltip gives the reason.
  */
-export function HandsFreeButton({ chrome = 'phone-bar' }: { chrome?: 'phone-bar' | 'toolbar' }) {
+export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?: 'phone-bar' | 'toolbar'; unavailable?: string }) {
   const hold = useHoldState()
   const on = hold !== 'off'
   const app = nativeMicrophoneAvailable()
@@ -76,17 +78,19 @@ export function HandsFreeButton({ chrome = 'phone-bar' }: { chrome?: 'phone-bar'
     return () => cancelAnimationFrame(frame)
   }, [ending])
 
-  const label = on
+  const label = unavailable ?? (on
     ? `${hold === 'preparing' ? 'Getting the microphone ready' : handsFree ? 'Hands-free: always listening for "Control"' : 'Microphone held open'} — ${chrome === 'toolbar' ? 'click' : 'tap'} to stop`
-    : handsFree ? 'Hands-free: always listen for "Control"' : 'Hold the microphone open with AirPods'
+    : handsFree ? 'Hands-free: always listen for "Control"' : 'Hold the microphone open with AirPods')
   return (
     <button
       className={`${chrome === 'toolbar' ? 'toolbar__btn toolbar__hands-free' : 'm-bar__button'} m-hands-free m-hands-free--${hold}`}
       aria-label={label}
       aria-pressed={on}
+      // aria-disabled rather than disabled, so the tooltip giving the reason still shows on hover.
+      aria-disabled={unavailable !== undefined}
       {...chrome === 'toolbar' ? { 'data-tooltip': label, 'data-tooltip-no-flip': true } : {}}
       // No haptic: a tap means your words are being taken down (native-microphone.ts). The press shows instead.
-      onClick={() => setHoldMicrophone(!on)}
+      onClick={() => { if (unavailable === undefined) setHoldMicrophone(!on) }}
     >
       {/* Turned on, the microphone not held yet: a spark round the rim until it is. */}
       {hold === 'preparing' && <Spark />}

@@ -5,6 +5,7 @@ import { CrabGroup, type CrabNavEvent } from './CrabGroup'
 import { PowerMonitor } from './PowerMonitor'
 import { ControlButton } from './ControlButtons'
 import { HandsFreeButton } from '../../../../../mobile/HandsFreeButton'
+import { handsFreeBlocker } from '../../lib/desktop-hands-free'
 import {
   AgentMemoryMetric,
   CameraLockToggle,
@@ -167,7 +168,13 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
   // The receptionist sits with the surfaces it talks about, left of the crabs.
   { id: 'control', slot: 'surfaces', kind: 'standalone', desktopOnly: true, render: () => <ControlButton /> },
   // The phone's has its own place on the bottom bar, beside the microphone.
-  { id: 'hands-free', slot: 'surfaces', kind: 'standalone', desktopOnly: true, render: () => <HandsFreeButton chrome="toolbar" /> },
+  {
+    id: 'hands-free',
+    slot: 'surfaces',
+    kind: 'standalone',
+    desktopOnly: true,
+    render: () => <HandsFreeButton chrome="toolbar" unavailable={handsFreeBlocker(window.electronHost?.macOSVersion ?? null) ?? undefined} />
+  },
   {
     id: 'crab-group',
     slot: 'surfaces',

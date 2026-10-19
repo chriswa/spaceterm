@@ -626,6 +626,11 @@ The same hands-free runs in the desktop client, switched on by the same button
 about listening, the conversation window, Smart Turn or what goes to Control
 differs. What does, all of it the host:
 
+- **macOS 26 or later**: below it the button is disabled, its tooltip saying
+  why (`handsFreeBlocker` in `desktop-hands-free.ts`). Voice Operator's
+  wake-word check uses SpeechTranscriber, which macOS 26 introduced. The
+  phone has no such gate, though its checks go to the same Mac.
+
 - **The microphone** (`installHeldMicrophone('desktop')`): the Mac's current
   input, headset or not, through Chromium's getUserMedia. It comes back by
   itself, without a click — within five seconds once it stops delivering, and

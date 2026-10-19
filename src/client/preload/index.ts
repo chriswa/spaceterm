@@ -54,7 +54,8 @@ const host: ElectronHost = {
     onEvent: (callback: (attempt: string, kind: ServerPipeEventKind, chunk?: string) => void) =>
       listen('server-pipe:event', callback)
   },
-  microphoneHeld: (held: boolean) => ipcRenderer.send('window:microphone-held', held)
+  microphoneHeld: (held: boolean) => ipcRenderer.send('window:microphone-held', held),
+  macOSVersion: process.platform === 'darwin' ? process.getSystemVersion() : null
 }
 
 contextBridge.exposeInMainWorld('electronHost', host)

@@ -3,7 +3,7 @@ import { installFakeBridge } from '../testing/fake-bridge'
 import { holdHost, setHoldMicrophone } from '../../../../mobile/held-microphone'
 import { recordMobileEvent } from '../../../../mobile/mobile-events'
 import { useHandsFree } from '../../../../mobile/hands-free'
-import { installDesktopHandsFree } from './desktop-hands-free'
+import { handsFreeBlocker, installDesktopHandsFree } from './desktop-hands-free'
 
 function fakeClient() {
   return {
@@ -53,5 +53,14 @@ describe('hands-free on the Mac', () => {
     setHoldMicrophone(true)
     expect(host.microphoneHeld).not.toHaveBeenCalled()
     uninstall = () => undefined
+  })
+})
+
+describe('whether hands-free can run on this Mac', () => {
+  it('needs macOS 26, for Voice Operator\'s wake-word check', () => {
+    expect(handsFreeBlocker('26.0')).toBeNull()
+    expect(handsFreeBlocker('27.1.2')).toBeNull()
+    expect(handsFreeBlocker('15.8.1')).toMatch(/needs macOS 26.*macOS 15\.8\.1/)
+    expect(handsFreeBlocker(null)).toMatch(/needs macOS 26/)
   })
 })

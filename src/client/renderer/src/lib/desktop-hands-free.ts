@@ -20,6 +20,17 @@ import { mobileEvents } from '../../../../mobile/mobile-events'
  * hands-free hears straight through it: this assumes a headset, where nothing
  * played reaches the microphone.
  */
+/**
+ * Why hands-free cannot run on this Mac, or null when it can. Hands-free asks
+ * Voice Operator whether speech began with "Control", and Voice Operator's
+ * check uses Apple's SpeechTranscriber, which macOS 26 introduced.
+ */
+export function handsFreeBlocker(macOSVersion: string | null): string | null {
+  if (macOSVersion === null) return 'Hands-free needs macOS 26'
+  const major = Number.parseInt(macOSVersion, 10)
+  return major >= 26 ? null : `Hands-free needs macOS 26 (Voice Operator's wake-word check); this Mac is on macOS ${macOSVersion}`
+}
+
 export function installDesktopHandsFree(
   client: Pick<ServerClient, 'mobileEvents' | 'onLifecycle'>,
   host: Pick<ElectronHost, 'microphoneHeld'>,

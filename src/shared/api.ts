@@ -561,4 +561,6 @@ export interface ElectronHost {
    * full rate with Spaceterm behind other windows.
    */
   microphoneHeld(held: boolean): void
+  /** This Mac's macOS version, such as `"26.0.1"`; null on any other system. */
+  macOSVersion: string | null
 }

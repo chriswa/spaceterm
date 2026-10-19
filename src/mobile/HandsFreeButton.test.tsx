@@ -43,6 +43,15 @@ describe('the hands-free button on the Mac', () => {
     expect(button.getAttribute('aria-pressed')).toBe('false')
   })
 
+  it('does nothing when hands-free cannot run on this Mac, and says why', () => {
+    render(<HandsFreeButton chrome="toolbar" unavailable="Hands-free needs macOS 26" />)
+    const button = screen.getByRole('button', { name: 'Hands-free needs macOS 26' })
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    expect(button.getAttribute('data-tooltip')).toBe('Hands-free needs macOS 26')
+    fireEvent.click(button)
+    expect(holdState()).toBe('off')
+  })
+
   it('is the phone\'s button, as the phone draws it, without the toolbar\'s chrome', () => {
     render(<HandsFreeButton />)
     const button = screen.getByRole('button', { name: /always listen/ })

@@ -9,9 +9,14 @@ import { e2eBlocker, launchApp, type LaunchedApp } from './electron-app'
  * Hands-free on the Mac, end to end in the real app: the toolbar button holds
  * a microphone — Chromium's fake one, playing speech macOS `say` made — and
  * hands-free hears it as speech and asks the server whether it was for
- * Control. Whether the answer is yes is Voice Operator's (on macOS 26), and
- * not asserted: that the question is asked is what this layer can prove.
+ * Control. Whether the answer is yes is Voice Operator's, and not asserted:
+ * that the question is asked is what this layer can prove. Below macOS 26,
+ * where Voice Operator cannot answer, the button is disabled instead.
  */
+
+const macOSMajor = process.platform === 'darwin'
+  ? Number.parseInt(execFileSync('sw_vers', ['-productVersion'], { encoding: 'utf8' }), 10)
+  : 0
 
 /** "Control, …" after a quiet spell, as a 48 kHz mono WAV Chromium can use as its microphone. Null without `say`. */
 function speechWav(dir: string): string | null {
@@ -44,7 +49,18 @@ function events(home: string): Array<{ kind: string; detail?: Record<string, unk
 }
 
 describeE2E('hands-free on the Mac', () => {
-  it('hears speech on the held microphone and asks the server whether it was for Control', async () => {
+  it.skipIf(macOSMajor >= 26)('is disabled below macOS 26, saying why', async () => {
+    launched = await launchApp()
+    const { window } = launched
+    await window.waitForSelector('.toolbar__hands-free', { timeout: 60_000 })
+    await window.evaluate(() => (document.querySelector('.toolbar__hands-free') as HTMLButtonElement).click())
+    const button = await window.$('.toolbar__hands-free')
+    expect(await button!.getAttribute('aria-disabled')).toBe('true')
+    expect(await button!.getAttribute('data-tooltip')).toMatch(/needs macOS 26/)
+    expect(await button!.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it.skipIf(macOSMajor < 26)('hears speech on the held microphone and asks the server whether it was for Control', async () => {
     scratch = mkdtempSync(join(tmpdir(), 'spaceterm-e2e-speech-'))
     const wav = speechWav(scratch)!
     launched = await launchApp({

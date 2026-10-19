@@ -410,7 +410,8 @@ html, body, #root {
   color: #ff5c8a;
 }
 
-.toolbar__btn:disabled {
+.toolbar__btn:disabled,
+.toolbar__btn[aria-disabled="true"] {
   opacity: 0.4;
   cursor: default;
 }
@@ -453,7 +454,8 @@ html, body, #root {
   .toolbar__btn--pending::after { animation: none; }
 }
 
-.toolbar__btn:disabled:hover {
+.toolbar__btn:disabled:hover,
+.toolbar__btn[aria-disabled="true"]:hover {
   background: rgba(255,255,255,0.06);
 }
 
