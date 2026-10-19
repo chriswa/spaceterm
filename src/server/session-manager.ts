@@ -212,9 +212,10 @@ export class SessionManager {
     }
   }
 
-  write(sessionId: PtySessionId, data: string): void {
-    if (!this.sessions.has(sessionId)) return
-    this.daemon.send({ type: 'write', id: sessionId, data })
+  /** Resolves once the keystrokes are on their way to the daemon: see `DaemonClient.send`. */
+  write(sessionId: PtySessionId, data: string): Promise<void> {
+    if (!this.sessions.has(sessionId)) return Promise.resolve()
+    return this.daemon.send({ type: 'write', id: sessionId, data })
   }
 
   resize(sessionId: PtySessionId, cols: number, rows: number): void {

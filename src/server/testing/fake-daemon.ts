@@ -15,6 +15,10 @@ export class FakeDaemonConnection implements DaemonConnection {
   /** Raw frames written by the client, in order. */
   readonly written: string[] = []
   destroyed = false
+  /** Hold writes unflushed until `flush`, as a busy socket would; flushed at once otherwise. */
+  holdFlushes = false
+
+  private unflushed: Array<() => void> = []
 
   private listeners = new Map<string, ((...args: any[]) => void)[]>()
 
@@ -28,8 +32,10 @@ export class FakeDaemonConnection implements DaemonConnection {
     this.listeners.set(event, existing)
   }
 
-  write(data: string): void {
+  write(data: string, flushed: () => void): void {
     this.written.push(data)
+    if (this.holdFlushes) this.unflushed.push(flushed)
+    else flushed()
   }
 
   destroy(): void {
@@ -43,6 +49,11 @@ export class FakeDaemonConnection implements DaemonConnection {
 
   emit(event: string, ...args: any[]): void {
     for (const listener of this.listeners.get(event) ?? []) listener(...args)
+  }
+
+  /** Flush every held write. */
+  flush(): void {
+    for (const flushed of this.unflushed.splice(0)) flushed()
   }
 
   /** Complete the connection handshake. */

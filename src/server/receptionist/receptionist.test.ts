@@ -1440,6 +1440,52 @@ describe('Receptionist', () => {
     expect(said(h)).toEqual([])
   })
 
+  it('restarts the server only after the reply\'s other actions, wherever it was written', async () => {
+    const h = harness({
+      replies: [reply([], [
+        { tool: 'restart_server' },
+        { tool: 'send', agent: KEVIN, message: 'Commit, please.' },
+        { tool: 'send', agent: SALLY, message: 'Push, please.' },
+      ])],
+    })
+    await h.receptionist.hear('tell Kevin to commit, Sally to push, and restart the server', 'spoken')
+    await flush()
+    expect(h.wire).toEqual([`send ${KEVIN_ID} Commit, please.`, `send ${SALLY_ID} Push, please.`, 'let go', 'restart server'])
+  })
+
+  it('restarts the server last in a reply that also looks something up', async () => {
+    const h = harness({
+      replies: [reply([], [
+        { tool: 'restart_server' },
+        { tool: 'read', agent: KEVIN },
+        { tool: 'send', agent: SALLY, message: 'Push, please.' },
+      ])],
+    })
+    void h.receptionist.hear('read Kevin, tell Sally to push, and restart the server', 'spoken')
+    await flush()
+    expect(h.wire).toEqual([`send ${SALLY_ID} Push, please.`, 'let go', 'restart server'])
+  })
+
+  it('holds the restart until a send waiting out an interrupt has gone', async () => {
+    let settled: () => void = () => {}
+    const h = harness({
+      // Only the interrupt's settling pause is held; INTERRUPT_SETTLE_MS is 800.
+      sleep: (ms) => ms === 800 ? new Promise<void>((resolve) => { settled = resolve }) : Promise.resolve(),
+      replies: [reply([], [
+        { tool: 'interrupt', agent: SALLY },
+        { tool: 'send', agent: SALLY, message: 'Stop and commit.' },
+        { tool: 'restart_server' },
+      ])],
+    })
+    // The turn itself is held up by the restart, so it is not awaited.
+    void h.receptionist.hear('stop Sally, have her commit, and restart the server', 'spoken')
+    await flush()
+    expect(h.wire).toEqual([`escape ${SALLY_ID}`, 'let go'])
+    settled()
+    await flush()
+    expect(h.wire).toEqual([`escape ${SALLY_ID}`, 'let go', `send ${SALLY_ID} Stop and commit.`, 'restart server'])
+  })
+
   it('tells the model when restart_server could not restart the server', async () => {
     const h = harness({
       restartRefused: 'Server restart is already in progress',

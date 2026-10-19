@@ -1054,10 +1054,6 @@ function returnBorrowedSize(nodeId: NodeId, why: string): void {
 }
 
 /**
- * Paste text into a live surface and (usually) submit it. Every way of
- * shipping — the client's `ship-it`, the scripts socket — goes through here.
- */
-/**
  * Archive a node and everything under it: the client's archive, and Control's
  * archive_agent. Returns how many nodes went.
  *
@@ -1085,12 +1081,27 @@ function archiveNode(nodeId: NodeId): number {
   return subtree.length
 }
 
+/**
+ * Ships whose Enter is still on a timer. Shutdown waits for them: a restart
+ * in the same Control turn as a send otherwise leaves the message typed into
+ * the agent's prompt but never submitted.
+ */
+const shipsInFlight = new Set<Promise<void>>()
+/** Far past the slowest ship, so a write the daemon never takes cannot hold up shutdown for good. */
+const SHIPS_DRAIN_TIMEOUT_MS = 5_000
+
+/**
+ * Paste text into a live surface and (usually) submit it. Every way of
+ * shipping — the client's `ship-it`, the scripts socket — goes through here.
+ */
 function shipToSession(sessionId: PtySessionId, text: string, submit: boolean): void {
   // An agent waiting on an AskUserQuestion prompt would take the text as a choice; see shipIt.
   const surface = stateManager.getNodes().find((node) => node.type === 'terminal' && node.sessionId === sessionId)
   const dismissQuestion = surface?.type === 'terminal' && surface.claudeState === 'waiting_question'
   if (dismissQuestion) serverLog(`[ship-it] ${sessionId.slice(0, 8)} is waiting on a question: Escape first`)
-  shipIt({ write: (data) => sessionManager.write(sessionId, data), schedule: (fn, ms) => setTimeout(fn, ms) }, text, submit, { dismissQuestion })
+  const shipping = shipIt({ write: (data) => sessionManager.write(sessionId, data), schedule: (fn, ms) => setTimeout(fn, ms) }, text, submit, { dismissQuestion })
+  shipsInFlight.add(shipping)
+  void shipping.finally(() => shipsInFlight.delete(shipping))
   // Mark read; the resulting UserPromptSubmit hook drives the working state.
   claudeStateMachine.handleClientInteract(sessionId)
 }
@@ -3901,6 +3912,11 @@ async function startServer(): Promise<void> {
     shuttingDown = true
     console.log('\nShutting down...')
     if (socketWatchdog) clearInterval(socketWatchdog)
+    // Before anything is torn down: their last keystrokes need the daemon client.
+    if (shipsInFlight.size) {
+      serverLog(`[shutdown] Waiting for ${shipsInFlight.size} ship(s) to submit`)
+      await Promise.race([Promise.allSettled(shipsInFlight), new Promise((resolve) => setTimeout(resolve, SHIPS_DRAIN_TIMEOUT_MS))])
+    }
     // Flush queued transitions and stop timers before persisting state
     claudeStateMachine.dispose()
     gitStatusPoller.dispose()
