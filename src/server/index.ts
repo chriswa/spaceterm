@@ -2,7 +2,7 @@ import * as net from 'net'
 import * as fs from 'fs'
 import * as path from 'path'
 import { execFile } from 'child_process'
-import { SOCKET_DIR, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR, CLIENT_PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL_VERSION } from '../shared/protocol'
+import { SOCKET_DIR, DEFAULT_SOCKET_DIR, isOperatorHome, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR, CLIENT_PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL_VERSION } from '../shared/protocol'
 import { checkProtocolVersion } from '../shared/protocol-handshake'
 import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, CameraBounds, ClaudeSessionEntry, ClientDevice, ControlImage, ControlTranscriptEntry, HandsFreeTuning } from '../shared/protocol'
 import { ScriptApi, type ScriptConnection } from './script-api'
@@ -3856,8 +3856,12 @@ async function startServer(): Promise<void> {
 
   hooksServer.listen(HOOKS_SOCKET_PATH, () => {
     console.log(`Hooks server listening on ${HOOKS_SOCKET_PATH}`)
-    void voiceOperatorSubscription.check()
-    setInterval(() => { void voiceOperatorSubscription.check() }, 5_000).unref()
+    if (isOperatorHome()) {
+      void voiceOperatorSubscription.check()
+      setInterval(() => { void voiceOperatorSubscription.check() }, 5_000).unref()
+    } else {
+      serverLog(`[voice-operator] not registering: ${SOCKET_DIR} is an isolated home, and Voice Operator's commands belong to ${DEFAULT_SOCKET_DIR}`)
+    }
   })
 
   hooksServer.on('error', (err) => {

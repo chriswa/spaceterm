@@ -133,9 +133,21 @@ function stop(proc: ChildProcess): Promise<void> {
  * `src/shared/protocol.ts` and `pty-daemon/main.go` honour `SPACETERM_HOME`, so
  * a test run gets its own sockets, its own state file and its own daemon rather
  * than adopting — and then destroying — the developer's live session.
+ *
+ * That isolation stops at the home folder. The app also reaches things that are
+ * one per machine, such as Voice Operator, whose subscriber list routes the
+ * operator's command dictations. Anything that claims one of those is gated on
+ * `isOperatorHome()` (src/shared/protocol.ts), so a test run uses them without
+ * taking them over.
  */
 export async function launchApp(
-  options: { timeoutMs?: number; withServer?: boolean; seedState?: unknown } = {}
+  options: {
+    timeoutMs?: number
+    withServer?: boolean
+    seedState?: unknown
+    /** More Chromium switches, such as a fake microphone. */
+    args?: string[]
+  } = {}
 ): Promise<LaunchedApp> {
   const blocker = e2eBlocker()
   if (blocker) throw new Error(`Cannot launch: ${blocker}`)
@@ -159,7 +171,8 @@ export async function launchApp(
       // The container runs as root, and Chromium refuses to start its sandbox
       // as root rather than silently running unsandboxed.
       '--no-sandbox',
-      '--disable-gpu-sandbox'
+      '--disable-gpu-sandbox',
+      ...options.args ?? []
     ],
     cwd: REPO_ROOT,
     timeout: options.timeoutMs ?? 60_000,

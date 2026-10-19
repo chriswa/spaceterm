@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  isOperatorHome,
   SCRIPT_EVENTS,
   SCRIPT_PROTOCOL_VERSION,
   MIN_SCRIPT_PROTOCOL_VERSION,
@@ -102,5 +103,13 @@ describe('type-level contract', () => {
     // @ts-expect-error 'made-up' is not a documented event
     const bogus: ScriptEvent = 'made-up'
     expect(bogus).toBe('made-up')
+  })
+})
+
+describe('the operator\'s home', () => {
+  it('is ~/.spaceterm only, so an e2e run\'s isolated home claims nothing machine-wide', () => {
+    expect(isOperatorHome('/Users/op/.spaceterm', '/Users/op/.spaceterm')).toBe(true)
+    expect(isOperatorHome('/Users/op/.spaceterm/', '/Users/op/.spaceterm')).toBe(true)
+    expect(isOperatorHome('/var/folders/x/T/spaceterm-e2e-3OWrin', '/Users/op/.spaceterm')).toBe(false)
   })
 })

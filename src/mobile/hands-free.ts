@@ -203,6 +203,8 @@ const REAL_DEPS = (api: HandsFreeDeps['api']): HandsFreeDeps => {
 const BACKGROUND_REPORT_MS = 60_000
 /** While listening, how often to record the room: how loud, and how much of it was speech. */
 const LEVELS_REPORT_MS = 30_000
+/** The first such report, this soon after listening starts, so even a short try says what the microphone heard. */
+const FIRST_LEVELS_MS = 5000
 /**
  * Through a pause, the turn model is asked again this often — a series of
  * answers, not one — or as soon as the last answer is back, if that took
@@ -264,6 +266,8 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
   let draining = false
   /** The room since the last levels report. */
   let levels = { frames: 0, speechFrames: 0, sumDb: 0, maxDb: -120, since: performance.now() }
+  /** No levels reported since listening last started. */
+  let firstLevels = true
   /** Control's voice playing through the app: what survived of it, and whether it is turned down for someone talking. */
   let echo: Echo | undefined
   let ducked = false
@@ -658,15 +662,18 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
     if (frame.p >= 0.5) levels.speechFrames++
     levels.sumDb += db
     levels.maxDb = Math.max(levels.maxDb, db)
-    if (performance.now() - levels.since >= LEVELS_REPORT_MS) {
-      record('hands-free-levels', {
+    if (performance.now() - levels.since >= (firstLevels ? FIRST_LEVELS_MS : LEVELS_REPORT_MS)) {
+      const report = {
         detector: scorer.name,
         seconds: Math.round(levels.frames * 0.032),
         speechPercent: Math.round((100 * levels.speechFrames) / Math.max(1, levels.frames)),
         meanDb: Math.round(levels.sumDb / Math.max(1, levels.frames)),
         maxDb: Math.round(levels.maxDb),
         phase: useHandsFree.getState().phase,
-      })
+      }
+      record('hands-free-levels', report)
+      if (firstLevels) log(`first ${report.seconds}s heard: ${report.speechPercent}% speech, mean ${report.meanDb} dB, peak ${report.maxDb} dB (${report.detector})`)
+      firstLevels = false
       levels = { frames: 0, speechFrames: 0, sumDb: 0, maxDb: -120, since: performance.now() }
     }
     const phase = useHandsFree.getState().phase
@@ -832,6 +839,8 @@ export function installHandsFree(api: HandsFreeDeps['api'], deps: HandsFreeDeps 
       return
     }
     downsampler = new Downsampler(next.sampleRate)
+    levels = { frames: 0, speechFrames: 0, sumDb: 0, maxDb: -120, since: performance.now() }
+    firstLevels = true
     framer.reset()
     queued = []
     scorer.reset()

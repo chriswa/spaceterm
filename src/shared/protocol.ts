@@ -1,4 +1,4 @@
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { homedir } from 'os'
 
 /** Sound names available for the play-sound MCP tool. */
@@ -52,7 +52,22 @@ export const SCRIPT_EVENTS = [
 ] as const
 export type ScriptEvent = (typeof SCRIPT_EVENTS)[number]
 
-export const SOCKET_DIR = process.env.SPACETERM_HOME ?? join(homedir(), '.spaceterm')
+/** The operator's own Spaceterm home; anything else is an isolated one, such as an e2e run's. */
+export const DEFAULT_SOCKET_DIR = join(homedir(), '.spaceterm')
+export const SOCKET_DIR = process.env.SPACETERM_HOME ?? DEFAULT_SOCKET_DIR
+
+/**
+ * Whether `home` is the operator's real Spaceterm rather than an isolated one.
+ *
+ * `SPACETERM_HOME` isolates everything kept under it: sockets, state, the PTY
+ * daemon. It cannot isolate what lives elsewhere on the machine, such as Voice
+ * Operator's subscriber list. Anything that claims a machine-wide resource
+ * must check this first, or an e2e run takes it from the operator's Spaceterm
+ * and leaves it pointing at a temp folder that is deleted when the run ends.
+ */
+export function isOperatorHome(home: string = SOCKET_DIR, operatorHome: string = DEFAULT_SOCKET_DIR): boolean {
+  return resolve(home) === resolve(operatorHome)
+}
 /** Bidirectional socket for Electron client ↔ server communication. */
 export const SOCKET_PATH = join(SOCKET_DIR, 'bidirectional.sock')
 /** Ingest-only socket for fire-and-forget messages (hooks, status-line, MCP tools). */
