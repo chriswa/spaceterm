@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Build SpacetermBar.app from the SwiftPM executable and install it to
-# ~/Applications, relaunching it if it was running.
+# /Applications (or ~/Applications without write access there), relaunching it
+# if it was running.
 #
 #   ./bundle.sh              build, install, (re)launch
 #   ./bundle.sh --no-launch  build and install only
 #
 # The install location matters: "Open on Login" is registered through
 # SMAppService.mainApp, which resolves against the bundle's path, so the app
-# has to live somewhere stable rather than under .build/.
+# has to live somewhere stable rather than under .build/. /Applications is
+# preferred: on macOS 27 the menu bar can't attribute status items from apps
+# elsewhere, so menu bar managers that hide icons (Ice) hide SpacetermBar's too.
 #
 # Relaunching is safe: the server and client run in their own sessions and the
 # new instance adopts them from ~/.spaceterm/spaceterm-bar.json.
@@ -16,7 +19,6 @@ set -euo pipefail
 cd "$(dirname "$0")"
 APP="SpacetermBar.app"
 REPO="$(cd .. && pwd)"
-INSTALL_DIR="$HOME/Applications"
 
 swift build -c release
 
@@ -50,6 +52,14 @@ PLIST
 # Ad-hoc signature so macOS will run it without a developer certificate.
 codesign --force --deep --sign - "$APP" 2>/dev/null || true
 
+if [[ -w /Applications ]]; then
+  INSTALL_DIR=/Applications
+  # Drop a copy left in ~/Applications by an earlier install, so only one is registered.
+  rm -rf "$HOME/Applications/$APP"
+else
+  INSTALL_DIR="$HOME/Applications"
+  echo "can't write to /Applications (needs admin rights): installing to ~/Applications, where menu bar managers may hide the icon"
+fi
 mkdir -p "$INSTALL_DIR"
 rm -rf "$INSTALL_DIR/$APP"
 cp -R "$APP" "$INSTALL_DIR/$APP"
