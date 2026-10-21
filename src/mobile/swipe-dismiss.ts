@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { ownsGestures } from '@/lib/gesture-owner'
 import { TerminalGesture } from './terminal-gesture'
 
 /**
@@ -9,7 +10,8 @@ import { TerminalGesture } from './terminal-gesture'
  *
  * A drag that starts on something that moves sideways itself is its own: the
  * sheet's button strip scrolls horizontally, a row's handle reorders, and the
- * transcript's text box moves its caret.
+ * transcript's text box moves its caret. So is one on anything marked as
+ * handling its own gestures (`ownsGestures`), such as a picture opened full size.
  */
 
 /** A screen a sideways drag can dismiss, and how. */
@@ -28,7 +30,7 @@ export const SWIPE_SCREENS = {
 
 /** The screen a touch starting on `target` would dismiss, if any. */
 export function swipeScreenAt(target: EventTarget | null, screens: readonly SwipeScreen[]): SwipeScreen | undefined {
-  if (!(target instanceof Element)) return undefined
+  if (!(target instanceof Element) || ownsGestures(target)) return undefined
   return screens.find((screen) => target.closest(screen.selector) && !(screen.ignore && target.closest(screen.ignore)))
 }
 

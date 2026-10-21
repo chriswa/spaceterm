@@ -55,6 +55,7 @@
   flex-direction: column;
   background: rgba(0, 0, 0, 0.92);
 }
+/* Pinches and drags are the viewer's own (see usePanZoom), so the browser neither zooms the page nor scrolls it. */
 .control-images__stage {
   flex: 1;
   min-height: 0;
@@ -62,22 +63,20 @@
   align-items: center;
   justify-content: center;
   padding: 12px;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .control-images__stage img {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
   cursor: zoom-in;
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
 }
-/* At its own size, to scroll about. */
-.control-images__stage--actual {
-  display: block;
-  overflow: auto;
-  -webkit-overflow-scrolling: touch;
-}
-.control-images__stage--actual img {
-  max-width: none;
-  max-height: none;
+.control-images__stage--zoomed img {
   cursor: zoom-out;
 }
 .control-images__bar {

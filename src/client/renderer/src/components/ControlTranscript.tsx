@@ -7,6 +7,7 @@ import { ControlHolderBadge } from './ControlHolderBadge'
 import { ControlBacklogBadge } from './ControlBacklogBadge'
 import { ControlImages } from './ControlImages'
 import { classifyWheelEvent, createWheelAccumulator } from '../lib/wheel-gesture'
+import { ownsGestures } from '../lib/gesture-owner'
 import { TRANSCRIPT_DISMISS_SCROLL_THRESHOLD } from '../lib/constants'
 import { openReplies, partViews, segments, words, type PartView } from '../lib/control-consumption'
 import { useNodeStore } from '../stores/nodeStore'
@@ -63,7 +64,8 @@ export const TRANSCRIPT_TOGGLE_ATTR = 'data-control-transcript-toggle'
  *
  * A press on the backdrop over the canvas is the backdrop's own to handle (see
  * below), so the canvas never sees it; a press elsewhere — the toolbar — closes
- * the dialog and still does what it was for.
+ * the dialog and still does what it was for. A scroll over anything marked
+ * as handling its own gestures (`ownsGestures`) is that thing's.
  */
 function useModalDismiss(enabled: boolean, dialogRef: React.RefObject<HTMLDivElement>, onDismiss: () => void): void {
   // Read through a ref: callers pass a fresh arrow each render, and
@@ -80,6 +82,7 @@ function useModalDismiss(enabled: boolean, dialogRef: React.RefObject<HTMLDivEle
     }
     const acc = createWheelAccumulator()
     const onWheel = (e: WheelEvent) => {
+      if (ownsGestures(e.target)) return
       if (classifyWheelEvent(acc, e, TRANSCRIPT_DISMISS_SCROLL_THRESHOLD) === 'horizontal') dismiss.current()
     }
     document.addEventListener('pointerdown', onPointerDown, true)

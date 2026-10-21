@@ -25,7 +25,7 @@ function Screens({ screens }: { screens: SwipeScreen[] }) {
   useSwipeToDismiss(screens)
   return (
     <>
-      <div className="control-transcript--screen"><p>text</p><textarea /></div>
+      <div className="control-transcript--screen"><p>text</p><textarea /><div data-owns-gestures=""><img /></div></div>
       <div className="toolbar-sheet__panel">
         <div className="toolbar__strip"><button>button</button></div>
         <div className="row">agent</div>
@@ -50,6 +50,12 @@ describe('swiping a screen away', () => {
     expect(transcript).not.toHaveBeenCalled()
     drag(text, [100, 300], [[130, 302], [180, 305]])
     expect(transcript).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves a drag on something that handles its own gestures to it', () => {
+    const { container, transcript } = setup()
+    drag(container.querySelector('img')!, [100, 300], [[130, 302], [180, 305]])
+    expect(transcript).not.toHaveBeenCalled()
   })
 
   it('leaves a drag in the text box to the text box', () => {

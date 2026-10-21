@@ -50,4 +50,64 @@ describe('pictures in the transcript', () => {
     expect(dismissed).not.toHaveBeenCalled()
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:image/png:10')
   })
+
+  describe('opened whole', () => {
+    // jsdom lays nothing out: a 400×300 picture fitted in a 400×600 stage at the window's origin.
+    const sizes: Array<[string, number]> = [['offsetWidth', 400], ['offsetHeight', 300], ['clientWidth', 400], ['clientHeight', 600]]
+    beforeEach(() => {
+      for (const [key, value] of sizes) Object.defineProperty(HTMLElement.prototype, key, { configurable: true, get: () => value })
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 400, height: 600 } as DOMRect)
+    })
+    afterEach(() => {
+      for (const [key] of sizes) delete (HTMLElement.prototype as unknown as Record<string, unknown>)[key]
+      vi.restoreAllMocks()
+    })
+
+    const open = async (dismissed = vi.fn()) => {
+      render(<ControlTranscript variant="modal" onDismiss={dismissed} />)
+      fireEvent.click(await screen.findByLabelText('Open Water at dusk'))
+      await waitFor(() => expect(document.querySelector('.control-images__viewer img')).toBeTruthy())
+      return { dismissed, img: document.querySelector<HTMLImageElement>('.control-images__viewer img')!, stage: document.querySelector('.control-images__stage')! }
+    }
+
+    it('zooms on a trackpad pinch and moves on a sideways scroll, without closing the transcript', async () => {
+      const { dismissed, img, stage } = await open()
+      fireEvent.wheel(img, { ctrlKey: true, deltaY: -70, clientX: 200, clientY: 300 })
+      expect(img.style.transform).toBe(`translate(0px, 0px) scale(${Math.exp(0.7)})`)
+      for (let i = 0; i < 5; i++) fireEvent.wheel(img, { deltaX: 60 })
+      expect(img.style.transform).toMatch(/^translate\(-\d/)
+      expect(dismissed).not.toHaveBeenCalled()
+      expect(stage.isConnected).toBe(true)
+    })
+
+    it('zooms on a two-finger pinch and pans on a drag, and neither counts as a tap', async () => {
+      const { dismissed, img } = await open()
+      fireEvent.pointerDown(img, { pointerId: 1, clientX: 150, clientY: 300 })
+      fireEvent.pointerDown(img, { pointerId: 2, clientX: 250, clientY: 300 })
+      fireEvent.pointerMove(window, { pointerId: 2, clientX: 350, clientY: 300 })
+      fireEvent.pointerUp(window, { pointerId: 1 })
+      fireEvent.pointerUp(window, { pointerId: 2 })
+      fireEvent.click(img)
+      // Spread from 100 px apart to 200: twice the size, about their first midpoint, then moved with it.
+      expect(img.style.transform).toBe('translate(50px, 0px) scale(2)')
+
+      fireEvent.pointerDown(img, { pointerId: 3, clientX: 200, clientY: 300 })
+      fireEvent.pointerMove(window, { pointerId: 3, clientX: 150, clientY: 300 })
+      fireEvent.pointerUp(window, { pointerId: 3 })
+      fireEvent.click(img)
+      expect(img.style.transform).toBe('translate(0px, 0px) scale(2)')
+      expect(document.querySelector('.control-images__viewer')).toBeTruthy()
+      expect(dismissed).not.toHaveBeenCalled()
+    })
+
+    it('zooms in on a tap and back out on the next', async () => {
+      const { img } = await open()
+      fireEvent.pointerDown(img, { pointerId: 1, clientX: 200, clientY: 300 })
+      fireEvent.pointerUp(window, { pointerId: 1 })
+      fireEvent.click(img, { clientX: 200, clientY: 300 })
+      expect(img.style.transform).toBe('translate(0px, 0px) scale(2)')
+      fireEvent.click(img)
+      expect(img.style.transform).toBe('')
+    })
+  })
 })
