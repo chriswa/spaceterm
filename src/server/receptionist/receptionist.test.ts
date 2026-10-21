@@ -4264,6 +4264,61 @@ describe('Receptionist backlog at a pause', () => {
     h.receptionist.userTookOver(KEVIN_ID)
     expect(h.backlog.size).toBe(1)
   })
+  describe('muted, with replies the user has not read', () => {
+    const backlogged = (judged: { count: number }) => harness({
+      backlog: ['Leon finished.', 'Sally finished.', 'Kevin finished.'],
+      judgePause: async () => { judged.count++; return READY_NOW },
+      replies: [
+        reply([{ from: 'control', text: 'Oliver is done. Want the next one now?' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('FROM YOUR BACKLOG')
+          return reply([{ from: 'control', text: 'Leon finished.' }])
+        },
+      ],
+    })
+
+    it('brings up nothing while the reply waits unread, however long the quiet', async () => {
+      const judged = { count: 0 }
+      const h = backlogged(judged)
+      h.receptionist.setListener({ ...h.listener, reading: true })
+      await h.receptionist.hear('what about Oliver?', 'typed')
+      await flush()
+      await flush()
+      expect(h.receptionist.unread().count).toBe(1)
+      expect(judged.count).toBe(0)
+      expect(h.turns).toHaveLength(1)
+      expect(h.backlog.size).toBe(3)
+    })
+
+    it('brings up one item once the user has read what waited', async () => {
+      const judged = { count: 0 }
+      const h = backlogged(judged)
+      h.receptionist.setListener({ ...h.listener, reading: true })
+      await h.receptionist.hear('what about Oliver?', 'typed')
+      await flush()
+      h.receptionist.readAll()
+      await flush()
+      expect(judged.count).toBe(1)
+      expect(h.turns).toHaveLength(2)
+      // The item it brought up waits unread in turn: nothing more until that is read too.
+      expect(h.receptionist.unread().count).toBe(1)
+      expect(h.backlog.size).toBe(2)
+    })
+
+    it('brings up one item once unread replies read aloud have been heard out', async () => {
+      const judged = { count: 0 }
+      const h = backlogged(judged)
+      h.receptionist.setListener({ ...h.listener, reading: true })
+      await h.receptionist.hear('what about Oliver?', 'typed')
+      await flush()
+      expect(await h.receptionist.readAloud(h.listener.speech)).toBeUndefined()
+      await flush()
+      // Judged once, after the reading: one judged as it started would be broken by it, and lost.
+      expect(judged.count).toBe(1)
+      expect(h.turns).toHaveLength(2)
+      expect(h.backlog.size).toBe(2)
+    })
+  })
 })
 
 describe("Receptionist: the transcript's activity log", () => {

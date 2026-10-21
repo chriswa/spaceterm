@@ -680,6 +680,8 @@ export class Receptionist {
   private pauseJudged = -1
   /** When the user last cut Control off to talk: nothing comes up from the backlog for a while after. See `maybePull`. */
   private interruptedAt: number | undefined
+  /** The user caught up on what waited unread while Control was held: the backlog may come up once it is released. See `caughtUp`. */
+  private pullOnRelease = false
 
   private readonly onError: (message: string) => void
   /** `opts.onPhase`: Control's phase, or a reading's while Control is idle. */
@@ -847,6 +849,10 @@ export class Receptionist {
     for (const resume of this.heldWaiters) resume()
     this.heldWaiters.clear()
     if (!this.resumeIfStopped()) this.maybeSpeakUp()
+    if (this.pullOnRelease) {
+      this.pullOnRelease = false
+      void this.maybePull()
+    }
   }
 
   /**
@@ -1030,13 +1036,17 @@ export class Receptionist {
     })
   }
 
-  /** The user's message at `at` in the record locks what Control said before it: see `ConsumptionLedger.settle`. */
+  /**
+   * The user's message at `at` in the record locks what Control said before
+   * it: see `ConsumptionLedger.settle`. Not caught up for the backlog: the
+   * message has a turn of its own, and the pause after its reply is the one.
+   */
   private settle(via: Via, at: number): void {
     this.changingUnread(() => {
       const { read, lost } = this.ledger.settle(via, at)
       for (const { at: of, part, from, to } of read) this.deps.record.consumed(of, part, from, to, 'read')
       for (const { at: of, lengths } of lost) this.deps.record.amendHeard(of, lengths)
-    })
+    }, false)
     const { done, dropped } = this.reads.settle(at, (replyAt, read) => this.ledger.whole(replyAt, read.parts))
     this.markRead(done)
     this.traceDropped(dropped, false)
@@ -1109,12 +1119,28 @@ export class Receptionist {
     this.deps.log({ event: 'mark-read', nodeIds: reads.map(read => read.nodeId), what })
   }
 
-  /** Runs `change` to the ledger, and says what waits for the user if that moved. */
-  private changingUnread(change: () => void): void {
+  /**
+   * Runs `change` to the ledger, and says what waits for the user if that
+   * moved. Nothing left waiting, after something was, is the user caught up
+   * (`caughtUp`), unless `catchingUp` is false.
+   */
+  private changingUnread(change: () => void, catchingUp = true): void {
     const before = this.ledger.unread()
     change()
     const after = this.ledger.unread()
     if (after.count !== before.count || after.first !== before.first) this.onUnread(after)
+    if (catchingUp && before.count && !after.count) this.caughtUp()
+  }
+
+  /**
+   * The user has read, or heard, all that waited for them. Quiet while it
+   * waited was not the user done with a topic, only not there yet, so the
+   * backlog held (`quietSince`); the quiet that counts starts now.
+   */
+  private caughtUp(): void {
+    this.pauses++
+    if (this.held) this.pullOnRelease = true
+    else void this.maybePull()
   }
 
   /**
@@ -1166,10 +1192,11 @@ export class Receptionist {
     for (const { at, part, from } of this.ledger.unreadParts()) if (!firsts.has(at)) firsts.set(at, { part, from })
     const readings = [...firsts].flatMap(([at, first]) => this.readingOf(at, first.part, first.from) ?? [])
     if (!readings.length) return undefined
-    for (const part of this.ledger.unreadParts()) this.consume(part.at, part.part, part.from, part.to, 'aloud')
     const channel = this.replayOn(speech)
+    // Held before it counts as taken in, so the backlog waits for the reading to end: see `caughtUp`.
     this.setReplaying(true)
     try {
+      for (const part of this.ledger.unreadParts()) this.consume(part.at, part.part, part.from, part.to, 'aloud')
       // Held first, so the turn stopped here waits for the reading before it carries on.
       if (thinking) await this.stopForUser('reading')
       for (const reading of readings) {
@@ -2324,9 +2351,16 @@ export class Receptionist {
     }
   }
 
-  /** Whether the quiet after a reply is unbroken, so that a backlog item could come up: see `maybePull`. */
+  /**
+   * Whether the quiet after a reply is unbroken, so that a backlog item could
+   * come up: see `maybePull`. Never while words wait unread — written to a
+   * muted device, or left by a voice that failed: quiet then is the user not
+   * having read them yet, and each item would bring up the next unseen. Once
+   * they catch up, the quiet starts over (`caughtUp`).
+   */
   private quietSince(pause: number): boolean {
-    return pause === this.pauses && this.listening && !this.held && !this.channel.isProducing() && !this.events.length && !this.returnNews
+    return pause === this.pauses && this.listening && !this.held && !this.channel.isProducing() && !this.events.length && !this.returnNews &&
+      !this.ledger.unread().count
   }
 
   /**
