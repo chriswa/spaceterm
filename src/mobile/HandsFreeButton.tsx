@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { holdState, onHoldStateChange, setHoldMicrophone, type HoldState } from './held-microphone'
+import { holdHost, holdState, onHoldStateChange, setHoldMicrophone, type HoldState } from './held-microphone'
 import { nativeMicrophoneAvailable, onNativeSampleRate } from './native-microphone'
 import { endSilence, useHandsFree } from './hands-free'
 import { Spark } from './Spark'
+import './HandsFreeButton.css'
 
 /** Whether the microphone is held open (held-microphone.ts), as it changes. */
 export function useHoldState(): HoldState {
@@ -45,11 +46,18 @@ export function thresholdLine(at: number): { x1: number; x2: number; y: number }
  * ends the dictation, while the model is being asked. Right: the quiet since
  * you last spoke, the top the patience that ends it regardless. Both stay up while what you said is sent,
  * so you can see which one ended it.
+ *
+ * The same button on the Mac, in the toolbar beside Control (`chrome:
+ * 'toolbar'`): there it holds the Mac's input, and holding it is hands-free.
+ * `unavailable` says why it cannot run there; the button then does nothing
+ * and its tooltip gives the reason.
  */
-export function HandsFreeButton() {
+export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?: 'phone-bar' | 'toolbar'; unavailable?: string }) {
   const hold = useHoldState()
   const on = hold !== 'off'
   const app = nativeMicrophoneAvailable()
+  /** Holding is hands-free mode: in the app, and on the Mac. */
+  const handsFree = app || holdHost() === 'desktop'
   // While hands-free holds the app's microphone: its link's rate in kHz, 24 or 48 on AirPods. Shown only.
   const rate = useNativeSampleRate()
   const badge = app && hold === 'held' && rate ? String(Math.round(rate / 1000)) : null
@@ -70,16 +78,19 @@ export function HandsFreeButton() {
     return () => cancelAnimationFrame(frame)
   }, [ending])
 
-  const label = on
-    ? `${hold === 'preparing' ? 'Getting the microphone ready' : app ? 'Hands-free: always listening for "Control"' : 'Microphone held open'} — tap to stop`
-    : app ? 'Hands-free: always listen for "Control"' : 'Hold the microphone open with AirPods'
+  const label = unavailable ?? (on
+    ? `${hold === 'preparing' ? 'Getting the microphone ready' : handsFree ? 'Hands-free: always listening for "Control"' : 'Microphone held open'} — ${chrome === 'toolbar' ? 'click' : 'tap'} to stop`
+    : handsFree ? 'Hands-free: always listen for "Control"' : 'Hold the microphone open with AirPods')
   return (
     <button
-      className={`m-bar__button m-hands-free m-hands-free--${hold}`}
+      className={`${chrome === 'toolbar' ? 'toolbar__btn toolbar__hands-free' : 'm-bar__button'} m-hands-free m-hands-free--${hold}`}
       aria-label={label}
       aria-pressed={on}
+      // aria-disabled rather than disabled, so the tooltip giving the reason still shows on hover.
+      aria-disabled={unavailable !== undefined}
+      {...chrome === 'toolbar' ? { 'data-tooltip': label, 'data-tooltip-no-flip': true } : {}}
       // No haptic: a tap means your words are being taken down (native-microphone.ts). The press shows instead.
-      onClick={() => setHoldMicrophone(!on)}
+      onClick={() => { if (unavailable === undefined) setHoldMicrophone(!on) }}
     >
       {/* Turned on, the microphone not held yet: a spark round the rim until it is. */}
       {hold === 'preparing' && <Spark />}

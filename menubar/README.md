@@ -14,7 +14,7 @@ live in the menu, and a pending server restart is already lit up on the client.
 
 ```bash
 cd menubar
-./bundle.sh          # build, install to ~/Applications, (re)launch
+./bundle.sh          # build, install to /Applications (else ~/Applications), (re)launch
 ```
 
 Needs Xcode's command line tools (Swift 6). No dependencies.
@@ -90,7 +90,8 @@ starts a second one, and it never signals a process it did not start.
 - **Open on Login** — `SMAppService.mainApp`. macOS may answer
   `requiresApproval`; the menu then offers to open the right System Settings
   pane. Because registration resolves against the bundle's path, keep the app
-  in `~/Applications` (where `bundle.sh` puts it).
+  where `bundle.sh` puts it: `/Applications`, or `~/Applications` without write
+  access there (where menu bar managers like Ice may hide its icon on macOS 27).
 - Restart SpacetermBar / Quit SpacetermBar — both keep Spaceterm running.
   Hold ⌥ for **Quit SpacetermBar and Stop Spaceterm**.
 
@@ -102,7 +103,7 @@ starts a second one, and it never signals a process it did not start.
 .build/debug/SpacetermBar --watch        # print state transitions (adopts, does not start)
 .build/debug/SpacetermBar --start --stop-after 60   # start both, stop after 60s, print transitions
 .build/debug/SpacetermBar --icons ~/Desktop/icons   # PNGs of the icon
-~/Applications/SpacetermBar.app/Contents/MacOS/SpacetermBar --login-status
+/Applications/SpacetermBar.app/Contents/MacOS/SpacetermBar --login-status
 ```
 
 `--spawn-test` covers what would otherwise need a keyboard: a tree dying

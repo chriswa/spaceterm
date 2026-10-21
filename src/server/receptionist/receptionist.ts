@@ -426,6 +426,17 @@ export const PROMPT_HASH = createHash('sha256').update(RECEPTIONIST_SYSTEM_PROMP
  * has left the turn it was in before the next prompt is typed.
  */
 const INTERRUPT_SETTLE_MS = 800
+
+const isRestart = (call: ToolCall): boolean => call.tool === 'restart_server'
+
+/**
+ * `calls` with restart_server moved to the end, whatever order the model
+ * wrote them in: the restart takes this process down, and with it any tool
+ * of the turn that has not run yet.
+ */
+function restartLast(calls: readonly ToolCall[]): ToolCall[] {
+  return [...calls.filter(call => !isRestart(call)), ...calls.filter(isRestart)]
+}
 /**
  * How long a watched agent must stay stopped before its stop is reported. A
  * message sent to an agent at work waits in Claude Code's queue, and the turn
@@ -651,6 +662,12 @@ export class Receptionist {
    * reconnection with nothing missed starts none.
    */
   private letGoUntold = false
+  /**
+   * Sends not yet handed to the agent's terminal: one after an interrupt
+   * waits for the Escape to settle first. restart_server waits for them, or
+   * the message would go down with the server.
+   */
+  private sending = new Set<Promise<void>>()
   /** What backlog_next gave the latest turn, until its reply is said; see `putBack`. */
   private taken: { attempt: Attempt; items: BacklogItem[] } | undefined
   /**
@@ -1910,14 +1927,18 @@ export class Receptionist {
         ? this.render(reply.say, agents).spoken.map(({ text, voice }) => ({ text, voice }))
         : []
       const froms = reply.say.map(part => part.from)
-      await this.runActions(actions, lines => done.push(...lines))
+      // The restart waits for the lookups too: see `restartLast`.
+      const restart = actions.filter(isRestart)
+      await this.runActions(actions.filter(call => !isRestart(call)), lines => done.push(...lines))
       // Taken, the actions are the model's to hear of even if the user talks
       // over this turn before their results go back: noted at once, for
       // whichever message leaves next, and taken back if it is this turn's.
       const note = this.noteDone(done)
-      if (spoken.length && !await this.speakInterim(attempt, froms, spoken) && !attempt.isCurrent) return undefined
-      const { results } = await this.runTools(reply.tools.filter(isLookup), agents, handles, undefined, taken)
-      if (!attempt.isCurrent) return undefined
+      const talkedOver = spoken.length > 0 && !await this.speakInterim(attempt, froms, spoken) && !attempt.isCurrent
+      const { results } = talkedOver ? { results: [] } : await this.runTools(reply.tools.filter(isLookup), agents, handles, undefined, taken)
+      // Run even when talked over: it was taken, like the other actions.
+      await this.runActions(restart, lines => done.push(...lines))
+      if (talkedOver || !attempt.isCurrent) return undefined
       if (note !== undefined && this.notes.includes(note)) this.notes.splice(this.notes.indexOf(note), 1)
       message = `TOOL RESULTS:\n${[...results, ...done.map(line => `done: ${line}`)].join('\n\n')}`
     }
@@ -2110,7 +2131,7 @@ export class Receptionist {
   ): Promise<{ results: string[]; done: string[] }> {
     const results: string[] = []
     const done: string[] = []
-    for (const call of calls) {
+    for (const call of restartLast(calls)) {
       if (call.tool === 'spawn') {
         done.push(this.spawn(call, agents, handles))
         continue
@@ -2162,6 +2183,7 @@ export class Receptionist {
         serverLog(`[receptionist] ${call.tool}: letting go of Control`)
         this.letGoUntold = true
         this.deps.letGo()
+        if (call.tool === 'restart_server') await Promise.allSettled(this.sending)
         done.push(this.letGoFor(call.tool))
         continue
       }
@@ -2215,7 +2237,7 @@ export class Receptionist {
           done.push(`interrupt pressed Escape for ${who}`)
           break
         case 'send':
-          void this.send(agent.nodeId, call.message, interrupted.has(agent.nodeId), handles)
+          this.track(this.send(agent.nodeId, call.message, interrupted.has(agent.nodeId), handles))
           done.push(`send delivered to ${who}, which is now watched for its reply`)
           break
         case 'unarchive_agent':
@@ -2538,6 +2560,12 @@ export class Receptionist {
       if (problem) problems.push(`"${call.name.name}" (in ${call.tool}) cannot be given: ${this.nameProblemWords(problem)}. Choose another name, or ask the user for one.`)
     }
     return problems
+  }
+
+  /** Keep a send in `sending` until it has been handed over. */
+  private track(sending: Promise<void>): void {
+    this.sending.add(sending)
+    void sending.finally(() => this.sending.delete(sending))
   }
 
   /**

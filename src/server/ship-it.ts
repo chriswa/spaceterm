@@ -23,7 +23,8 @@ export const SHIP_IT_SUBMIT_DELAY_MS = 200
 export const DISMISS_QUESTION_DELAY_MS = 500
 
 export interface ShipItDeps {
-  write(data: string): void
+  /** Resolves once the data has left this process. */
+  write(data: string): Promise<void>
   schedule(fn: () => void, ms: number): void
 }
 
@@ -43,16 +44,19 @@ export function bracketedPaste(text: string): string {
  * first declines the question ("User declined to answer questions") and
  * leaves the ordinary prompt, empty, for the text to go into as a message.
  * Permission prompts are not handled: Escape there denies the tool call.
+ *
+ * Resolves once the last keystroke has left this process. The submit is a
+ * timer here, so a server that exits first leaves the text in the prompt
+ * unsubmitted: shutdown waits on this.
  */
-export function shipIt(deps: ShipItDeps, text: string, submit: boolean, opts: { dismissQuestion?: boolean } = {}): void {
-  const ship = () => {
-    deps.write(bracketedPaste(text))
-    if (submit) deps.schedule(() => deps.write('\r'), SHIP_IT_SUBMIT_DELAY_MS)
+export async function shipIt(deps: ShipItDeps, text: string, submit: boolean, opts: { dismissQuestion?: boolean } = {}): Promise<void> {
+  const wait = (ms: number) => new Promise<void>((resolve) => deps.schedule(resolve, ms))
+  if (opts.dismissQuestion) {
+    void deps.write('\x1b')
+    await wait(DISMISS_QUESTION_DELAY_MS)
   }
-  if (!opts.dismissQuestion) {
-    ship()
-    return
-  }
-  deps.write('\x1b')
-  deps.schedule(ship, DISMISS_QUESTION_DELAY_MS)
+  const pasted = deps.write(bracketedPaste(text))
+  if (!submit) return pasted
+  await wait(SHIP_IT_SUBMIT_DELAY_MS)
+  await deps.write('\r')
 }

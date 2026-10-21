@@ -410,7 +410,8 @@ html, body, #root {
   color: #ff5c8a;
 }
 
-.toolbar__btn:disabled {
+.toolbar__btn:disabled,
+.toolbar__btn[aria-disabled="true"] {
   opacity: 0.4;
   cursor: default;
 }
@@ -453,7 +454,8 @@ html, body, #root {
   .toolbar__btn--pending::after { animation: none; }
 }
 
-.toolbar__btn:disabled:hover {
+.toolbar__btn:disabled:hover,
+.toolbar__btn[aria-disabled="true"]:hover {
   background: rgba(255,255,255,0.06);
 }
 
@@ -4451,6 +4453,23 @@ html, body, #root {
   fill: #f5d75a;
   filter: drop-shadow(0 0 4px rgba(245, 215, 90, 0.9));
 }
+
+/* The hands-free button (src/mobile/HandsFreeButton.tsx), right of Control:
+   round, as on the phone, so its two half-disc gauges fill it. Its look per
+   state is HandsFreeButton.css; these keep the toolbar's hover from covering
+   it. */
+.toolbar__hands-free {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.toolbar__hands-free.m-hands-free--held:hover { background: #ddd; }
+.toolbar__hands-free.m-hands-free--preparing:hover { background: #222; }
 
 /* What lies over the Control button (ControlBadges.tsx), on the Mac's toolbar
    and the phone's bar alike. The headset gives off sound while Control speaks here.

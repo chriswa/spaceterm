@@ -262,29 +262,6 @@ textarea, input, [contenteditable="true"], .cm-content {
   -webkit-touch-callout: none;
   transition: background-color 150ms, color 150ms, box-shadow 150ms;
 }
-/* A press taken, its result on the way (Spark.tsx): a spark runs round the
-   rim, as on a directory card's badge while its pull or push is in flight.
-   pathLength is 100, so the dash is 14% of the rim and a lap is 100. */
-.m-spark {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-  pointer-events: none;
-}
-.m-spark circle {
-  fill: none;
-  stroke: #fff4c2;
-  stroke-width: 3;
-  stroke-linecap: round;
-  stroke-dasharray: 14 86;
-  filter: drop-shadow(0 0 2px #ffd84a) drop-shadow(0 0 4px #ffb300);
-  animation: m-spark 1.1s linear infinite;
-}
-.m-spark--amber circle { stroke: #ffb38a; filter: drop-shadow(0 0 2px #ff7a3d) drop-shadow(0 0 4px #f38ba8); }
-.m-spark--white circle { stroke: #fff; filter: drop-shadow(0 0 2px #fff); }
-@keyframes m-spark { to { stroke-dashoffset: -100; } }
 /* A tap taken, the microphone starting: don't talk yet. Dark, the spark
    going round — amber while it tries a second time. */
 .m-mic--connecting,
@@ -370,54 +347,6 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-mic__bars i:nth-child(2) { --m-bar-k: 1; }
 .m-mic__bars i:nth-child(3) { --m-bar-k: 0.75; }
 .m-mic__bars i:nth-child(4) { --m-bar-k: 0.4; }
-/* The hands-free button (HandsFreeButton.tsx), right of the microphone: dark
-   while it is off; a spark round it while it waits for the microphone; white
-   while it holds it — the same white as the microphone's own look then. */
-.m-hands-free { position: relative; }
-/* While hands-free takes a dictation: what may end it, a half of the button
-   each, filled from the bottom (clip-path set in HandsFreeButton.tsx). Left,
-   green: Smart Turn's latest answer, 0 to 1, snapping to each — no
-   transition, so one answer is not mistaken for many — with a red line at the
-   threshold that ends it, while it is being asked. Right, magenta: the quiet
-   against the patience, ending it at the top. Light enough for the dark icon
-   over them, strong enough to see on the white, and apart from the
-   microphone's orange. */
-.m-hands-free__gauge {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
-.m-hands-free__gauge--turn path { fill: #4ade80; }
-.m-hands-free__gauge--quiet path { fill: #f472d0; }
-.m-hands-free__threshold line { stroke: #e11d48; stroke-width: 2; }
-/* Over the gauges, which are positioned and would otherwise cover it. */
-.m-hands-free__icon { position: relative; }
-/* Hands-free's microphone link's rate in kHz, at the top right (HandsFreeButton.tsx): 24, or 48. */
-.m-hands-free__rate {
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  min-width: 16px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: 7px;
-  background: var(--m-surface);
-  color: var(--m-text);
-  box-shadow: 0 0 0 1.5px var(--m-raised);
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 14px;
-  text-align: center;
-  pointer-events: none;
-}
-.m-hands-free--preparing {
-  background: #000;
-  color: #fff;
-  box-shadow: inset 0 0 0 2px #fff;
-}
-.m-hands-free--held { background: #fff; color: #11111b; }
 .m-mic__error {
   position: fixed;
   left: 50%;

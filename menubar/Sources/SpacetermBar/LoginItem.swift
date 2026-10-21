@@ -4,7 +4,7 @@ import ServiceManagement
 /// Registers the app itself as a login item via SMAppService (macOS 13+).
 /// `mainApp` refers to this bundle, so registration is a single call — but it
 /// resolves against the bundle's *location*, which is why `bundle.sh`
-/// installs to a fixed path under ~/Applications.
+/// installs to a fixed path (/Applications, else ~/Applications).
 enum LoginItem {
 
     enum State {

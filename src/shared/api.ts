@@ -555,4 +555,12 @@ export interface ServerPipeBridge {
 export interface ElectronHost {
   platform: PlatformApi
   pipe: ServerPipeBridge
+  /**
+   * Hands-free holds the Mac's microphone open, or has let it go. While it is
+   * held the window is not background-throttled, so a dictation streams at
+   * full rate with Spaceterm behind other windows.
+   */
+  microphoneHeld(held: boolean): void
+  /** This Mac's macOS version, such as `"26.0.1"`; null on any other system. */
+  macOSVersion: string | null
 }

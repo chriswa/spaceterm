@@ -16,14 +16,13 @@ import { installDiagnostics } from './diagnostics'
 import { installMemoryProbe } from './memory-probe'
 import { startSpeechPlayer } from './speech-player'
 import { initAudioSession } from './audio-session'
-import { installHeldMicrophone, onHoldStateChange } from './held-microphone'
 import { installStayAwake } from './stay-awake'
 import { followHandsFree, installDuckOthers } from './duck-others'
 import { DownlinkWatch, watchedTransport } from './downlink-watch'
-import { installHandsFree, useHandsFree } from './hands-free'
+import { useHandsFree } from './hands-free'
+import { installHandsFreeMode } from './hands-free-mode'
 import { installControlTones } from './control-tones'
-import { playCue, playHandsFreeCue, playThinkingSonar } from './cues'
-import { installReadyCue } from './ready-cue'
+import { playCue, playThinkingSonar } from './cues'
 import { Dictation } from './dictation'
 import { useDictationSession } from './dictation-session'
 import { thinkingCueScope } from '@/lib/thinking-cue'
@@ -141,15 +140,12 @@ if (!token) {
     if (recovered) window.api.log(recovered)
     // Sound to the speaker, not the earpiece, except while recording.
     initAudioSession()
-    installHeldMicrophone()
     // Control heard with the phone locked: the app stays awake while this phone holds it.
     installStayAwake()
     installDuckOthers()
     followHandsFree()
-    // Listens for "Control" on the held microphone; see hands-free.ts.
-    installHandsFree(window.api)
-    // A tone as the hands-free switch turns white: ready to listen.
-    installReadyCue(onHoldStateChange, () => playHandsFreeCue('handsFreeReady'))
+    // The held microphone, listening on it for "Control", and a tone as it is ready; see hands-free-mode.ts.
+    installHandsFreeMode(window.api, 'phone')
     // The sonar carries on while Control's voice is made, played by the app where it can,
     // and its turns end with a tone when it says nothing or fails — where replies are Aloud.
     thinkingCueScope.alsoSynthesizing = true

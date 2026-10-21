@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { installApi } from './lib/install-api'
 import { electronTransport } from './lib/electron-transport'
 import { installDesktopMemoryProbe } from './lib/page-memory'
+import { installDesktopHandsFree } from './lib/desktop-hands-free'
 import { DESKTOP_DEVICE } from '../../../shared/state'
 import './styles/index.css'
 
@@ -14,8 +15,10 @@ const host = window.electronHost
 
 // `window.api` must exist before App's modules run, so App is imported only
 // once it has been installed.
-void installApi(electronTransport(host.pipe), host.platform, 'spaceterm-electron', { id: DESKTOP_DEVICE.deviceId, label: DESKTOP_DEVICE.label }).then(async () => {
+void installApi(electronTransport(host.pipe), host.platform, 'spaceterm-electron', { id: DESKTOP_DEVICE.deviceId, label: DESKTOP_DEVICE.label }).then(async (client) => {
   installDesktopMemoryProbe(message => window.api.log(message))
+  // The toolbar's hands-free button, beside Control: the phone's hands-free mode, on the Mac.
+  installDesktopHandsFree(client, host)
   window.api.log(`[Supersample] display ratio ${realDevicePixelRatio()}, ${isSupersampleActive() ? 'on' : 'off'}`)
   const { App } = await import('./App')
   // The desktop opens on the canvas where it was left; only the phone opens on

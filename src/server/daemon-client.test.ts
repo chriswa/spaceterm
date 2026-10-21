@@ -91,6 +91,26 @@ describe('DaemonClient messaging', () => {
     client.dispose()
   })
 
+  it('resolves a send only once it has been flushed to the socket', async () => {
+    const { daemon, client } = setup()
+    await client.connect()
+    daemon.current.holdFlushes = true
+    let flushed = false
+    void client.send({ type: 'write', id: 's1', data: '\r' }).then(() => { flushed = true })
+    await Promise.resolve()
+    expect(flushed).toBe(false)
+    daemon.current.flush()
+    await Promise.resolve()
+    expect(flushed).toBe(true)
+    client.dispose()
+  })
+
+  it('resolves a send it drops for want of a connection', async () => {
+    const { client } = setup()
+    await expect(client.send({ type: 'create' })).resolves.toBeUndefined()
+    client.dispose()
+  })
+
   it('drops sends made before connecting', () => {
     const { daemon, client } = setup()
     client.send({ type: 'create' })

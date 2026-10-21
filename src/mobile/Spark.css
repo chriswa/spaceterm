@@ -1,0 +1,23 @@
+/* A press taken, its result on the way (Spark.tsx): a spark runs round the
+   rim, as on a directory card's badge while its pull or push is in flight.
+   pathLength is 100, so the dash is 14% of the rim and a lap is 100. */
+.m-spark {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.m-spark circle {
+  fill: none;
+  stroke: #fff4c2;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 14 86;
+  filter: drop-shadow(0 0 2px #ffd84a) drop-shadow(0 0 4px #ffb300);
+  animation: m-spark 1.1s linear infinite;
+}
+.m-spark--amber circle { stroke: #ffb38a; filter: drop-shadow(0 0 2px #ff7a3d) drop-shadow(0 0 4px #f38ba8); }
+.m-spark--white circle { stroke: #fff; filter: drop-shadow(0 0 2px #fff); }
+@keyframes m-spark { to { stroke-dashoffset: -100; } }

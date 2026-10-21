@@ -26,7 +26,8 @@ export interface DaemonConnection {
   on(event: 'data', listener: (chunk: string | Buffer) => void): void
   on(event: 'close', listener: () => void): void
   on(event: 'error', listener: (err: Error) => void): void
-  write(data: string): void
+  /** `flushed` runs once the data has left this process, which `destroy` would otherwise discard. */
+  write(data: string, flushed: () => void): void
   destroy(): void
 }
 
@@ -167,10 +168,15 @@ export class DaemonClient {
     }, this.reconnectDelayMs)
   }
 
-  /** Send a JSON-lines message to the daemon. */
-  send(msg: Record<string, unknown>): void {
-    if (!this.connection || !this.connected) return
-    this.connection.write(JSON.stringify(msg) + '\n')
+  /**
+   * Send a JSON-lines message to the daemon. Resolves once it has been
+   * flushed to the socket, or at once if there is no connection to send it
+   * on; never rejects, since a failed socket reports through 'error'.
+   */
+  send(msg: Record<string, unknown>): Promise<void> {
+    const connection = this.connection
+    if (!connection || !this.connected) return Promise.resolve()
+    return new Promise((flushed) => connection.write(JSON.stringify(msg) + '\n', () => flushed()))
   }
 
   isConnected(): boolean {

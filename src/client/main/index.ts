@@ -260,6 +260,13 @@ function setupIPC(): void {
 
   ipcMain.on('window:raise', () => raiseWindow())
 
+  // Hands-free holds the microphone (src/mobile/held-microphone.ts): its
+  // dictations stream on timers, which Chromium throttles to a crawl in a
+  // window behind others. Unthrottled for as long as it is held.
+  ipcMain.on('window:microphone-held', (_event, held: boolean) => {
+    mainWindow?.webContents.setBackgroundThrottling(!headless && !held)
+  })
+
   ipcMain.on('log', (_event, message: string) => {
     logger.log(message)
   })

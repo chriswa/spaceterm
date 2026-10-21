@@ -10,7 +10,7 @@
   and client in place of `npm run dev` (Swift, separate from the npm build).
   `menubar/README.md` covers its restart policy and how to verify it headless.
 - `src/mobile/README.md` — the phone web app: what it shares with the desktop client, and how it reaches the server.
-- `~/.spaceterm/mobile-events.jsonl` — start here for any phone bug involving the microphone, dictation, hands-free, audio playback, AirPods, or the app being backgrounded or put to sleep. One JSON event per line, each carrying the audio state at that moment; see "The audio and lifecycle record" in `src/mobile/README.md`. The phone's free-text log lines are in `~/.spaceterm/electron.log`, tagged `[spaceterm-mobile …]`.
+- `~/.spaceterm/mobile-events.jsonl` — start here for any phone bug involving the microphone, dictation, hands-free, audio playback, AirPods, or the app being backgrounded or put to sleep. One JSON event per line, each carrying the audio state at that moment; see "The audio and lifecycle record" in `src/mobile/README.md`. The Mac's hands-free (the phone's code, run in the desktop client) records there too, under `client: "spaceterm-electron …"`. The phone's free-text log lines are in `~/.spaceterm/electron.log`, tagged `[spaceterm-mobile …]`.
 
 ## After making changes
 
@@ -55,6 +55,13 @@ Three vitest projects, split by what a suite needs:
   the renderer over CDP, which does not need the window mapped, and the GPU
   process is still real, so shaders are still compiled by a real driver. Use
   `npm run test:e2e:headed` on the rare occasion you need to watch it.
+  **A run is isolated only by its `SPACETERM_HOME`**, a temp folder deleted
+  afterwards. It still reaches the operator's machine-wide services, such as
+  Voice Operator. Code that *claims* one of those (Voice Operator's subscriber
+  route for command dictations, a fixed port, a registration under a fixed
+  name) must be gated on `isOperatorHome()` from `src/shared/protocol.ts`.
+  Otherwise every e2e run on the Mac takes it from the operator's Spaceterm
+  and leaves it pointing at a deleted socket.
 
 **The GUI *can* be launched headlessly.** Earlier notes in this repo said
 otherwise; they were wrong. `npm install --ignore-scripts` skips *electron's*

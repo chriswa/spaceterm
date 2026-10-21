@@ -6,6 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  */
 function fakeBrowser(label: string) {
   const opened: Array<{ closed: boolean; label: string }> = []
+  /** Every track handed out, newest last: a test can end one, as a headset going away does. */
+  const tracks: Array<{ label: string; readyState: string }> = []
+  /** The device group of the input in use; each label is its own device. */
+  const group = (name: string) => `group:${name}`
+  let refuse: Error | undefined
   const nodes: Array<{ port: { onmessage: ((e: { data: Float32Array }) => void) | null } }> = []
   let currentLabel = label
   const deviceListeners: Array<() => void> = []
@@ -40,9 +45,13 @@ function fakeBrowser(label: string) {
     value: {
       addEventListener: (type: string, fn: () => void) => { if (type === 'devicechange') deviceListeners.push(fn) },
       getUserMedia: async () => {
-        const track = { label: currentLabel, readyState: 'live', stop() { this.readyState = 'ended' } }
+        if (refuse) throw refuse
+        const device = currentLabel
+        const track = { label: device, readyState: 'live', stop() { this.readyState = 'ended' }, getSettings: () => ({ groupId: group(device) }) }
+        tracks.push(track)
         return { getAudioTracks: () => [track], getTracks: () => [track] }
       },
+      enumerateDevices: async () => [{ kind: 'audioinput', deviceId: 'default', groupId: group(currentLabel), label: `Default - ${currentLabel}` }],
     },
   })
   URL.createObjectURL = () => 'blob:tap'
@@ -55,6 +64,10 @@ function fakeBrowser(label: string) {
     speak: (samples: number[]) => nodes.at(-1)!.port.onmessage?.({ data: Float32Array.from(samples) }),
     useMicrophone: (next: string) => { currentLabel = next },
     deviceChanged: () => deviceListeners.forEach((fn) => fn()),
+    /** The newest track stops delivering, as when its headset goes. */
+    endTrack: () => { tracks.at(-1)!.readyState = 'ended' },
+    /** getUserMedia refuses from now on (undefined: lets it again). */
+    refuse: (err: Error | undefined) => { refuse = err },
   }
 }
 
@@ -217,5 +230,138 @@ describe('the hold, as the button and the ear know it', () => {
     expect(held.holdState()).toBe('preparing')
     held.setHoldMicrophone(false)
     expect(browser.cues).toEqual([])
+  })
+})
+
+describe('whoever is listening to the held microphone', () => {
+  // Hands-free listens from the moment the hold takes the microphone, which
+  // is before the hold's own acquire releases it: that release, or a
+  // dictation's, must leave its listener in place.
+  async function listeningFromTheStart(held: Awaited<ReturnType<typeof load>>) {
+    const heard: number[] = []
+    held.onHoldStateChange((state) => {
+      if (state === 'held') held.heldCapture()!.listen((block) => heard.push(...block))
+    })
+    held.setHoldMicrophone(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    return heard
+  }
+
+  it.each(['phone', 'desktop'] as const)('keeps hearing it after the hold\'s own release, on the %s', async (on) => {
+    const browser = fakeBrowser('AirPods Pro')
+    const held = await load()
+    const uninstall = held.installHeldMicrophone(on)
+    const heard = await listeningFromTheStart(held)
+    browser.speak([0.5])
+    expect(heard).toEqual([0.5])
+    uninstall()
+  })
+
+  it('keeps hearing it after a dictation on it is done', async () => {
+    const browser = fakeBrowser('AirPods Pro')
+    const held = await load()
+    const heard = await listeningFromTheStart(held)
+    const dictation = await held.acquire()
+    const stop = dictation.listen(() => undefined)
+    stop()
+    dictation.release()
+    browser.speak([0.25])
+    expect(heard).toEqual([0.25])
+  })
+})
+
+describe('on the Mac', () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+  let uninstall: (() => void) | undefined
+  afterEach(() => { uninstall?.(); uninstall = undefined })
+
+  it('holds whatever input the Mac is using, headset or not', async () => {
+    const browser = fakeBrowser('MacBook Pro Microphone')
+    const held = await load()
+    uninstall = held.installHeldMicrophone('desktop')
+    held.setHoldMicrophone(true)
+    await settle()
+    expect(held.holdState()).toBe('held')
+    expect(held.holdHost()).toBe('desktop')
+    ;(await held.acquire()).release()
+    expect(browser.opened).toHaveLength(1)
+    expect(browser.opened[0].closed).toBe(false)
+  })
+
+  it('opens it again by itself, without a tap, once it stops delivering', async () => {
+    const browser = fakeBrowser('AirPods Pro')
+    const held = await load()
+    uninstall = held.installHeldMicrophone('desktop')
+    held.setHoldMicrophone(true)
+    await settle()
+    browser.endTrack()
+    browser.useMicrophone('MacBook Pro Microphone')
+    browser.deviceChanged()
+    await settle(); await settle()
+    expect(browser.opened).toHaveLength(2)
+    expect(browser.opened[0].closed).toBe(true)
+    expect(browser.opened[1]).toEqual({ closed: false, label: 'MacBook Pro Microphone' })
+    expect(held.holdState()).toBe('held')
+  })
+
+  it('moves to the input the Mac moves to, such as AirPods connecting', async () => {
+    const browser = fakeBrowser('MacBook Pro Microphone')
+    const held = await load()
+    uninstall = held.installHeldMicrophone('desktop')
+    held.setHoldMicrophone(true)
+    await settle()
+    browser.useMicrophone('AirPods Pro')
+    browser.deviceChanged()
+    await settle(); await settle()
+    expect(browser.opened.map((mic) => [mic.label, mic.closed])).toEqual([
+      ['MacBook Pro Microphone', true],
+      ['AirPods Pro', false],
+    ])
+  })
+
+  it('keeps the microphone it holds when a device change leaves the Mac\'s input where it was', async () => {
+    const browser = fakeBrowser('AirPods Pro')
+    const held = await load()
+    uninstall = held.installHeldMicrophone('desktop')
+    held.setHoldMicrophone(true)
+    await settle()
+    browser.deviceChanged()
+    await settle(); await settle()
+    expect(browser.opened).toEqual([{ closed: false, label: 'AirPods Pro' }])
+  })
+
+  it('after a refusal, asks again only once a device changes', async () => {
+    vi.useFakeTimers()
+    try {
+      const browser = fakeBrowser('AirPods Pro')
+      const held = await load()
+      uninstall = held.installHeldMicrophone('desktop')
+      held.setHoldMicrophone(true)
+      await vi.advanceTimersByTimeAsync(0)
+      browser.endTrack()
+      browser.refuse(new Error('Permission denied'))
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(held.holdState()).toBe('preparing')
+      browser.refuse(undefined)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(browser.opened).toHaveLength(1)
+      browser.deviceChanged()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(browser.opened).toHaveLength(2)
+      expect(held.holdState()).toBe('held')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('leaves the phone in a browser as it was: no headset, no hold', async () => {
+    const browser = fakeBrowser('MacBook Pro Microphone')
+    const held = await load()
+    uninstall = held.installHeldMicrophone()
+    held.setHoldMicrophone(true)
+    await settle()
+    expect(held.holdHost()).toBe('phone')
+    expect(held.holdState()).toBe('preparing')
+    expect(browser.opened.every((mic) => mic.closed)).toBe(true)
   })
 })
