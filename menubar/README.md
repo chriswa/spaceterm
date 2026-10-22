@@ -38,6 +38,15 @@ wrappers, which this app replaces:
 |---|---|---|
 | Server | `node node_modules/.bin/tsx src/server/index.ts` | `~/.spaceterm/bar-server.log` |
 | Client | `node node_modules/.bin/electron-vite dev` | `~/.spaceterm/bar-client.log` |
+| Second Client | the same, with `SPACETERM_DEBUG_PORT=9223` | `~/.spaceterm/bar-client2.log` |
+
+The second client is a second window onto the same server, started only from
+the menu. Start, Restart and Stop Spaceterm and the icon are about the server
+and the first client; Stop Spaceterm stops the second client too, and Restart
+Spaceterm restarts it if it is running. Its Vite dev server takes the next free
+port by itself. Both clients share Electron's profile directory, so the second
+one's renderer storage (theme and other `localStorage` preferences) may not
+persist.
 
 Each is launched through `zsh -l -c 'exec …'`, so it gets the PATH a terminal
 would (Homebrew's node is not on a GUI app's PATH). A login shell does not read
@@ -60,7 +69,9 @@ think it is a nested child — see `Spawn.inheritedAgentSessionVars`), and in it
   `~/.spaceterm/spaceterm-bar.json`, and the next instance adopts them — after
   checking that the pid is alive *and* its command line is still the
   service's, because pids get recycled and a stale record must never make the
-  app signal a stranger.
+  app signal a stranger. The two clients have the same command line, so a
+  process in a group the bar already supervises is never counted as
+  "running outside SpacetermBar".
 
 ## Restart policy
 
@@ -83,7 +94,8 @@ starts a second one, and it never signals a process it did not start.
 - Status of server and client, and the restart flag with its reason when one
   is raised (`npm run flag-restart -- "why"`; see `src/server/restart-flag.ts`).
 - Start / Restart / Stop Spaceterm — both halves together.
-- Start / Restart / Stop for the server and the client individually.
+- Start / Restart / Stop for the server, the client and the second client
+  individually.
 - Logs — the two supervisor logs and `electron.log`, opened in Console.
 - **Start Spaceterm when SpacetermBar Opens** — on by default; this is what
   brings Spaceterm up at login.

@@ -46,6 +46,12 @@ struct ServiceSpec {
     let matches: (String) -> Bool
     /// Has a spawned instance finished coming up?
     let isUp: (_ pid: pid_t, _ startedAt: Date, _ snapshot: ProcessSnapshot) -> Bool
+    /// Added to the environment the service is launched with.
+    var env: [String: String] = [:]
+    /// Only one instance may run per user. A stopped exclusive service that
+    /// finds a matching process it does not own reports it as `external` and
+    /// refuses to start; a non-exclusive one ignores other instances.
+    var exclusive = true
 }
 
 /// Supervises one service: spawn, watch, restart, stop.
@@ -146,14 +152,17 @@ final class ServiceSupervisor {
 
     // MARK: - Polling
 
-    func tick(_ snapshot: ProcessSnapshot) {
+    /// `claimed` is the process groups of every service this app supervises,
+    /// so that one of our own instances is never mistaken for an outsider.
+    func tick(_ snapshot: ProcessSnapshot, claimed: Set<pid_t> = []) {
         switch state {
         case .starting(let pid):
             if let startedAt, spec.isUp(pid, startedAt, snapshot) { state = .running(pid) }
         case .stopped, .failed, .restarting:
             // Someone else's instance? Only worth reporting when we have
             // nothing of our own in flight.
-            if let row = snapshot.first(where: spec.matches) {
+            if spec.exclusive,
+               let row = snapshot.rows.first(where: { spec.matches($0.command) && !claimed.contains($0.pgid) }) {
                 cancelRestart()
                 state = .external(row.pid)
             }
@@ -174,7 +183,7 @@ final class ServiceSupervisor {
 
     private func spawn() -> String? {
         do {
-            let launched = try Spawn.launch(argv: spec.argv, cwd: spec.cwd,
+            let launched = try Spawn.launch(argv: spec.argv, cwd: spec.cwd, env: spec.env,
                                             log: spec.logPath, viaLoginShell: spec.viaLoginShell)
             let pid = launched.pid
             pgid = pid
@@ -255,6 +264,9 @@ final class ServiceSupervisor {
         guard case .stopping = state, let pgid else { return }
         Spawn.killGroup(pgid)
     }
+
+    /// The process group this supervisor owns, while it owns one.
+    var ownedGroup: pid_t? { state.isOurs ? pgid : nil }
 
     /// For persisting across a relaunch of the bar.
     var record: SupervisedRecord? {

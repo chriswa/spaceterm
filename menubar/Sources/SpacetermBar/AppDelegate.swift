@@ -39,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // the reasons live in the menu.
         button.title = ""
         button.imagePosition = .imageOnly
-        button.toolTip = "Spaceterm: " + controller.services.map { "\($0.spec.title.lowercased()) \(Self.shortStatus($0))" }.joined(separator: ", ")
+        button.toolTip = "Spaceterm: " + controller.core.map { "\($0.spec.title.lowercased()) \(Self.shortStatus($0))" }.joined(separator: ", ")
     }
 
     // MARK: - Menu
@@ -49,9 +49,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func rebuild(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        // Status of each half.
-        for s in controller.services {
+        // Status of each half, and of the second client once it has run.
+        for s in controller.core {
             menu.addItem(header("\(s.spec.title): \(Self.longStatus(s))"))
+        }
+        let second = controller.secondClient
+        if second.state != .stopped || second.lastExit != nil {
+            menu.addItem(header("\(second.spec.title): \(Self.longStatus(second))"))
         }
         if let flag = controller.restartFlag {
             let why = flag.reason.isEmpty ? "" : " — \(flag.reason)"
@@ -61,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Whole-of-Spaceterm actions.
         let anyOurs = controller.services.contains { $0.state.isOurs }
-        let anyIdle = controller.services.contains { s in
+        let anyIdle = controller.core.contains { s in
             switch s.state { case .stopped, .failed, .restarting: return true; default: return false }
         }
         if anyIdle { add(menu, "Start Spaceterm", #selector(startAll), key: "s") }
@@ -76,6 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         restart: #selector(restartServer), stop: #selector(stopServer))
         addServiceItems(menu, controller.client, start: #selector(startClient),
                         restart: #selector(restartClient), stop: #selector(stopClient))
+        addServiceItems(menu, controller.secondClient, start: #selector(startSecondClient),
+                        restart: #selector(restartSecondClient), stop: #selector(stopSecondClient))
         menu.addItem(.separator())
 
         // Logs and folder.
@@ -83,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let logItems: [(String, String)] = [
             ("Server Log (bar-server.log)", Settings.serverLogPath),
             ("Client Log (bar-client.log)", Settings.clientLogPath),
+            ("Second Client Log (bar-client2.log)", Settings.secondClientLogPath),
             ("Electron Log (electron.log)", Settings.electronLogPath),
         ]
         for (title, path) in logItems {
@@ -217,6 +224,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func startClient() { warnIf(controller.startBlocker ?? controller.client.start()) }
     @objc private func stopClient() { controller.client.stop() }
     @objc private func restartClient() { controller.client.restart() }
+    @objc private func startSecondClient() { warnIf(controller.startBlocker ?? controller.secondClient.start()) }
+    @objc private func stopSecondClient() { controller.secondClient.stop() }
+    @objc private func restartSecondClient() { controller.secondClient.restart() }
 
     /// A launch failure lands in the service's `failed` state, which the menu
     /// shows; this only surfaces the case where nothing could even be spawned.
@@ -252,10 +262,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Exit and come back. Spaceterm keeps running throughout and is adopted
     /// by the new instance. A detached shell waits for this pid to disappear
     /// before launching, so the two instances never overlap.
+    ///
+    /// `open` is retried: for a moment after the pid is gone, LaunchServices
+    /// can still list the old instance as running, and `open` then fails with
+    /// error -600 and launches nothing.
     @objc private func relaunchSelf() {
         let target = LoginItem.isInBundle ? Bundle.main.bundleURL.path : Bundle.main.executablePath!
         let script = "while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done; "
-            + (LoginItem.isInBundle ? "open '\(target)'" : "'\(target)' &")
+            + (LoginItem.isInBundle
+                ? "for i in $(seq 1 25); do open '\(target)' && exit 0; sleep 0.4; done; exit 1"
+                : "'\(target)' &")
         _ = try? Spawn.launch(argv: ["/bin/sh", "-c", script], cwd: "/",
                               log: Settings.stateDirectory + "/bar-relaunch.log", viaLoginShell: false)
         NSApp.terminate(nil)

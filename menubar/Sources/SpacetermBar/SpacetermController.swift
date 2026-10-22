@@ -3,13 +3,19 @@ import Foundation
 /// The two halves of Spaceterm as `npm run dev` runs them — `tsx
 /// src/server/index.ts` and `electron-vite dev` — each under its own
 /// supervisor, plus the polling, persistence and restart-flag reading that
-/// spans both.
+/// spans both. An optional second client, started only from the menu, is a
+/// third supervisor connecting to the same server.
 @MainActor
 final class SpacetermController {
 
     let server: ServiceSupervisor
     let client: ServiceSupervisor
-    var services: [ServiceSupervisor] { [server, client] }
+    let secondClient: ServiceSupervisor
+    /// Everything this app supervises.
+    var services: [ServiceSupervisor] { [server, client, secondClient] }
+    /// What "Spaceterm" means to Start Spaceterm, autostart and the icon. The
+    /// second client is extra: it is started on request, never by default.
+    var core: [ServiceSupervisor] { [server, client] }
 
     var onChange: (() -> Void)?
 
@@ -25,6 +31,7 @@ final class SpacetermController {
         self.directory = resolved.path
         server = ServiceSupervisor(spec: Self.serverSpec(directory))
         client = ServiceSupervisor(spec: Self.clientSpec(directory))
+        secondClient = ServiceSupervisor(spec: Self.secondClientSpec(directory))
         for s in services {
             s.onChange = { [weak self] in
                 self?.persist()
@@ -60,12 +67,28 @@ final class SpacetermController {
     }
 
     static func clientSpec(_ dir: String) -> ServiceSpec {
+        clientSpec(dir, name: "client", title: "Client", logPath: Settings.clientLogPath)
+    }
+
+    /// Another `electron-vite dev` against the same server. Its Vite dev
+    /// server takes the next free port on its own; the DevTools port has to be
+    /// moved by hand. It is not exclusive, so neither client mistakes the
+    /// other for one started outside SpacetermBar.
+    static func secondClientSpec(_ dir: String) -> ServiceSpec {
+        var spec = clientSpec(dir, name: "client2", title: "Second Client",
+                              logPath: Settings.secondClientLogPath)
+        spec.env = ["SPACETERM_DEBUG_PORT": Settings.secondClientDebugPort]
+        spec.exclusive = false
+        return spec
+    }
+
+    private static func clientSpec(_ dir: String, name: String, title: String, logPath: String) -> ServiceSpec {
         let bin = dir + "/node_modules/.bin/electron-vite"
         let electron = dir + "/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
         return ServiceSpec(
-            name: "client", title: "Client",
+            name: name, title: title,
             argv: ["node", bin, "dev"],
-            cwd: dir, logPath: Settings.clientLogPath, viaLoginShell: true,
+            cwd: dir, logPath: logPath, viaLoginShell: true,
             matches: { $0.contains("/node_modules/.bin/electron-vite") && $0.hasSuffix(" dev") },
             // electron-vite builds first and only then forks Electron; the
             // client is up once that Electron exists in the group.
@@ -85,7 +108,7 @@ final class SpacetermController {
         tick(snapshot)
 
         if autoStart {
-            for s in services where s.state == .stopped { s.start() }
+            for s in core where s.state == .stopped { s.start() }
         }
 
         let t = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
@@ -101,13 +124,18 @@ final class SpacetermController {
             : "No Spaceterm checkout found. " + resolved.problems.joined(separator: "; ") + "."
     }
 
-    func startAll() { services.forEach { $0.start() } }
+    func startAll() { core.forEach { $0.start() } }
     func stopAll() { services.forEach { $0.stop() } }
-    func restartAll() { services.forEach { $0.restart() } }
+    /// Restarts the core, and the second client only if it is running.
+    func restartAll() {
+        core.forEach { $0.restart() }
+        if secondClient.state.isOurs { secondClient.restart() }
+    }
 
     func tick(_ snapshot: ProcessSnapshot) {
         lastSnapshot = snapshot
-        services.forEach { $0.tick(snapshot) }
+        let claimed = Set(services.compactMap(\.ownedGroup))
+        services.forEach { $0.tick(snapshot, claimed: claimed) }
         let flag = RestartFlag.read()
         if flag != restartFlag {
             restartFlag = flag
@@ -149,10 +177,10 @@ final class SpacetermController {
     enum Overall: Equatable { case off, partial, up, failed }
 
     var overall: Overall {
-        if services.contains(where: { $0.state.isFailed }) { return .failed }
-        let up = services.filter { $0.state.isUp || $0.state.isExternal }.count
-        let live = services.filter { $0.state != .stopped }.count
-        if up == services.count { return .up }
+        if core.contains(where: { $0.state.isFailed }) { return .failed }
+        let up = core.filter { $0.state.isUp || $0.state.isExternal }.count
+        let live = core.filter { $0.state != .stopped }.count
+        if up == core.count { return .up }
         if live == 0 { return .off }
         return .partial
     }

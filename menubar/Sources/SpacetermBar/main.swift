@@ -21,11 +21,13 @@ private func runProbe() -> Never {
 
     let snapshot = ProcessSnapshot.capture()
     let c = SpacetermController(resolved: resolved)
-    for s in c.services {
-        if let row = snapshot.first(where: s.spec.matches) {
-            print("\(s.spec.title.padding(toLength: 11, withPad: " ", startingAt: 0)): pid \(row.pid) pgid \(row.pgid)  \(row.command.prefix(90))")
-        } else {
-            print("\(s.spec.title.padding(toLength: 11, withPad: " ", startingAt: 0)): not running")
+    // The clients share a command line, so the second client is listed under Client.
+    for s in c.core {
+        let label = s.spec.title.padding(toLength: 11, withPad: " ", startingAt: 0)
+        let rows = snapshot.rows.filter { s.spec.matches($0.command) }
+        if rows.isEmpty { print("\(label): not running") }
+        for row in rows {
+            print("\(label): pid \(row.pid) pgid \(row.pgid)  \(row.command.prefix(90))")
         }
     }
     if let data = FileManager.default.contents(atPath: Settings.supervisedPath),
@@ -145,6 +147,31 @@ private func runSpawnTest() -> Never {
     rs.tick(ProcessSnapshot.capture())
     check(rs.state.isUp && rs.state.pid != firstPid, "was \(firstPid ?? 0), now \(rs.state)")
     rs.stop()
+    run(0.5)
+
+    print("6. a sibling's process is not external; env reaches the service")
+    let marker = "spawn-test-sibling-\(getpid())"
+    let envLog = FileManager.default.temporaryDirectory.appendingPathComponent("spawn-test-env.log").path
+    try? FileManager.default.removeItem(atPath: envLog)
+    let matchesMarker: (String) -> Bool = { $0.contains(marker) }
+    var siblingSpec = ServiceSpec(name: "sib", title: "sib", argv: ["/bin/sh", "-c", "echo \"$SIB_VAR\"; exec -a \(marker) sleep 300"],
+                                  cwd: "/", logPath: envLog, viaLoginShell: false,
+                                  matches: matchesMarker, isUp: { _, _, _ in true })
+    siblingSpec.env = ["SIB_VAR": "sib-env-ok"]
+    let sibling = ServiceSupervisor(spec: siblingSpec)
+    let guarded = ServiceSupervisor(spec: ServiceSpec(name: "guarded", title: "guarded", argv: ["/usr/bin/true"],
+                                                      cwd: "/", logPath: log, viaLoginShell: false,
+                                                      matches: matchesMarker, isUp: { _, _, _ in true }))
+    sibling.start()
+    run(0.5)
+    let snap = ProcessSnapshot.capture()
+    guarded.tick(snap, claimed: Set([sibling.ownedGroup].compactMap { $0 }))
+    check(guarded.state == .stopped, "claimed sibling ignored: \(guarded.state)")
+    guarded.tick(snap)
+    check(guarded.state.isExternal, "unclaimed match is external: \(guarded.state)")
+    let envOut = (try? String(contentsOfFile: envLog, encoding: .utf8)) ?? ""
+    check(envOut.contains("sib-env-ok"), "env var reached the service")
+    sibling.stop()
     run(0.5)
 
     print(failures == 0 ? "all passed" : "\(failures) failure(s)")

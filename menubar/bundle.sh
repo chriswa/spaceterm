@@ -72,4 +72,8 @@ if pgrep -xq SpacetermBar; then
   pkill -x SpacetermBar || true
   for _ in $(seq 1 25); do pgrep -xq SpacetermBar || break; sleep 0.2; done
 fi
-open "$INSTALL_DIR/$APP"
+# Retried: just after the old instance exits, LaunchServices can still list it
+# as running, and `open` fails with error -600 without launching anything.
+for _ in $(seq 1 25); do open "$INSTALL_DIR/$APP" && exit 0; sleep 0.4; done
+echo "could not launch $INSTALL_DIR/$APP" >&2
+exit 1

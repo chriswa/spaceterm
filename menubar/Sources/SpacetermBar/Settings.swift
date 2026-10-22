@@ -56,6 +56,11 @@ enum Settings {
     static var supervisedPath: String { stateDirectory + "/spaceterm-bar.json" }
     static var serverLogPath: String { stateDirectory + "/bar-server.log" }
     static var clientLogPath: String { stateDirectory + "/bar-client.log" }
+    static var secondClientLogPath: String { stateDirectory + "/bar-client2.log" }
+
+    /// The second client's DevTools port. The first keeps 9222, the default
+    /// in `src/client/main/index.ts`; two Chromiums cannot share a port.
+    static let secondClientDebugPort = "9223"
     static var electronLogPath: String { stateDirectory + "/electron.log" }
 
     /// Start the server and client as soon as the app launches (so a login

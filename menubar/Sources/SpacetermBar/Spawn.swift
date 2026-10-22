@@ -45,7 +45,7 @@ enum Spawn {
     /// same PATH a terminal would — Homebrew's node is not on a GUI app's
     /// PATH — and `exec` makes the shell disappear into the command, so the
     /// leader pid is the command itself. stdout and stderr append to `log`.
-    static func launch(argv: [String], cwd: String, log: String,
+    static func launch(argv: [String], cwd: String, env: [String: String] = [:], log: String,
                        viaLoginShell: Bool = true) throws -> Launched {
         // Fail here, with a sentence, rather than let posix_spawn report a bare
         // ENOENT that could mean any of the executable, the cwd or the log.
@@ -82,7 +82,7 @@ enum Spawn {
         posix_spawn_file_actions_addchdir_np(&fa, cwd)
 
         let cArgs = words.map { strdup($0) } + [nil]
-        let cEnv = environment().map { strdup($0) } + [nil]
+        let cEnv = environment(adding: env).map { strdup($0) } + [nil]
         defer {
             cArgs.forEach { free($0) }
             cEnv.forEach { free($0) }
@@ -126,7 +126,7 @@ enum Spawn {
     /// locations prepended to PATH as a floor under whatever the login shell adds.
     /// That includes wherever `Shell.loginShellNode` found node, which covers a
     /// node that only `.zshrc` puts on PATH (nvm and friends).
-    private static func environment() -> [String] {
+    private static func environment(adding extraEnv: [String: String]) -> [String] {
         var env = scrubInheritedAgentEnv(ProcessInfo.processInfo.environment)
         let nodeDir = Shell.loginShellNode().map { ($0 as NSString).deletingLastPathComponent }
         var extra = ["/opt/homebrew/bin", "/usr/local/bin"]
@@ -134,6 +134,7 @@ enum Spawn {
         let path = (env["PATH"] ?? "/usr/bin:/bin").split(separator: ":").map(String.init)
         env["PATH"] = (extra + path.filter { !extra.contains($0) }).joined(separator: ":")
         env["SPACETERM_SUPERVISOR"] = "SpacetermBar"
+        env.merge(extraEnv) { _, new in new }
         return env.map { "\($0.key)=\($0.value)" }
     }
 
