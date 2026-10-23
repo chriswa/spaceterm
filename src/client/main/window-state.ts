@@ -1,7 +1,8 @@
-import { writeFileSync, readFileSync, renameSync, existsSync, openSync, fsyncSync, closeSync, mkdirSync } from 'fs'
-import { dirname, join } from 'path'
+import { readFileSync, existsSync } from 'fs'
+import { join } from 'path'
 import { screen } from 'electron'
 import { SOCKET_DIR } from '../../shared/protocol'
+import { writeFileAtomicSync } from './atomic-write'
 
 export interface DisplayBounds {
   x: number
@@ -15,7 +16,6 @@ interface WindowState {
 }
 
 const STATE_FILE = join(SOCKET_DIR, 'window-state.json')
-const STATE_TMP = STATE_FILE + '.tmp'
 
 export function loadWindowState(): WindowState | null {
   if (!existsSync(STATE_FILE)) return null
@@ -33,16 +33,7 @@ export function loadWindowState(): WindowState | null {
 }
 
 export function saveWindowState(displayBounds: DisplayBounds): void {
-  mkdirSync(dirname(STATE_FILE), { recursive: true })
-  const data = JSON.stringify({ displayBounds }, null, 2)
-  writeFileSync(STATE_TMP, data, 'utf-8')
-  const fd = openSync(STATE_TMP, 'r')
-  try {
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
-  renameSync(STATE_TMP, STATE_FILE)
+  writeFileAtomicSync(STATE_FILE, JSON.stringify({ displayBounds }, null, 2))
 }
 
 export function findTargetDisplay(saved: DisplayBounds): Electron.Display {

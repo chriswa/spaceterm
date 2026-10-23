@@ -184,7 +184,11 @@ function createWindow(): void {
         lastDisplayId = display.id
         fitToWorkArea()
       }
-      saveWindowState(display.bounds)
+      try {
+        saveWindowState(display.bounds)
+      } catch (err) {
+        logger.log(`[window-state] save failed: ${err instanceof Error ? err.message : String(err)}`)
+      }
     }, 1000)
   })
 

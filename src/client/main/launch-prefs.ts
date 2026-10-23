@@ -1,20 +1,19 @@
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'fs'
-import { dirname, join } from 'path'
+import { existsSync, readFileSync } from 'fs'
+import { join } from 'path'
 import { SOCKET_DIR } from '../../shared/protocol'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../shared/launch-prefs'
+import { writeFileAtomicSync } from './atomic-write'
 
 /**
  * Persistence for the pre-launch settings in `shared/launch-prefs`.
  *
  * Read synchronously, because the only useful moment to read it is before
  * `app.commandLine` is finalised — there is no window to await at that point.
- * Written with the same write-temp-fsync-rename dance as `window-state.ts`: a
- * torn file here would be read at the next launch, which is the one time
- * nothing is around to recover from it.
+ * Written with `writeFileAtomicSync`: a torn file here would be read at the
+ * next launch, which is the one time nothing is around to recover from it.
  */
 
 const PREFS_FILE = join(SOCKET_DIR, 'launch-prefs.json')
-const PREFS_TMP = PREFS_FILE + '.tmp'
 
 /** The stored prefs, with defaults for anything missing or malformed. */
 export function loadLaunchPrefs(): LaunchPrefs {
@@ -36,14 +35,6 @@ export function loadLaunchPrefs(): LaunchPrefs {
 /** Merge `patch` over the stored prefs and persist. Returns what is now stored. */
 export function saveLaunchPrefs(patch: Partial<LaunchPrefs>): LaunchPrefs {
   const next: LaunchPrefs = { ...loadLaunchPrefs(), ...patch }
-  mkdirSync(dirname(PREFS_FILE), { recursive: true })
-  writeFileSync(PREFS_TMP, JSON.stringify(next, null, 2), 'utf-8')
-  const fd = openSync(PREFS_TMP, 'r')
-  try {
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
-  renameSync(PREFS_TMP, PREFS_FILE)
+  writeFileAtomicSync(PREFS_FILE, JSON.stringify(next, null, 2))
   return next
 }
