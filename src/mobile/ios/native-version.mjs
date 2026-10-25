@@ -9,14 +9,21 @@
 //
 //   node src/mobile/ios/native-version.mjs     # prints it
 import { createHash } from 'crypto'
-import { readdirSync, readFileSync, statSync } from 'fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { join, relative } from 'path'
 import { fileURLToPath } from 'url'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
 
-/** What the app is built from: its sources and resources, and the project. */
+/**
+ * What the app is built from: its sources and resources, the project, and
+ * Voice Operator's SDK, linked as a local package from the voiceop checkout
+ * beside this one (where the project expects it; a missing one is skipped,
+ * and install.sh says why it cannot build).
+ */
 const INPUTS = ['SpacetermMobile', 'SpacetermMobile.xcodeproj/project.pbxproj']
+const SDK = '../../../../voiceop/sdk/VoiceOperatorKit'
+const SDK_INPUTS = ['Package.swift', 'Sources']
 
 function files(entry) {
   const stat = statSync(entry)
@@ -28,7 +35,8 @@ function files(entry) {
 
 export function nativeVersion(iosDir = here) {
   const hash = createHash('sha256')
-  const all = INPUTS.flatMap((input) => files(join(iosDir, input))).sort()
+  const sdk = SDK_INPUTS.map((input) => join(iosDir, SDK, input)).filter((path) => existsSync(path))
+  const all = [...INPUTS.map((input) => join(iosDir, input)), ...sdk].flatMap((entry) => files(entry)).sort()
   for (const file of all) {
     hash.update(relative(iosDir, file))
     hash.update('\0')
