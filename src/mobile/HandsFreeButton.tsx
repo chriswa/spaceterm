@@ -41,15 +41,15 @@ export function thresholdLine(at: number, [x0, x1]: readonly [number, number] = 
  * starts without the headset renegotiating. Inside the tap, as iOS requires
  * of a page opening a microphone.
  *
- * While hands-free is taking a dictation, the button shows the two things
- * that can end it, a half each, filling from the bottom like a glass.
- * A third each. Left, green: Smart Turn's one answer about this pause (asked
- * 0.5 s in), 0 to 1, with a red line at the threshold that ends the dictation
- * there. Middle, yellow: turn-1-mini, on trial and deciding nothing — its
- * latest answer, a red line at its model card's threshold, and a dark tick at
- * its highest since the pause began, the peak hold: a tick above the line
- * means it would have ended the turn. Right: the quiet since
- * you last spoke, the top the patience that ends it regardless. Both stay up while what you said is sent,
+ * While hands-free is taking a dictation, the button shows what may end it,
+ * a third each, filling from the bottom like a glass. Left, green: Smart
+ * Turn's one answer about this pause (asked 0.5 s in), with a red line at its
+ * threshold — watched for comparison, deciding nothing. Middle, yellow:
+ * turn-1-mini, which ends the dictation — its latest answer, a red line at its
+ * threshold, and a dark tick at its highest since the pause began, the peak
+ * hold; half a second after it first reaches the line, the dictation ends
+ * unless you speak. Right: the quiet since
+ * you last spoke, the top the patience that ends it regardless. All stay up while what you said is sent,
  * so you can see which one ended it.
  *
  * The same button on the Mac, in the toolbar beside Control (`chrome:

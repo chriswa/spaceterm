@@ -54,7 +54,7 @@ export const useHandsFree = create<{ on: boolean; phase: HandsFreePhase; convers
 )
 
 /**
- * turn-1-mini, on trial beside Smart Turn and deciding nothing: its latest
+ * turn-1-mini, which decides when a dictation ends (Smart Turn only watches): its latest
  * answer `p`, its highest since this pause began (`peak`, null while they
  * talk), and its model card's operating point, for the button's middle bar.
  */

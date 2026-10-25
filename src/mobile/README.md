@@ -507,11 +507,11 @@ Spaceterm is its client (`hands-free.ts`):
   conversation window as an orange ring, draining as its quiet runs out; and
   while a dictation runs, the button's three thirds — **left, green**, Smart
   Turn's one answer about the pause (asked once, 0.5 s in), with a **red
-  line** at the threshold that ends it there — below it, the silence timeout
-  decides; **middle, yellow**, turn-1-mini, on trial and deciding nothing:
-  its latest answer, a red line at its model card's threshold (0.17), and a
-  dark tick at its highest since the pause began — a tick above the line is a
-  pause it would have ended; **right, magenta**, the quiet since you last
+  line** at its threshold, watched for comparison and deciding nothing;
+  **middle, yellow**, turn-1-mini, which ends the dictation: its latest
+  answer, a red line at its threshold (0.17), and a dark tick at its highest
+  since the pause began — half a second after it first reaches the line the
+  dictation ends, unless you speak first; **right, magenta**, the quiet since you last
   spoke, ending it at the top (3 s, growing to 4 s at most in a long dictation).
   Both hold while what you said is sent, so you can see which ended it.
 - **Its cues** are Voice Operator's to call and this device's to play: three
