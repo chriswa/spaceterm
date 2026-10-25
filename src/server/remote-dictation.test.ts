@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { RemoteDictation, WORDS_FOR_CONTROL_LIMIT_MS } from './remote-dictation'
-import { DICTATION_RESUME_GRACE_MS } from '../shared/protocol'
+import { DICTATION_RESUME_GRACE_MS } from '../shared/dictation-resume'
 import type { SpeechResponse } from './voice-operator'
 
 /** Voice Operator as a script: what it answers, and a log of what it was asked. */

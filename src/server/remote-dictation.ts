@@ -1,4 +1,4 @@
-import { DICTATION_RESUME_GRACE_MS } from '../shared/protocol'
+import { DICTATION_RESUME_GRACE_MS } from '../shared/dictation-resume'
 import type { SpeechResponse, VoiceOperator } from './voice-operator'
 
 /**

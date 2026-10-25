@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { DictationApi } from '../shared/api'
 import type { Capture } from './held-microphone'
-import { DICTATION_RESUME_GRACE_MS } from '../shared/protocol'
+import { DICTATION_RESUME_GRACE_MS } from '../shared/dictation-resume'
 import { ConnectionLostError } from '../shared/server-client'
 import { AudioStats, CONNECTION_GONE, Dictation, NO_AUDIO_TIMEOUT_MS, whenHearing } from './dictation'
 

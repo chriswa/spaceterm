@@ -419,13 +419,8 @@ export interface DictationStartMessage {
   forControl?: boolean
 }
 
-/**
- * How long the server keeps a dictation whose client has disconnected, for it
- * to come back and carry on (`dictation-resume`); and how long a finished
- * one's result is kept, for a client whose reply was lost. The phone's
- * finish waits as long for its connection.
- */
-export const DICTATION_RESUME_GRACE_MS = 30_000
+// The grace itself lives in a module with no Node imports, so the phone's page can read it.
+export { DICTATION_RESUME_GRACE_MS } from './dictation-resume'
 
 /** One chunk of audio, base64. Fire-and-forget: failures surface at finish. */
 export interface DictationAudioMessage {

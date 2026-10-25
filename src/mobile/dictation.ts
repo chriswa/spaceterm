@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { DictationApi } from '../shared/api'
-import { DICTATION_RESUME_GRACE_MS } from '../shared/protocol'
+import { DICTATION_RESUME_GRACE_MS } from '../shared/dictation-resume'
 import { ConnectionLostError } from '../shared/server-client'
 import { reloadGuard } from '@/lib/reload-guard'
 import { Downsampler, TARGET_SAMPLE_RATE, pcmToBase64 } from './pcm'
