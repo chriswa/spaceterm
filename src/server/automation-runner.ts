@@ -22,8 +22,12 @@ export interface AutomationHost {
   automations(): AutomationNodeData[]
   /** Live (unarchived) children of a node. */
   childrenOf(nodeId: NodeId): NodeData[]
-  /** Start a Claude surface under the automation, its prompt the ancestors' plus `line`. */
-  spawn(automationId: NodeId, line: string): void
+  /**
+   * Start a Claude surface under the automation, its prompt the ancestors' plus
+   * `line`. `below` puts it straight under the card, as a terminal started from
+   * a markdown card is; `auto` finds it free space among its siblings.
+   */
+  spawn(automationId: NodeId, line: string, placement: RunPlacement): void
   /** Submit `line` as a new prompt into a live terminal. */
   send(terminalId: NodeId, line: string): void
   setQueue(automationId: NodeId, queue: AutomationFiring[]): void
@@ -67,6 +71,17 @@ export function cronSlotsBetween(
     next = cron.nextRun(next)
   }
   return { first, last, count }
+}
+
+export type RunPlacement = 'below' | 'auto'
+
+/**
+ * Where a card's new run goes. Every mode but parallel keeps one run at a time,
+ * so it has the spot under the card to itself; parallel runs sit side by side
+ * and need placing among each other.
+ */
+export function runPlacement(overlap: AutomationOverlap): RunPlacement {
+  return overlap === 'parallel' ? 'auto' : 'below'
 }
 
 export type FiringDecision =
@@ -170,7 +185,7 @@ export class AutomationRunner {
       if (this.host.childrenOf(automation.id).length > 0) continue
       const [next, ...rest] = automation.queue
       this.host.setQueue(automation.id, rest)
-      this.run(automation.id, { action: 'spawn' }, next)
+      this.run(automation, { action: 'spawn' }, next)
     }
   }
 
@@ -181,15 +196,16 @@ export class AutomationRunner {
       this.host.log(`[automation] ${automation.id.slice(0, 8)} queued a firing (${automation.queue.length + 1} waiting)`)
       return
     }
-    this.run(automation.id, decision, firing)
+    this.run(automation, decision, firing)
   }
 
-  private run(automationId: NodeId, decision: Exclude<FiringDecision, { action: 'enqueue' }>, firing: AutomationFiring): void {
+  private run(automation: AutomationNodeData, decision: Exclude<FiringDecision, { action: 'enqueue' }>, firing: AutomationFiring): void {
+    const automationId = automation.id
     const line = triggerLine(firing)
     try {
       switch (decision.action) {
         case 'spawn':
-          this.host.spawn(automationId, line)
+          this.host.spawn(automationId, line, runPlacement(automation.overlap))
           break
         case 'send':
           this.host.send(decision.terminalId, line)

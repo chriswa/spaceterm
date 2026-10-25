@@ -39,7 +39,7 @@ import { DaemonClient } from './daemon-client'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
 import { receivesSnapshots, owedOnResume } from './snapshot-delivery'
-import { agentSurfaceFootprint, computePlacement } from './node-placement'
+import { agentSurfaceFootprint, computePlacement, placeDirectlyBelow } from './node-placement'
 import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, clampBorrowedTerminalSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, AUTOMATION_WIDTH, AUTOMATION_HEIGHT } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
 import { shipIt } from './ship-it'
@@ -528,13 +528,22 @@ function surfaceAgentType(surfaceId: PtySessionId): AgentType | undefined {
  * its ancestors' prompts in front — the MCP `spawn_claude_surface` tool and the
  * receptionist's `spawn` both come through here. Returns the new node.
  */
-function spawnClaudeSurface(parentNodeId: NodeId, cwd: string | undefined, prompt: string, title?: string): TerminalNodeData {
+function spawnClaudeSurface(
+  parentNodeId: NodeId,
+  cwd: string | undefined,
+  prompt: string,
+  title?: string,
+  placement: 'auto' | 'below' = 'auto'
+): TerminalNodeData {
   const ancestorContext = gatherAncestorPrompt(stateManager.getState().nodes, parentNodeId)
   const fullPrompt = ancestorContext ? `${ancestorContext}\n${prompt}` : prompt
   const options = agentDrivers.claude.buildCreateOptions({ cwd, prompt: fullPrompt })
   const { sessionId, cols, rows } = sessionManager.create(options)
   snapshotManager.addSession(sessionId, cols, rows)
-  const position = computePlacement(stateManager.getState().nodes, parentNodeId, agentSurfaceFootprint(cols, rows))
+  const parent = stateManager.getNode(parentNodeId)
+  const position = placement === 'below' && parent
+    ? placeDirectlyBelow(parent, terminalPixelSize(cols, rows))
+    : computePlacement(stateManager.getState().nodes, parentNodeId, agentSurfaceFootprint(cols, rows))
   return stateManager.createTerminal({
     sessionId, parentId: parentNodeId, x: position.x, y: position.y, cols, rows, cwd, name: title, agentType: 'claude',
   })
@@ -1632,6 +1641,18 @@ function handleIngestMessage(msg: IngestMessage): void {
       const slLogPath = path.join(HOOK_LOG_DIR, `${msg.surfaceId}.jsonl`)
       fs.appendFile(slLogPath, logEntry, (err) => {
         if (err) console.error(`Failed to write status-line log: ${err.message}`)
+      })
+
+      // Spend and context size, which automation cards total per run. Claude's
+      // `cost` is a running total for the session; the context_window token
+      // counts are the current context, not cumulative.
+      const costUsd = (msg.payload?.cost as Record<string, unknown> | undefined)?.total_cost_usd
+      const window = msg.payload?.context_window as Record<string, unknown> | undefined
+      const inputTokens = window?.total_input_tokens
+      const outputTokens = window?.total_output_tokens
+      stateManager.updateClaudeUsage(msg.surfaceId, {
+        ...(typeof costUsd === 'number' && Number.isFinite(costUsd) ? { costUsd } : {}),
+        ...(typeof inputTokens === 'number' && typeof outputTokens === 'number' ? { contextTokens: inputTokens + outputTokens } : {}),
       })
 
       // Extract context window remaining %.
@@ -3849,10 +3870,10 @@ async function startServer(): Promise<void> {
   automationRunner = new AutomationRunner({
     automations: () => stateManager.getAutomations(),
     childrenOf: (nodeId) => stateManager.childrenOf(nodeId),
-    spawn: (automationId, line) => {
+    spawn: (automationId, line, placement) => {
       // The cwd the canvas would give any surface started here, as Control's spawn does.
       const inherited = ancestorCwd(stateManager.getState().nodes, automationId)
-      spawnClaudeSurface(automationId, inherited && (expandTilde(inherited) ?? inherited), line)
+      spawnClaudeSurface(automationId, inherited && (expandTilde(inherited) ?? inherited), line, undefined, placement)
     },
     send: (terminalId, line) => {
       const node = stateManager.getNode(terminalId)

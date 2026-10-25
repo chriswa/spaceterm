@@ -2068,12 +2068,49 @@ html, body, #root {
   border-color: #4d9eff;
 }
 
+.automation-card__trigger-row {
+  display: flex;
+  gap: 6px;
+}
+
+.automation-card__kind-select {
+  font: inherit;
+  font-size: 12px;
+  color: inherit;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid #585b70;
+  border-radius: 6px;
+  padding: 3px 4px;
+  flex: none;
+}
+
+.automation-card__trigger-row .automation-card__trigger {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Up to three lines: a bad trigger's explanation has to be readable, not
+   ellipsised after a few characters. */
 .automation-card__status {
   font-size: 11px;
+  line-height: 1.35;
   opacity: 0.7;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
+  min-height: calc(11px * 1.35 * 2);
+}
+
+.automation-card__stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  padding-top: 6px;
 }
 
 .automation-card__status--error {

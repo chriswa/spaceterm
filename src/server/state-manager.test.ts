@@ -1735,3 +1735,40 @@ describe('borrowing a terminal size', () => {
     expect(sm.returnTerminalSize(t.id)).toBeUndefined()
   })
 })
+
+describe('automation run costs', () => {
+  it('adds a run to its automation card once, when it exits and is archived', () => {
+    const { sm } = harness()
+    const auto = sm.createAutomation(ROOT_NODE_ID, 0, 0)
+    const run = createTerminal(sm, 'run-1', auto.id)
+    sm.updateClaudeUsage(pid('run-1'), { costUsd: 0.42, contextTokens: 18_000 })
+
+    sm.terminalExited(pid('run-1'), 0, 5_000)
+
+    expect(sm.getNode(run.id)).toBeUndefined()
+    const stats = (sm.getNode(auto.id) as typeof auto).runStats
+    expect(stats).toEqual({ runs: 1, totalCostUsd: 0.42, last: { costUsd: 0.42, tokens: 18_000, endedAt: 5_000 } })
+  })
+
+  it('totals runs, including one archived deep under the card', () => {
+    const { sm } = harness()
+    const auto = sm.createAutomation(ROOT_NODE_ID, 0, 0)
+    const first = createTerminal(sm, 'run-1', auto.id)
+    createTerminal(sm, 'sub-1', first.id)
+    sm.updateClaudeUsage(pid('run-1'), { costUsd: 1 })
+    sm.updateClaudeUsage(pid('sub-1'), { costUsd: 0.5 })
+    sm.archiveSubtree(first.id, 7_000)
+
+    const stats = (sm.getNode(auto.id) as typeof auto).runStats!
+    expect(stats.runs).toBe(2)
+    expect(stats.totalCostUsd).toBeCloseTo(1.5)
+  })
+
+  it('leaves terminals outside any automation alone', () => {
+    const { sm } = harness()
+    const plain = createTerminal(sm, 'plain')
+    sm.updateClaudeUsage(pid('plain'), { costUsd: 3 })
+    sm.archiveNode(plain.id)
+    expect(sm.getAutomations()).toEqual([])
+  })
+})

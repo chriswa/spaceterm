@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { AutomationRunner, cronSlotsBetween, decideFiring, LATE_AFTER_MS, type AutomationHost } from './automation-runner'
+import { AutomationRunner, cronSlotsBetween, decideFiring, LATE_AFTER_MS, type AutomationHost, type RunPlacement } from './automation-runner'
 import type { AutomationFiring, AutomationOverlap } from '../shared/automation'
 import type { AutomationNodeData, NodeData, TerminalNodeData } from '../shared/state'
 import { asNodeId, ROOT_NODE_ID, type NodeId } from '../shared/ids'
@@ -24,7 +24,7 @@ function terminal(id: string, parentId: NodeId, alive = true): TerminalNodeData 
 /** An in-memory canvas: spawns become terminal children, as on the real one. */
 class FakeHost implements AutomationHost {
   nodes = new Map<NodeId, NodeData>()
-  spawned: Array<{ automationId: NodeId; line: string }> = []
+  spawned: Array<{ automationId: NodeId; line: string; placement?: RunPlacement }> = []
   sent: Array<{ terminalId: NodeId; line: string }> = []
   logs: string[] = []
   private nextId = 0
@@ -39,8 +39,8 @@ class FakeHost implements AutomationHost {
   childrenOf(nodeId: NodeId): NodeData[] {
     return [...this.nodes.values()].filter((n) => n.parentId === nodeId)
   }
-  spawn(automationId: NodeId, line: string): void {
-    this.spawned.push({ automationId, line })
+  spawn(automationId: NodeId, line: string, placement: RunPlacement): void {
+    this.spawned.push({ automationId, line, placement })
     this.add(terminal(`child-${this.nextId++}`, automationId))
   }
   send(terminalId: NodeId, line: string): void { this.sent.push({ terminalId, line }) }
@@ -243,11 +243,22 @@ describe('AutomationRunner', () => {
       expect(host.sent).toEqual([{ terminalId: host.childrenOf(asNodeId('a'))[0].id, line: 'Triggered by: custom_x 2' }])
     })
 
-    it('parallel starts one per firing', () => {
+    it('parallel starts one per firing, each placed among its siblings', () => {
       host.add(automation('a', 'custom_x', 'parallel'))
       runner.fireEvent('custom_x', 1, T0)
       runner.fireEvent('custom_x', 2, T0)
-      expect(host.spawned).toHaveLength(2)
+      expect(host.spawned.map((s) => s.placement)).toEqual(['auto', 'auto'])
+    })
+
+    it('every one-at-a-time mode puts its run straight under the card, queued runs included', () => {
+      for (const overlap of ['single', 'queue', 'reuse'] as const) {
+        host.add(automation(overlap, `custom_${overlap}`, overlap))
+        runner.fireEvent(`custom_${overlap}`, 1, T0)
+      }
+      runner.fireEvent('custom_queue', 2, T0)
+      host.archive(host.childrenOf(asNodeId('queue'))[0].id)
+      runner.drainQueues()
+      expect(host.spawned.map((s) => s.placement)).toEqual(['below', 'below', 'below', 'below'])
     })
   })
 
@@ -255,9 +266,9 @@ describe('AutomationRunner', () => {
     host.add(automation('a', 'custom_x'))
     host.add(automation('b', 'custom_x'))
     const spawn = host.spawn.bind(host)
-    host.spawn = (id, line) => {
+    host.spawn = (id, line, placement) => {
       if (id === asNodeId('a')) throw new Error('no pty')
-      spawn(id, line)
+      spawn(id, line, placement)
     }
     expect(runner.fireEvent('custom_x', undefined, T0)).toBe(2)
     expect(host.spawned.map((s) => s.automationId)).toEqual([asNodeId('b')])

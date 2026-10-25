@@ -21,7 +21,7 @@ import type {
   ReceptionistHolder
 } from '../shared/state'
 import { receptionistHolderOf } from '../shared/state'
-import { DEFAULT_AUTOMATION_OVERLAP, type AutomationFiring, type AutomationOverlap } from '../shared/automation'
+import { DEFAULT_AUTOMATION_OVERLAP, addRun, automationOf, type AutomationFiring, type AutomationOverlap } from '../shared/automation'
 import { groupNodes, groupNodesWithParent, archivesOwnedBy, ownedArchiveLists } from '../shared/archive-tree'
 import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
 import type { CacheWarmth } from './cache-warmth'
@@ -811,6 +811,7 @@ export class StateManager {
     const failedToLaunch = override?.kind === 'protected' && now < override.until
 
     serverLog(`[exit] terminalExited ${label} — ${failedToLaunch ? 'keeping as remnant (failed to launch)' : 'archiving'}`)
+    this.settleAutomationRun(node, now)
 
     node.alive = false
     node.exitCode = exitCode
@@ -1188,6 +1189,8 @@ export class StateManager {
     const node = this.state.nodes[nodeId]
     if (!node || this.refuseEphemeral(node, 'archive')) return
     serverLog(`[archive] Archiving node ${nodeId.slice(0, 8)}`)
+    // Before the snapshot, so the archived copy records that it was counted.
+    this.settleAutomationRun(node, now)
 
     const parentId = node.parentId
 
@@ -1251,6 +1254,7 @@ export class StateManager {
     if (!root || this.refuseEphemeral(root, 'archiveSubtree')) return []
 
     const removed = this.subtreeNodes(rootId)
+    for (const node of removed) this.settleAutomationRun(node, now)
     serverLog(`[archive] Archiving subtree ${rootId.slice(0, 8)} (${removed.length} node${removed.length === 1 ? '' : 's'})`)
 
     const parentId = root.parentId
@@ -1669,6 +1673,36 @@ export class StateManager {
     if (!node || node.claudeContextPercent === percent) return false
     this.patchNode(node, { claudeContextPercent: percent })
     return true
+  }
+
+  /** The session's spend and context size, from the status line. */
+  updateClaudeUsage(ptySessionId: PtySessionId, usage: { costUsd?: number; contextTokens?: number }): void {
+    const node = this.getTerminalBySession(ptySessionId)
+    if (!node) return
+    const patch: Partial<TerminalNodeData> = {}
+    if (usage.costUsd !== undefined && usage.costUsd !== node.claudeCostUsd) patch.claudeCostUsd = usage.costUsd
+    if (usage.contextTokens !== undefined && usage.contextTokens !== node.claudeContextTokens) patch.claudeContextTokens = usage.contextTokens
+    if (Object.keys(patch).length > 0) this.patchNode(node, patch)
+  }
+
+  /**
+   * Add an ending run's cost to its automation card. Called wherever a
+   * terminal leaves the canvas or its process ends, which for one run can be
+   * both; `automationRunSettled` makes the second call a no-op. A terminal
+   * revived into a new pty is a new run.
+   */
+  private settleAutomationRun(node: NodeData, now: number): void {
+    if (node.type !== 'terminal' || node.automationRunSettled === node.sessionId) return
+    const automation = automationOf(lookupIn(this.state.nodes), node)
+    if (!automation) return
+    this.patchNode(automation, {
+      runStats: addRun(automation.runStats, {
+        costUsd: node.claudeCostUsd ?? 0,
+        tokens: node.claudeContextTokens ?? 0,
+        endedAt: now
+      })
+    })
+    this.patchNode(node, { automationRunSettled: node.sessionId })
   }
 
   /** Returns true when the value changed, so callers can gate a client broadcast. */

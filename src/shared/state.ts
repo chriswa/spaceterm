@@ -231,6 +231,19 @@ export interface TerminalNodeData extends BaseNodeData {
   claudeDismissedBackground?: number
   /** Last-known remaining context %, persisted so it survives a server restart. */
   claudeContextPercent?: number
+  /**
+   * The session's spend so far and context size, from Claude Code's status
+   * line (`cost.total_cost_usd`, and `context_window` input plus output).
+   * Persisted: an automation run's total is read from these when it ends,
+   * which can be after a restart.
+   */
+  claudeCostUsd?: number
+  claudeContextTokens?: number
+  /**
+   * The pty session whose cost has been added to an automation card's
+   * `runStats`, so a run that both exits and is archived counts once.
+   */
+  automationRunSettled?: PtySessionId
   /** Last-known Claude session JSONL line count, persisted so it survives a server restart. */
   claudeSessionLineCount?: number
   sortOrder: number
@@ -309,6 +322,25 @@ export interface AutomationNodeData extends BaseNodeData {
   queue: AutomationFiring[]
   /** epoch ms an agent was last started or sent a firing. */
   lastFiredAt?: number
+  /** What the card's runs have cost, added to as each one ends. Absent until the first does. */
+  runStats?: AutomationRunStats
+}
+
+/**
+ * Spend across an automation card's runs. A run is one agent surface beneath
+ * the card, counted once when its process ends or it is archived, however
+ * many firings it was sent.
+ */
+export interface AutomationRunStats {
+  runs: number
+  totalCostUsd: number
+  last: {
+    /** Claude Code's own estimate, at API prices, from the run's status line. */
+    costUsd: number
+    /** How large the run's context was at its last status line. */
+    tokens: number
+    endedAt: number
+  }
 }
 
 /**

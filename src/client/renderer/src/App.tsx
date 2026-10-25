@@ -2908,6 +2908,7 @@ export function App() {
             overlap={a.overlap}
             queued={a.queue.length}
             lastFiredAt={a.lastFiredAt}
+            runStats={a.runStats}
             onTriggerChange={handleAutomationTriggerChange}
             onOverlapChange={handleAutomationOverlapChange}
             onClearQueue={handleAutomationClearQueue}

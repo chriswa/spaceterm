@@ -3,8 +3,9 @@ import { Cron } from 'croner'
 import { AUTOMATION_WIDTH, AUTOMATION_HEIGHT } from '../../../../shared/node-size'
 import { DEFAULT_PRESET, type ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
-import type { ArchivedNode } from '../../../../shared/state'
+import type { ArchivedNode, AutomationRunStats } from '../../../../shared/state'
 import {
+  CUSTOM_EVENT_PREFIX,
   AUTOMATION_OVERLAPS,
   AUTOMATION_OVERLAP_LABELS,
   parseTrigger,
@@ -27,6 +28,7 @@ interface AutomationCardProps {
   overlap: AutomationOverlap
   queued: number
   lastFiredAt?: number
+  runStats?: AutomationRunStats
   focused: boolean
   selected: boolean
   colorPresetId?: string
@@ -49,14 +51,36 @@ interface AutomationCardProps {
   cameraRef: React.MutableRefObject<Camera>
 }
 
-/** One line under the trigger field saying what it will do, or what is wrong with it. */
-function describeTrigger(trigger: string): { text: string; error: boolean } {
-  const parsed = parseTrigger(trigger)
+type TriggerKind = 'cron' | 'event'
+
+/** Which kind a saved trigger is. The text alone decides it; the dropdown only says how to read what is typed. */
+function triggerKindOf(trigger: string): TriggerKind {
+  return trigger.trim().startsWith(CUSTOM_EVENT_PREFIX) ? 'event' : 'cron'
+}
+
+/**
+ * The line under the trigger field: what it will do, or what is wrong with it,
+ * judged as the kind the dropdown says. Croner's own message is long and
+ * quotes the input back, so a bad cron gets a short one with croner's in the
+ * tooltip.
+ */
+function describeTrigger(kind: TriggerKind, trigger: string): { text: string; detail?: string; error: boolean } {
+  const trimmed = trigger.trim()
+  if (kind === 'event') {
+    if (!trimmed) return { text: 'Type an event id that starts with custom_', error: false }
+    if (!trimmed.startsWith(CUSTOM_EVENT_PREFIX)) return { text: 'Event ids start with custom_', error: true }
+  } else {
+    if (!trimmed) return { text: 'Type a cron expression: minute hour day month weekday', error: false }
+    if (trimmed.startsWith(CUSTOM_EVENT_PREFIX)) return { text: 'That is an event id. Choose Custom event.', error: true }
+  }
+  const parsed = parseTrigger(trimmed)
   switch (parsed.kind) {
     case 'empty':
-      return { text: 'Enter a cron expression or a custom_ event id', error: false }
+      return { text: '', error: false }
     case 'invalid':
-      return { text: parsed.error, error: true }
+      return kind === 'cron'
+        ? { text: 'Not a cron expression. Five fields: minute hour day month weekday, e.g. 0 9 * * 1-5', detail: parsed.error, error: true }
+        : { text: parsed.error, error: true }
     case 'event':
       return { text: `Runs when a script fires ${parsed.eventId}`, error: false }
     case 'cron': {
@@ -66,13 +90,22 @@ function describeTrigger(trigger: string): { text: string; error: boolean } {
   }
 }
 
+function formatUsd(usd: number): string {
+  return usd < 0.01 && usd > 0 ? '<$0.01' : `$${usd.toFixed(2)}`
+}
+
+function formatTokens(tokens: number): string {
+  return tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens)
+}
+
 export function AutomationCard({
-  id, x, y, zIndex, zoom, trigger, overlap, queued, lastFiredAt, focused, selected, resolvedPreset, archivedChildren,
+  id, x, y, zIndex, zoom, trigger, overlap, queued, lastFiredAt, runStats, focused, selected, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onTriggerChange, onOverlapChange, onClearQueue, onColorChange,
   onOpenArchiveSearch, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, cameraRef
 }: AutomationCardProps) {
   const [draft, setDraft] = useState(trigger)
+  const [kind, setKind] = useState<TriggerKind>(() => triggerKindOf(trigger))
   const inputRef = useRef<HTMLInputElement>(null)
   const propsRef = useRef({ x, y, zoom, id })
   propsRef.current = { x, y, zoom, id }
@@ -81,7 +114,10 @@ export function AutomationCard({
 
   // Follow the server while the field is not being edited.
   useEffect(() => {
-    if (document.activeElement !== inputRef.current) setDraft(trigger)
+    if (document.activeElement !== inputRef.current) {
+      setDraft(trigger)
+      if (trigger.trim()) setKind(triggerKindOf(trigger))
+    }
   }, [trigger])
 
   useEffect(() => {
@@ -102,7 +138,7 @@ export function AutomationCard({
     setDraft(trimmed)
   }, [draft, trigger, id, onTriggerChange])
 
-  const status = useMemo(() => describeTrigger(draft), [draft])
+  const status = useMemo(() => describeTrigger(kind, draft), [kind, draft])
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('.node-titlebar__actions, .node-titlebar__color-picker, .archive-body')) return
@@ -172,24 +208,35 @@ export function AutomationCard({
         <div className="automation-card__head">
           <span className="automation-card__kind">Automation</span>
           <span className="automation-card__last">
-            {lastFiredAt ? `Last run ${new Date(lastFiredAt).toLocaleString()}` : 'Never run'}
+            {lastFiredAt ? `Fired ${new Date(lastFiredAt).toLocaleString()}` : 'Never fired'}
           </span>
         </div>
-        <input
-          ref={inputRef}
-          className="automation-card__control automation-card__trigger"
-          type="text"
-          spellCheck={false}
-          placeholder="0 9 * * 1-5  or  custom_my_event"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); inputRef.current?.blur() }
-            else if (e.key === 'Escape') { e.preventDefault(); setDraft(trigger); inputRef.current?.blur() }
-          }}
-        />
-        <div className={`automation-card__status ${status.error ? 'automation-card__status--error' : ''}`}>
+        <div className="automation-card__trigger-row">
+          <select
+            className="automation-card__control automation-card__kind-select"
+            aria-label="Trigger kind"
+            value={kind}
+            onChange={(e) => { setKind(e.target.value as TriggerKind); inputRef.current?.focus({ preventScroll: true }) }}
+          >
+            <option value="cron">Cron</option>
+            <option value="event">Custom event</option>
+          </select>
+          <input
+            ref={inputRef}
+            className="automation-card__control automation-card__trigger"
+            type="text"
+            spellCheck={false}
+            placeholder={kind === 'cron' ? '0 9 * * 1-5' : 'custom_my_event'}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); inputRef.current?.blur() }
+              else if (e.key === 'Escape') { e.preventDefault(); setDraft(trigger); inputRef.current?.blur() }
+            }}
+          />
+        </div>
+        <div className={`automation-card__status ${status.error ? 'automation-card__status--error' : ''}`} title={status.detail}>
           {status.text}
         </div>
         <div className="automation-card__row">
@@ -213,6 +260,16 @@ export function AutomationCard({
                 Clear
               </button>
             </span>
+          )}
+        </div>
+        <div className="automation-card__stats">
+          {runStats ? (
+            <>
+              <span>Last run {formatUsd(runStats.last.costUsd)} · {formatTokens(runStats.last.tokens)} tokens</span>
+              <span>Total {formatUsd(runStats.totalCostUsd)} · {runStats.runs} {runStats.runs === 1 ? 'run' : 'runs'}</span>
+            </>
+          ) : (
+            <span>No finished runs yet</span>
           )}
         </div>
       </div>

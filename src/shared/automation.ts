@@ -1,6 +1,6 @@
 import { Cron } from 'croner'
 import { ancestorsOf, type NodeLookup } from './node-ancestry'
-import type { NodeData } from './state'
+import type { AutomationNodeData, AutomationRunStats, NodeData } from './state'
 
 /**
  * Automation cards: a trigger that starts a Claude surface beneath the card.
@@ -141,9 +141,26 @@ export function triggerLine(firing: AutomationFiring): string {
  * title caption above the card, and no cache or idle caption below it.
  */
 export function isAutomationRun(lookup: NodeLookup, node: NodeData | undefined): boolean {
-  if (node?.type !== 'terminal') return false
+  return automationOf(lookup, node) !== undefined
+}
+
+/** The automation card a run belongs to: the nearest one above it. Undefined for anything but a run. */
+export function automationOf(lookup: NodeLookup, node: NodeData | undefined): AutomationNodeData | undefined {
+  if (node?.type !== 'terminal') return undefined
   for (const ancestor of ancestorsOf(lookup, node.id)) {
-    if (ancestor.type === 'automation') return true
+    if (ancestor.type === 'automation') return ancestor
   }
-  return false
+  return undefined
+}
+
+/** `stats` with one more run added. */
+export function addRun(
+  stats: AutomationRunStats | undefined,
+  run: { costUsd: number; tokens: number; endedAt: number }
+): AutomationRunStats {
+  return {
+    runs: (stats?.runs ?? 0) + 1,
+    totalCostUsd: (stats?.totalCostUsd ?? 0) + run.costUsd,
+    last: run
+  }
 }

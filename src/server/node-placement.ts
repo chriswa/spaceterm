@@ -6,7 +6,9 @@ import {
   ROOT_NODE_RADIUS,
   PLACEMENT_MARGIN,
   DEFAULT_COLS,
-  DEFAULT_ROWS
+  DEFAULT_ROWS,
+  CARD_AGENT_MARK_HEIGHT,
+  CARD_HAT_HEIGHT
 } from '../shared/node-size'
 
 // --- Geometry types ---
@@ -149,6 +151,26 @@ export interface NewNodeFootprint {
 }
 
 /** The rects a new node would occupy with its card centred at (cx, cy). */
+/** Air between a card and an agent's mark standing on the card placed under it. */
+const BELOW_GAP = 20
+
+/**
+ * Where an agent surface goes when it is put straight under its parent, as a
+ * terminal started from a markdown card is: centred on the parent, its top
+ * edge far enough down that the agent mark and model hat drawn above it clear
+ * the parent's bottom edge.
+ *
+ * No collision search, deliberately: this is for a parent that has one child
+ * at a time, where that spot is the child's.
+ */
+export function placeDirectlyBelow(parent: NodeData, child: { height: number }): { x: number; y: number } {
+  const parentHeight = nodePixelSize(parent).height
+  return {
+    x: parent.x,
+    y: parent.y + parentHeight / 2 + BELOW_GAP + CARD_AGENT_MARK_HEIGHT + CARD_HAT_HEIGHT + child.height / 2
+  }
+}
+
 /** An agent surface of `cols` × `rows`, with room kept for its name and status captions. */
 export function agentSurfaceFootprint(cols: number, rows: number): NewNodeFootprint {
   const card = terminalPixelSize(cols, rows)
