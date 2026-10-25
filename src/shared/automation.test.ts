@@ -40,7 +40,7 @@ describe('triggerLine', () => {
 
   it('carries an event payload as JSON', () => {
     expect(triggerLine({ kind: 'event', at, eventId: 'custom_x', payload: { a: [1, 'b'] } }))
-      .toBe('Triggered by: custom_x {"a":[1,"b"]}')
+      .toBe('Triggered by: custom_x, payload:\n{"a":[1,"b"]}')
   })
 })
 

@@ -182,7 +182,7 @@ describe('AutomationRunner', () => {
       host.add(automation('c', 'custom_other'))
       expect(runner.fireEvent('custom_linear', { ticket: 'ENG-1' }, T0)).toBe(2)
       expect(host.spawned.map((s) => s.automationId)).toEqual([asNodeId('a'), asNodeId('b')])
-      expect(host.spawned[0].line).toBe('Triggered by: custom_linear {"ticket":"ENG-1"}')
+      expect(host.spawned[0].line).toBe('Triggered by: custom_linear, payload:\n{"ticket":"ENG-1"}')
     })
 
     it('reports zero for an id nothing listens to', () => {
@@ -221,7 +221,7 @@ describe('AutomationRunner', () => {
 
       host.archive(host.childrenOf(asNodeId('a'))[0].id)
       runner.drainQueues()
-      expect(host.spawned.map((s) => s.line)).toEqual(['Triggered by: custom_x 1', 'Triggered by: custom_x 2'])
+      expect(host.spawned.map((s) => s.line)).toEqual(['Triggered by: custom_x, payload:\n1', 'Triggered by: custom_x, payload:\n2'])
       expect(host.get('a').queue).toHaveLength(1)
     })
 
@@ -232,7 +232,7 @@ describe('AutomationRunner', () => {
       host.get('a').trigger = EVERY_15
       host.archive(host.childrenOf(asNodeId('a'))[0].id)
       runner.drainQueues()
-      expect(host.spawned[1].line).toBe('Triggered by: custom_x 2')
+      expect(host.spawned[1].line).toBe('Triggered by: custom_x, payload:\n2')
     })
 
     it('reuse sends to its one child instead of starting another', () => {
@@ -240,7 +240,7 @@ describe('AutomationRunner', () => {
       runner.fireEvent('custom_x', 1, T0)
       runner.fireEvent('custom_x', 2, T0)
       expect(host.spawned).toHaveLength(1)
-      expect(host.sent).toEqual([{ terminalId: host.childrenOf(asNodeId('a'))[0].id, line: 'Triggered by: custom_x 2' }])
+      expect(host.sent).toEqual([{ terminalId: host.childrenOf(asNodeId('a'))[0].id, line: 'Triggered by: custom_x, payload:\n2' }])
     })
 
     it('parallel starts one per firing, each placed among its siblings', () => {

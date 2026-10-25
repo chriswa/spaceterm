@@ -118,10 +118,11 @@ export function formatLocalTime(ms: number): string {
     `${sign}${pad(Math.trunc(offset / 60))}:${pad(offset % 60)}`
 }
 
-/** The one line an automation's agent is told about why it is running. */
+/** What an automation's agent is told about why it is running: one line, plus an event's payload on the next. */
 export function triggerLine(firing: AutomationFiring): string {
   if (firing.kind === 'event') {
-    const payload = firing.payload === undefined ? '' : ` ${JSON.stringify(firing.payload)}`
+    // The JSON on its own line, so a long payload starts where it can be read.
+    const payload = firing.payload === undefined ? '' : `, payload:\n${JSON.stringify(firing.payload)}`
     return `Triggered by: ${firing.eventId}${payload}`
   }
   const base = `Triggered by: cron at ${formatLocalTime(firing.at)}`
