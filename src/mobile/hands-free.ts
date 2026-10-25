@@ -49,9 +49,16 @@ export type HandsFreePhase = 'off' | 'listening' | 'hearing' | 'sending'
  * sent, so what ended it can be seen. `sampling`: the threshold, while the
  * turn model is being asked about a pause; null otherwise.
  */
-export const useHandsFree = create<{ on: boolean; phase: HandsFreePhase; conversation: boolean; secondsLeft: number | null; checking: boolean; turn: TurnAnswer | null; sampling: number | null }>(
-  () => ({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, turn: null, sampling: null }),
+export const useHandsFree = create<{ on: boolean; phase: HandsFreePhase; conversation: boolean; secondsLeft: number | null; checking: boolean; turn: TurnAnswer | null; sampling: number | null; mini: MiniAnswer | null }>(
+  () => ({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, turn: null, sampling: null, mini: null }),
 )
+
+/**
+ * turn-1-mini, on trial beside Smart Turn and deciding nothing: its latest
+ * answer `p`, its highest since this pause began (`peak`, null while they
+ * talk), and its model card's operating point, for the button's middle bar.
+ */
+export interface MiniAnswer { p: number; peak: number | null; threshold: number }
 
 /** One answer from the turn model: `p`, 0..1, that the speaker has finished; at or above `threshold`, the dictation ends. */
 export interface TurnAnswer { p: number; threshold: number }
@@ -181,7 +188,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
         setPending(false)
         quiet = { since: null, patienceMs: null }
         closesAt = null
-        useHandsFree.setState({ phase: 'off', conversation: false, secondsLeft: null, checking: false, turn: null, sampling: null })
+        useHandsFree.setState({ phase: 'off', conversation: false, secondsLeft: null, checking: false, turn: null, sampling: null, mini: null })
         // Voice Operator restarting, or its connection gone: still on, waiting
         // ("getting ready") — it is started again as soon as Voice Operator is back.
         if (why === 'restarting' || why === 'disconnected') break
@@ -208,7 +215,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
           phase,
           conversation: event.conversation === true,
           checking: event.checking === true,
-          ...(phase === 'listening' || phase === 'off' || fresh ? { turn: null, sampling: null } : {}),
+          ...(phase === 'listening' || phase === 'off' || fresh ? { turn: null, sampling: null, mini: null } : {}),
         })
         tickSeconds()
         setPending(event.pending === true)
@@ -223,6 +230,11 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
         useHandsFree.setState({
           turn: typeof event.turn === 'number' ? { p: event.turn, threshold } : null,
           sampling: event.sampling === true ? threshold : null,
+          mini: typeof event.mini === 'number' ? {
+            p: event.mini,
+            peak: typeof event.miniPeak === 'number' ? event.miniPeak : null,
+            threshold: typeof event.miniThreshold === 'number' ? event.miniThreshold : 0.17,
+          } : null,
         })
         break
       }
@@ -271,7 +283,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
     setPending(false)
     setOn = () => {}
     if (useHandsFree.getState().on) deps.link.stop()
-    useHandsFree.setState({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, turn: null, sampling: null })
+    useHandsFree.setState({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, turn: null, sampling: null, mini: null })
   }
 }
 

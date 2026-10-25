@@ -5,8 +5,8 @@
    classes so they win over the host's button (.m-bar__button, .toolbar__btn)
    whichever stylesheet loads first. */
 .m-hands-free { position: relative; }
-/* While hands-free takes a dictation: what may end it, a half of the button
-   each, filled from the bottom (clip-path set in HandsFreeButton.tsx). Left,
+/* While hands-free takes a dictation: what may end it, a third of the button
+   each (Smart Turn, turn-1-mini, the quiet), filled from the bottom (clip-path set in HandsFreeButton.tsx). Left,
    green: Smart Turn's latest answer, 0 to 1, snapping to each — no
    transition, so one answer is not mistaken for many — with a red line at the
    threshold that ends it, while it is being asked. Right, magenta: the quiet
@@ -20,9 +20,12 @@
   height: 100%;
   pointer-events: none;
 }
-.m-hands-free__gauge--turn path { fill: #4ade80; }
-.m-hands-free__gauge--quiet path { fill: #f472d0; }
-.m-hands-free__threshold line { stroke: #e11d48; stroke-width: 2; }
+.m-hands-free__gauge--turn circle { fill: #4ade80; }
+.m-hands-free__gauge--mini circle { fill: #facc15; }
+.m-hands-free__gauge--quiet circle { fill: #f472d0; }
+.m-hands-free__lines .m-hands-free__threshold { stroke: #e11d48; stroke-width: 2; }
+/* turn-1-mini's peak since the pause began (the peak hold). */
+.m-hands-free__lines .m-hands-free__peak { stroke: #11111b; stroke-width: 2; }
 /* Over the gauges, which are positioned and would otherwise cover it. */
 .m-hands-free__icon { position: relative; }
 .m-hands-free.m-hands-free--preparing {

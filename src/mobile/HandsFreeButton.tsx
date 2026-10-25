@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { holdState, onHoldStateChange, setHoldMicrophone, type HoldState } from './held-microphone'
 import { nativeMicrophoneAvailable } from './native-microphone'
 import { endSilence, setHandsFree, useHandsFree } from './hands-free'
@@ -19,10 +19,18 @@ const clipTo = (fill: number) => `inset(${(100 * (1 - Math.max(0, Math.min(1, fi
 /** The button's radius in its gauges' 42-unit box. */
 const R = 21
 
-/** A line across the left half of the disc, `at` (0..1) of the way up: where the turn model's threshold is. */
-export function thresholdLine(at: number): { x1: number; x2: number; y: number } {
+/** The disc in thirds, left to right: Smart Turn, turn-1-mini, the quiet. */
+const THIRD = (2 * R) / 3
+export const BARS = { turn: [0, THIRD], mini: [THIRD, 2 * THIRD], quiet: [2 * THIRD, 2 * R] } as const
+
+/**
+ * A line across one bar (`[x0, x1]`) of the disc, `at` (0..1) of the way up,
+ * trimmed to the disc's edge: where a threshold, or a peak, is.
+ */
+export function thresholdLine(at: number, [x0, x1]: readonly [number, number] = BARS.turn): { x1: number; x2: number; y: number } {
   const y = 2 * R * (1 - Math.max(0, Math.min(1, at)))
-  return { x1: R - Math.sqrt(Math.max(0, R * R - (y - R) ** 2)), x2: R, y }
+  const half = Math.sqrt(Math.max(0, R * R - (y - R) ** 2))
+  return { x1: Math.max(x0, R - half), x2: Math.min(x1, R + half), y }
 }
 
 /**
@@ -35,9 +43,12 @@ export function thresholdLine(at: number): { x1: number; x2: number; y: number }
  *
  * While hands-free is taking a dictation, the button shows the two things
  * that can end it, a half each, filling from the bottom like a glass.
- * Left, green: the turn model's one answer about this pause (Smart Turn,
- * asked about 0.2 s in), 0 to 1; a red line across it marks the threshold
- * that would have ended the dictation there. Right: the quiet since
+ * A third each. Left, green: Smart Turn's one answer about this pause (asked
+ * 0.5 s in), 0 to 1, with a red line at the threshold that ends the dictation
+ * there. Middle, yellow: turn-1-mini, on trial and deciding nothing — its
+ * latest answer, a red line at its model card's threshold, and a dark tick at
+ * its highest since the pause began, the peak hold: a tick above the line
+ * means it would have ended the turn. Right: the quiet since
  * you last spoke, the top the patience that ends it regardless. Both stay up while what you said is sent,
  * so you can see which one ended it.
  *
@@ -63,9 +74,13 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
   const checking = useHandsFree((s) => s.checking)
   const turn = useHandsFree((s) => s.turn)
   const sampling = useHandsFree((s) => s.sampling)
+  const mini = useHandsFree((s) => s.mini)
   // The threshold the pause's one answer was held to, beside it — and while it is being asked.
   const threshold = sampling ?? turn?.threshold ?? null
-  const line = threshold === null ? null : thresholdLine(threshold)
+  const line = threshold === null ? null : thresholdLine(threshold, BARS.turn)
+  const miniLine = mini ? thresholdLine(mini.threshold, BARS.mini) : null
+  const miniPeak = mini?.peak != null ? thresholdLine(mini.peak, BARS.mini) : null
+  const clip = useId().replace(/:/g, '')
   const ending = phase === 'hearing' || phase === 'sending'
   /** The conversation window's length: `secondsLeft` at its fullest, which it is when it opens. */
   const fullest = useRef(0)
@@ -116,19 +131,27 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
       )}
       {ending && (
         <>
+          {/* Each bar is a third of the disc, filled from the bottom (clipTo). */}
           <svg className="m-hands-free__gauge m-hands-free__gauge--turn" viewBox="0 0 42 42" aria-hidden="true"
             style={{ clipPath: clipTo(turn?.p ?? 0) }}>
-            {/* The left half of the disc. */}
-            <path d="M21 0A21 21 0 0 0 21 42Z" />
+            <defs><clipPath id={`${clip}-turn`}><rect x={BARS.turn[0]} width={THIRD} height={42} /></clipPath></defs>
+            <circle cx={R} cy={R} r={R} clipPath={`url(#${clip}-turn)`} />
           </svg>
-          {line && (
-            <svg className="m-hands-free__gauge m-hands-free__threshold" viewBox="0 0 42 42" aria-hidden="true">
-              <line x1={line.x1} x2={line.x2} y1={line.y} y2={line.y} />
-            </svg>
-          )}
+          <svg className="m-hands-free__gauge m-hands-free__gauge--mini" viewBox="0 0 42 42" aria-hidden="true"
+            style={{ clipPath: clipTo(mini?.p ?? 0) }}>
+            <defs><clipPath id={`${clip}-mini`}><rect x={BARS.mini[0]} width={THIRD} height={42} /></clipPath></defs>
+            <circle cx={R} cy={R} r={R} clipPath={`url(#${clip}-mini)`} />
+          </svg>
           <svg ref={quietRef} className="m-hands-free__gauge m-hands-free__gauge--quiet" viewBox="0 0 42 42" aria-hidden="true"
             style={{ clipPath: clipTo(0) }}>
-            <path d="M21 0A21 21 0 0 1 21 42Z" />
+            <defs><clipPath id={`${clip}-quiet`}><rect x={BARS.quiet[0]} width={THIRD} height={42} /></clipPath></defs>
+            <circle cx={R} cy={R} r={R} clipPath={`url(#${clip}-quiet)`} />
+          </svg>
+          <svg className="m-hands-free__gauge m-hands-free__lines" viewBox="0 0 42 42" aria-hidden="true">
+            {line && <line className="m-hands-free__threshold" x1={line.x1} x2={line.x2} y1={line.y} y2={line.y} />}
+            {miniLine && <line className="m-hands-free__threshold" x1={miniLine.x1} x2={miniLine.x2} y1={miniLine.y} y2={miniLine.y} />}
+            {/* turn-1-mini's highest since the pause began: above the red line, it would have ended the turn. */}
+            {miniPeak && <line className="m-hands-free__peak" x1={miniPeak.x1} x2={miniPeak.x2} y1={miniPeak.y} y2={miniPeak.y} />}
           </svg>
         </>
       )}

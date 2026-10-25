@@ -160,7 +160,7 @@ describe('a tap, from press to sound', () => {
 })
 
 describe('what may end a hands-free dictation', () => {
-  const gauge = (container: HTMLElement, which: 'turn' | 'quiet') =>
+  const gauge = (container: HTMLElement, which: 'turn' | 'mini' | 'quiet') =>
     container.querySelector<SVGElement>(`.m-hands-free__gauge--${which}`)
 
   it('shows Smart Turn\'s answer on the left of the hands-free button, not on the microphone', () => {
@@ -177,16 +177,30 @@ describe('what may end a hands-free dictation', () => {
     expect(gauge(container, 'quiet')).not.toBeNull()
   })
 
-  it('marks the threshold with a line across the left half only while the turn model is being asked', () => {
-    useHandsFree.setState({ phase: 'hearing', turn: null, sampling: null })
+  it('marks Smart Turn\'s threshold across the left third while it is asked, and beside its answer after', () => {
+    useHandsFree.setState({ phase: 'hearing', turn: null, sampling: null, mini: null })
     const { container } = render(<HandsFreeButton />)
     expect(container.querySelector('.m-hands-free__threshold')).toBeNull()
     act(() => useHandsFree.setState({ sampling: 0.85 }))
-    const line = container.querySelector('.m-hands-free__threshold line')
+    const line = container.querySelector('.m-hands-free__threshold')
     expect(Number(line?.getAttribute('y1'))).toBeCloseTo(42 * 0.15)
-    expect(Number(line?.getAttribute('x2'))).toBe(21)
-    act(() => useHandsFree.setState({ sampling: null }))
+    expect(Number(line?.getAttribute('x2'))).toBeCloseTo(14)
+    act(() => useHandsFree.setState({ sampling: null, turn: { p: 0.3, threshold: 0.85 } }))
+    expect(container.querySelectorAll('.m-hands-free__threshold')).toHaveLength(1)
+    act(() => useHandsFree.setState({ turn: null }))
     expect(container.querySelector('.m-hands-free__threshold')).toBeNull()
+  })
+
+  it('shows turn-1-mini in the middle third: its latest answer, its threshold, and its peak since the pause began', () => {
+    useHandsFree.setState({ phase: 'hearing', turn: null, sampling: null, mini: { p: 0.1, peak: null, threshold: 0.17 } })
+    const { container } = render(<HandsFreeButton />)
+    expect(gauge(container, 'mini')?.style.clipPath).toBe('inset(90.0% 0 0 0)')
+    const [threshold] = container.querySelectorAll('.m-hands-free__threshold')
+    expect(Number(threshold.getAttribute('x1'))).toBeCloseTo(14)
+    expect(Number(threshold.getAttribute('x2'))).toBeCloseTo(28)
+    expect(container.querySelector('.m-hands-free__peak')).toBeNull()
+    act(() => useHandsFree.setState({ mini: { p: 0.05, peak: 0.4, threshold: 0.17 } }))
+    expect(Number(container.querySelector('.m-hands-free__peak')?.getAttribute('y1'))).toBeCloseTo(42 * 0.6)
   })
 
   it('keeps both up while what was said is sent, and drops them once it is listening again', () => {

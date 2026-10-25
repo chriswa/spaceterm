@@ -505,10 +505,14 @@ Spaceterm is its client (`hands-free.ts`):
   (the microphone button only turns orange while your words are taken
   down): a thick dark ring while speech is checked for "Control"; the
   conversation window as an orange ring, draining as its quiet runs out; and
-  while a dictation runs, the button's two halves — **left, green**, Smart Turn's one
-  answer about the pause (asked once, about 0.2 s in), with a **red line** at
-  the threshold that ends it there — below it, the silence timeout decides;
-  **right, magenta**, the quiet since you last spoke, ending it at the top.
+  while a dictation runs, the button's three thirds — **left, green**, Smart
+  Turn's one answer about the pause (asked once, 0.5 s in), with a **red
+  line** at the threshold that ends it there — below it, the silence timeout
+  decides; **middle, yellow**, turn-1-mini, on trial and deciding nothing:
+  its latest answer, a red line at its model card's threshold (0.17), and a
+  dark tick at its highest since the pause began — a tick above the line is a
+  pause it would have ended; **right, magenta**, the quiet since you last
+  spoke, ending it at the top (3 s, growing to 4 s at most in a long dictation).
   Both hold while what you said is sent, so you can see which ended it.
 - **Its cues** are Voice Operator's to call and this device's to play: three
   soft steps up as it is ready, two notes up as your words begin to be taken
