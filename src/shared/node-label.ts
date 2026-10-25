@@ -1,4 +1,4 @@
-import { AUTOMATION_GEAR_SIZE, CARD_AGENT_MARK_HEIGHT, CARD_HAT_HEIGHT, ROOT_DISC_RADIUS, TITLE_CHAR_WIDTH, TITLE_H_PADDING, TITLE_HEIGHT, TITLE_LINE_HEIGHT } from './node-size'
+import { AUTOMATION_GEAR_REACH, CARD_AGENT_MARK_HEIGHT, CARD_HAT_HEIGHT, ROOT_DISC_RADIUS, TITLE_CHAR_WIDTH, TITLE_H_PADDING, TITLE_HEIGHT, TITLE_LINE_HEIGHT } from './node-size'
 import { cacheCountdownText, formatCountdownClock, formatElapsedShort } from './elapsed-label'
 import { measureCard } from './card-types'
 import { isCacheTimerMuted, type NodeData } from './state'
@@ -167,6 +167,9 @@ function wrapInto(words: readonly string[], maxLines: number): string[] {
   return packLines(words, lo)
 }
 
+/** Labels this short stay on one line. See {@link wrapLabel}. */
+export const MIN_WRAP_CHARS = 24
+
 /**
  * Break `text` into the lines that give the label the smallest area.
  *
@@ -183,10 +186,17 @@ function wrapInto(words: readonly string[], maxLines: number): string[] {
  * Scored at the default text scale whatever size the label is drawn at: the
  * whole box scales uniformly, so every candidate's area scales by the same
  * factor and the winner does not change.
+ *
+ * A label of up to {@link MIN_WRAP_CHARS} characters is never wrapped. Area
+ * alone would stack a short one too, and short is where that reads worst: a
+ * cron string like `0 9 * * 1-5` broken over three lines is no longer
+ * recognisable, and a two-word title stacked is a column, not a name.
  */
 export function wrapLabel(text: string): string[] {
   const words = text.split(/\s+/).filter((w) => w.length > 0)
   if (words.length === 0) return []
+  const oneLine = words.join(' ')
+  if (oneLine.length <= MIN_WRAP_CHARS) return [oneLine]
 
   let best = [words.join(' ')]
   let bestArea = Infinity
@@ -301,9 +311,20 @@ function statusLabelOffsetY(cardHeight: number, labelHeight: number, scale: numb
  * without being hunted for. Cards are centre-anchored, so every term here is
  * measured from the centre outwards.
  */
-/** The height a name label is spaced above: the card, or for an automation the gear behind it. */
-function labelClearanceHeight(node: NodeData): number {
-  return node.type === 'automation' ? AUTOMATION_GEAR_SIZE : measureCard(node).height
+/**
+ * Air between an automation's gear and its caption. Much less than
+ * `LABEL_CARD_GAP`, which makes room for an agent mark and hat that an
+ * automation card does not have.
+ */
+const AUTOMATION_LABEL_GAP = 40
+
+/**
+ * Centre of a node's name label, relative to the node's centre: above the card,
+ * or for an automation above the teeth of the gear behind it.
+ */
+function nameLabelY(node: NodeData, labelHeight: number): number {
+  if (node.type === 'automation') return -(AUTOMATION_GEAR_REACH + AUTOMATION_LABEL_GAP + labelHeight / 2)
+  return nameLabelOffsetY(measureCard(node).height, labelHeight)
 }
 
 export function layOutNodeLabel(node: NodeData, markdownContent?: string): NodeLabel | null {
@@ -319,7 +340,7 @@ export function layOutNodeLabel(node: NodeData, markdownContent?: string): NodeL
     lines,
     textScale,
     x: node.x,
-    y: node.y + nameLabelOffsetY(labelClearanceHeight(node), box.height),
+    y: node.y + nameLabelY(node, box.height),
     anchorX: node.x,
     anchorY: node.y,
     ...box

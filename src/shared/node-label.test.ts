@@ -3,10 +3,10 @@ import {
   placeNameTag, NAME_TAG_GAP,
   nodeLabelText, wrapLabel, labelBox, labelMaskShape, layOutNodeLabel, LABEL_CARD_GAP, MAX_LABEL_LINES,
   LABEL_TEXT_SCALE, MARKDOWN_LABEL_TEXT_SCALE, layOutStatusLabel, statusCardGap, layOutRootCwdLabel, COLD_LABEL_FG, deadlineExtended,
-  labelClickAction, agentCaptionReserve, type NodeLabel, type CaptionReserve
+  labelClickAction, agentCaptionReserve, MIN_WRAP_CHARS, type NodeLabel, type CaptionReserve
 } from './node-label'
 import { ELAPSED_TICK_MS } from './elapsed-label'
-import { AUTOMATION_GEAR_SIZE, ROOT_DISC_RADIUS, TITLE_LINE_HEIGHT } from './node-size'
+import { AUTOMATION_GEAR_REACH, ROOT_DISC_RADIUS, TITLE_LINE_HEIGHT } from './node-size'
 import { measureCard } from './card-types'
 import type { MarkdownNodeData, NodeData, TerminalNodeData } from './state'
 import { asNodeId, asPtySessionId, ROOT_NODE_ID } from './ids'
@@ -134,12 +134,19 @@ describe('wrapLabel', () => {
     expect(wrapLabel(text).join(' ').split(/\s+/)).toEqual(text.split(/\s+/))
   })
 
-  it.each(SAMPLES)('picks the smallest area available to a greedy wrap: %s', (text) => {
+  it.each(SAMPLES.filter((t) => t.length > MIN_WRAP_CHARS))('picks the smallest area available to a greedy wrap: %s', (text) => {
     const chosen = areaOf(wrapLabel(text))
     for (const candidate of candidateWraps(text)) {
       expect(areaOf(candidate)).toBeGreaterThanOrEqual(chosen)
     }
   })
+
+  it.each(['0 9 * * 1-5', '*/15 * * * *', 'Fix the parser', 'x'.repeat(MIN_WRAP_CHARS - 4) + ' end'])(
+    'keeps a short label on one line: %s',
+    (text) => {
+      expect(wrapLabel(text)).toEqual([text])
+    }
+  )
 
   it('keeps a word that cannot be broken on one line', () => {
     expect(wrapLabel('supercalifragilisticexpialidocious')).toEqual(['supercalifragilisticexpialidocious'])
@@ -626,8 +633,11 @@ describe('automation labels', () => {
     expect(nodeLabelText(automation(''))).toBeNull()
   })
 
-  it('sits above the gear behind the card, not on it', () => {
+  it('sits just above the teeth of the gear behind the card', () => {
     const label = layOutNodeLabel(automation('custom_x'))!
-    expect(label.y + label.height / 2).toBeLessThan(-AUTOMATION_GEAR_SIZE / 2)
+    const gap = -AUTOMATION_GEAR_REACH - (label.y + label.height / 2)
+    expect(gap).toBeGreaterThan(0)
+    // Close: well under the gap an agent surface's label keeps for its mark and hat.
+    expect(gap).toBeLessThan(LABEL_CARD_GAP / 2)
   })
 })

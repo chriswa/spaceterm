@@ -224,6 +224,8 @@ export const AUTOMATION_HEIGHT = 206
  * would sit on the gear in the gear's own colour.
  */
 export const AUTOMATION_GEAR_SIZE = AUTOMATION_WIDTH * 1.5
+/** How far the gear's teeth reach from its centre: its tip radius is 47 of the glyph's 100. */
+export const AUTOMATION_GEAR_REACH = AUTOMATION_GEAR_SIZE * 0.47
 
 // Title node dimensions — see LABEL_NODE_SCALE above.
 export const TITLE_DEFAULT_WIDTH = 600 * LABEL_NODE_SCALE
