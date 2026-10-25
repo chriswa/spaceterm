@@ -192,15 +192,23 @@ describe('what may end a hands-free dictation', () => {
   })
 
   it('shows turn-1-mini in the middle third: its latest answer, its threshold, and its peak since the pause began', () => {
+    // While they talk: nothing, as the other bars.
     useHandsFree.setState({ phase: 'hearing', turn: null, sampling: null, mini: { p: 0.1, peak: null, threshold: 0.17 } })
     const { container } = render(<HandsFreeButton />)
+    expect(gauge(container, 'mini')?.style.clipPath).toBe('inset(100.0% 0 0 0)')
+    expect(container.querySelector('.m-hands-free__threshold')).toBeNull()
+    expect(container.querySelector('.m-hands-free__peak')).toBeNull()
+    // In a pause: its latest answer, its threshold, and its peak.
+    act(() => useHandsFree.setState({ mini: { p: 0.1, peak: 0.4, threshold: 0.17 } }))
     expect(gauge(container, 'mini')?.style.clipPath).toBe('inset(90.0% 0 0 0)')
     const [threshold] = container.querySelectorAll('.m-hands-free__threshold')
     expect(Number(threshold.getAttribute('x1'))).toBeCloseTo(14)
     expect(Number(threshold.getAttribute('x2'))).toBeCloseTo(28)
-    expect(container.querySelector('.m-hands-free__peak')).toBeNull()
-    act(() => useHandsFree.setState({ mini: { p: 0.05, peak: 0.4, threshold: 0.17 } }))
     expect(Number(container.querySelector('.m-hands-free__peak')?.getAttribute('y1'))).toBeCloseTo(42 * 0.6)
+    // They carry on: all of it clears.
+    act(() => useHandsFree.setState({ mini: { p: 0.02, peak: null, threshold: 0.17 } }))
+    expect(container.querySelector('.m-hands-free__threshold')).toBeNull()
+    expect(container.querySelector('.m-hands-free__peak')).toBeNull()
   })
 
   it('keeps both up while what was said is sent, and drops them once it is listening again', () => {

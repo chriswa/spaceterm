@@ -74,7 +74,9 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
   const checking = useHandsFree((s) => s.checking)
   const turn = useHandsFree((s) => s.turn)
   const sampling = useHandsFree((s) => s.sampling)
-  const mini = useHandsFree((s) => s.mini)
+  // turn-1-mini answers all the time; its bar shows only in a pause (its peak is held from the
+  // pause's start) and while what was said is sent, and clears as the speaker carries on, as the rest do.
+  const mini = useHandsFree((s) => (s.mini?.peak != null ? s.mini : null))
   // The threshold the pause's one answer was held to, beside it — and while it is being asked.
   const threshold = sampling ?? turn?.threshold ?? null
   const line = threshold === null ? null : thresholdLine(threshold, BARS.turn)
