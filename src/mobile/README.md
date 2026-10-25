@@ -123,9 +123,10 @@ everything is waiting in the transcript when it wakes. Letting go of Control
 altogether — nobody hears it, and it tells you what you missed when you are
 back — is the transcript's **Away**.
 
-Neither holding Control nor the always-on microphone survives a relaunch: the
-app lets go of Control when it starts (`main.tsx`), and the microphone hold
-starts off (`held-microphone.ts`). A mute does survive.
+Holding Control survives a reload, a server restart and a relaunch: while the
+phone is disconnected Control does not speak to it (as Away), and as it
+reconnects it holds Control again, muted or not as before. Hands-free comes
+back on likewise (`hands-free-memory.ts`), except after the app is replaced.
 
 ## Control's transcript
 

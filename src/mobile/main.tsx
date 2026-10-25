@@ -90,13 +90,12 @@ if (!token) {
     // flag — kept current for the page's whole life, not only while the
     // canvas is mounted. Never released.
     retainServerSync()
-    // A launch starts with Control let go, as with the held microphone: the
-    // server keeps a phone's hold while it is away, but not across a relaunch.
-    // Only a launch, not a reconnect — those keep it. A mute is kept.
-    if (client.isConnected()) client.holdReceptionist('release')
-    else {
-      const off = client.onLifecycle('connect', () => { off(); client.holdReceptionist('release') })
-    }
+    // Control stays held across a reload, a server restart and a relaunch: the
+    // server keeps a phone's hold while it is away, with Control not speaking
+    // to it meanwhile (`updateReceptionistListener`), and it is back as the
+    // phone reconnects. A launch used to let go of it; that went unnoticed only
+    // while a race kept the release from reaching the server (fixed October 25),
+    // and then every reload set replies to Away.
     mobileEvents.setSender((events) => client.mobileEvents(events))
     // Whether this app needs installing again, for Control to say: on every
     // connect, since a restarted server has forgotten, and on every change.
