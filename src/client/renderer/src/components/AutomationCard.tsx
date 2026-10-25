@@ -46,7 +46,6 @@ interface AutomationCardProps {
   trigger: string
   overlap: AutomationOverlap
   queued: number
-  lastFiredAt?: number
   runStats?: AutomationRunStats
   focused: boolean
   selected: boolean
@@ -130,7 +129,7 @@ function formatTokens(tokens: number): string {
 }
 
 export function AutomationCard({
-  id, x, y, zIndex, zoom, trigger, overlap, queued, lastFiredAt, runStats, focused, selected, resolvedPreset, archivedChildren,
+  id, x, y, zIndex, zoom, trigger, overlap, queued, runStats, focused, selected, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onTriggerChange, onOverlapChange, onClearQueue, onColorChange,
   onOpenArchiveSearch, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, cameraRef
@@ -241,11 +240,28 @@ export function AutomationCard({
       behindContent={<div className="automation-gear-backdrop" style={{ ...GEAR_BACKDROP_STYLE, backgroundColor: fg }} aria-hidden="true" />}
     >
       <div className="automation-card__body">
-        <div className="automation-card__head">
-          <span className="automation-card__kind">Automation</span>
-          <span className="automation-card__last">
-            {lastFiredAt ? `Fired ${new Date(lastFiredAt).toLocaleString()}` : 'Never fired'}
-          </span>
+        <div className="automation-card__row">
+          <select
+            className="automation-card__control automation-card__overlap"
+            value={overlap}
+            onChange={(e) => onOverlapChange(id, e.target.value as AutomationOverlap)}
+          >
+            {AUTOMATION_OVERLAPS.map((mode) => (
+              <option key={mode} value={mode}>{AUTOMATION_OVERLAP_LABELS[mode]}</option>
+            ))}
+          </select>
+          {(overlap === 'queue' || queued > 0) && (
+            <span className="automation-card__queue">
+              {queued} queued
+              <button
+                className="automation-card__control automation-card__clear"
+                disabled={queued === 0}
+                onClick={() => onClearQueue(id)}
+              >
+                Clear
+              </button>
+            </span>
+          )}
         </div>
         <div className="automation-card__trigger-row">
           <select
@@ -274,29 +290,6 @@ export function AutomationCard({
         </div>
         <div className={`automation-card__status ${status.error ? 'automation-card__status--error' : ''}`} title={status.detail}>
           {status.text}
-        </div>
-        <div className="automation-card__row">
-          <select
-            className="automation-card__control automation-card__overlap"
-            value={overlap}
-            onChange={(e) => onOverlapChange(id, e.target.value as AutomationOverlap)}
-          >
-            {AUTOMATION_OVERLAPS.map((mode) => (
-              <option key={mode} value={mode}>{AUTOMATION_OVERLAP_LABELS[mode]}</option>
-            ))}
-          </select>
-          {(overlap === 'queue' || queued > 0) && (
-            <span className="automation-card__queue">
-              {queued} queued
-              <button
-                className="automation-card__control automation-card__clear"
-                disabled={queued === 0}
-                onClick={() => onClearQueue(id)}
-              >
-                Clear
-              </button>
-            </span>
-          )}
         </div>
         <div className="automation-card__stats">
           {runStats ? (

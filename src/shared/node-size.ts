@@ -216,7 +216,7 @@ export const FILE_HEIGHT = 144
 
 // Automation node dimensions. Fixed: the card is a form, not content.
 export const AUTOMATION_WIDTH = 470
-export const AUTOMATION_HEIGHT = 268
+export const AUTOMATION_HEIGHT = 206
 
 // Title node dimensions — see LABEL_NODE_SCALE above.
 export const TITLE_DEFAULT_WIDTH = 600 * LABEL_NODE_SCALE

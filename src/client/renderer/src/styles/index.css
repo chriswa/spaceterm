@@ -1995,7 +1995,7 @@ html, body, #root {
   color: #cdd6f4 !important;
 }
 
-/* Automation card — a small form: trigger field, what it means, overlap mode.
+/* Automation card — a small form: overlap mode, trigger field, what it means.
    Framed like a title card in the automation's own colour. Its controls only
    take the pointer while the card is focused; until then a click anywhere
    focuses or drags the card, as on every other card. */
@@ -2037,29 +2037,6 @@ html, body, #root {
   height: 100%;
   padding: 12px 14px;
   box-sizing: border-box;
-}
-
-.automation-card__head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.automation-card__kind {
-  font-weight: bold;
-  font-size: 13px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--automation-fg, #f0a94a);
-}
-
-.automation-card__last {
-  font-size: 11px;
-  opacity: 0.6;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .automation-card__trigger {
@@ -2116,6 +2093,7 @@ html, body, #root {
 }
 
 .automation-card__stats {
+  margin-top: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2136,7 +2114,6 @@ html, body, #root {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: auto;
 }
 
 .automation-card__overlap,
