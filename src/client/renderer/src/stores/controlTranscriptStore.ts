@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { ControlTranscriptEntry } from '../../../../shared/protocol'
 
+const OPEN_KEY = 'controlTranscript.open'
 const ACTIVITY_KEY = 'controlTranscript.activity'
 const DRAFT_KEY = 'controlTranscript.draft'
 /** What the box was called before it was Activity, so a device that had it ticked still does. */
@@ -10,11 +11,16 @@ function readActivity(): boolean {
   try { return (localStorage.getItem(ACTIVITY_KEY) ?? localStorage.getItem(OLD_KEY)) === 'true' } catch { return false }
 }
 
+function readOpen(): boolean {
+  try { return localStorage.getItem(OPEN_KEY) === 'true' } catch { return false }
+}
+
 function readDraft(): string {
   try { return localStorage.getItem(DRAFT_KEY) ?? '' } catch { return '' }
 }
 
 interface ControlTranscriptState {
+  /** Remembered on this device, so a start opens on whatever was up when it last closed. */
   open: boolean
   /**
    * Messages sent to Control while the transcript is open — typed, or spoken
@@ -50,11 +56,14 @@ interface ControlTranscriptState {
  * talk button sends into it from outside it.
  */
 export const useControlTranscriptStore = create<ControlTranscriptState>((set) => ({
-  open: false,
+  open: readOpen(),
   pending: [],
   activity: readActivity(),
   draft: readDraft(),
-  setOpen: (open) => set(open ? { open } : { open, pending: [] }),
+  setOpen: (open) => {
+    try { localStorage.setItem(OPEN_KEY, String(open)) } catch { /* a private window: this visit only */ }
+    set(open ? { open } : { open, pending: [] })
+  },
   setActivity: (activity) => {
     try { localStorage.setItem(ACTIVITY_KEY, String(activity)) } catch { /* a private window: this visit only */ }
     set({ activity })

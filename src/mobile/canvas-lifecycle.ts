@@ -9,8 +9,9 @@ import { createGate, type Gate } from './gate'
  * a mounted canvas still re-renders on every agent update and holds every
  * card in memory, so it is not kept for long:
  *
- * - Every start, a reload included, opens on Control's transcript with no
- *   canvas at all, and the canvas first mounts when you leave the transcript.
+ * - A start, a reload included, with the transcript up — it reopens as it was
+ *   left (controlTranscriptStore) — mounts no canvas at all, and the canvas
+ *   first mounts when you leave the transcript.
  * - Leaving Control mode — closing the transcript, or the screen coming back
  *   on with the canvas or a terminal in front — always mounts it.
  * - After `IDLE_MS` in Control mode, it is unmounted. Coming back to the

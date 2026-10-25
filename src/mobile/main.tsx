@@ -8,7 +8,6 @@ import { browserPlatform, forwardLogs, canvasOnScreen } from './browser-platform
 import { controlModeGate, installControlMode } from './control-mode'
 import { canvasLifecycle } from './canvas-lifecycle'
 import { retainServerSync } from '@/lib/server-sync'
-import { useControlTranscriptStore } from '@/stores/controlTranscriptStore'
 import { useClientStalenessStore } from '@/stores/clientStalenessStore'
 import { PageWork, meteredTransport, installPageWorkReport } from './page-work'
 import { not } from './gate'
@@ -70,9 +69,6 @@ if (!token) {
 } else {
   // Before anything renders: the canvas must never mount a live terminal in a card.
   useSurfacePresenterStore.getState().setExternal(true)
-  // Every start, a reload included, opens on Control's transcript, with no
-  // canvas until it is dismissed. See canvas-lifecycle.ts.
-  useControlTranscriptStore.getState().setOpen(true)
   // A zoom scales the cards as drawn and redraws them once it settles: redrawn
   // at every scale, a zoom-out ran WebKit out of memory. See useCamera.
   deferCameraScaleWhileMoving(true)

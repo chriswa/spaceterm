@@ -339,9 +339,10 @@ Paused, a mounted canvas still re-renders on agent updates and holds every
 card, so it is only mounted while it might be looked at
 (`canvas-lifecycle.ts`):
 
-- **Every start, a reload included, opens on Control's transcript with no
-  canvas at all.** It first mounts when you leave the transcript — closing
-  it, the rocket's surface list, or an agent's name in it.
+- **A start with the transcript up mounts no canvas at all.** The transcript
+  reopens as it was left on this device, on the phone and the Mac alike. The
+  canvas first mounts when you leave the transcript — closing it, the rocket's
+  surface list, or an agent's name in it.
 - **Five minutes in Control mode unmounts it** — transcript up, another app in
   front, or the phone asleep — with the terminal view and composer that are
   part of it. An open composer keeps it.
