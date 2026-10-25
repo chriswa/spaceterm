@@ -14,12 +14,12 @@ const overlapSelect = () => document.querySelector('.automation-card__overlap') 
 
 const id = asNodeId('auto-1')
 
-function renderCard(props: { trigger?: string; prompt?: string; overlap?: AutomationOverlap; queued?: number; runStats?: AutomationRunStats } = {}) {
-  const handlers = { onTriggerChange: vi.fn(), onPromptChange: vi.fn(), onOverlapChange: vi.fn(), onClearQueue: vi.fn(), onFocus: vi.fn(), onMove: vi.fn() }
+function renderCard(props: { enabled?: boolean; trigger?: string; prompt?: string; overlap?: AutomationOverlap; queued?: number; runStats?: AutomationRunStats } = {}) {
+  const handlers = { onTriggerChange: vi.fn(), onPromptChange: vi.fn(), onEnabledChange: vi.fn(), onOverlapChange: vi.fn(), onClearQueue: vi.fn(), onFocus: vi.fn(), onMove: vi.fn() }
   render(
     <AutomationCard
       id={id} x={0} y={0} zIndex={1} zoom={1} focused selected={false} archivedChildren={[]}
-      trigger={props.trigger ?? ''} prompt={props.prompt ?? ''} overlap={props.overlap ?? 'single'} queued={props.queued ?? 0} runStats={props.runStats}
+      trigger={props.trigger ?? ''} prompt={props.prompt ?? ''} enabled={props.enabled ?? true} overlap={props.overlap ?? 'single'} queued={props.queued ?? 0} runStats={props.runStats}
       onClose={vi.fn()} onColorChange={vi.fn()} onOpenArchiveSearch={vi.fn()}
       cameraRef={{ current: { x: 0, y: 0, z: 1 } }}
       {...handlers}
@@ -158,5 +158,21 @@ describe('AutomationCard', () => {
     fireEvent.blur(box)
     expect(box.value).toBe('old')
     expect(onPromptChange).not.toHaveBeenCalled()
+  })
+
+  it('switches the card on and off', () => {
+    const { onEnabledChange } = renderCard({ enabled: false })
+    const box = screen.getByRole('checkbox', { name: 'Enabled' }) as HTMLInputElement
+    expect(box.checked).toBe(false)
+    fireEvent.click(box)
+    expect(onEnabledChange).toHaveBeenCalledWith(id, true)
+  })
+
+  it('draws a hollow gear while disabled and a solid one while enabled', () => {
+    renderCard({ enabled: false })
+    expect(document.querySelector('.automation-gear-backdrop--outline')).not.toBeNull()
+    cleanup()
+    renderCard({ enabled: true })
+    expect(document.querySelector('.automation-gear-backdrop--outline')).toBeNull()
   })
 })

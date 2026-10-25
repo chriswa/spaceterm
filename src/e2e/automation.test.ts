@@ -50,7 +50,7 @@ async function automationWithChild(app: LaunchedApp, trigger: string, overlap: '
     const { nodeId } = await window.api.node.automationAdd('root' as never)
     // The shell first, so the card is never childless while it has a trigger.
     await window.api.node.terminalCreate(nodeId)
-    await window.api.node.automationUpdate(nodeId, { trigger, overlap })
+    await window.api.node.automationUpdate(nodeId, { trigger, overlap, enabled: true })
     return nodeId
   }, { trigger, overlap })
   await app.window.waitForSelector(`.card-shell[data-node-id="${id}"] .automation-card__trigger`, { timeout: 30_000 })

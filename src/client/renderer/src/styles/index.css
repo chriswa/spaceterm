@@ -2017,6 +2017,25 @@ html, body, #root {
 
 /* The gear behind the card, in the card's bright colour (see GEAR_BACKDROP_STYLE).
    Out of flow and click-through, so the card is grabbed and measured as before. */
+.automation-gear-backdrop--outline {
+  pointer-events: none;
+}
+
+.automation-card__enabled {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  margin-left: auto;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.automation-card__enabled input {
+  margin: 0;
+  accent-color: var(--automation-fg, #f0a94a);
+}
+
 .automation-gear-backdrop {
   position: absolute;
   /* Takes presses (see AutomationCard), within a circle as far out as the teeth

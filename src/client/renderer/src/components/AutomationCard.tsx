@@ -14,7 +14,7 @@ import {
 } from '../../../../shared/automation'
 import { CardShell } from './CardShell'
 import { formatDurationShort } from '../../../../shared/elapsed-label'
-import { GEAR_MASK } from './icons/GearGlyph'
+import { GEAR_MASK, GEAR_OUTLINE_MASK } from './icons/GearGlyph'
 import { useNodeStore } from '../stores/nodeStore'
 import { useReparentStore } from '../stores/reparentStore'
 import { useScriptsSocketPathStore } from '../stores/scriptsSocketPathStore'
@@ -47,6 +47,9 @@ interface AutomationCardProps {
   trigger: string
   /** What each run is told, after the markdown above the card. */
   prompt: string
+  /** Off: the card ignores its trigger. See `AutomationNodeData.enabled`. */
+  enabled: boolean
+  onEnabledChange: (id: NodeId, enabled: boolean) => void
   overlap: AutomationOverlap
   queued: number
   runStats?: AutomationRunStats
@@ -165,7 +168,7 @@ function formatTokens(tokens: number): string {
 }
 
 export function AutomationCard({
-  id, x, y, zIndex, zoom, trigger, prompt, overlap, queued, runStats, focused, selected, resolvedPreset, archivedChildren,
+  id, x, y, zIndex, zoom, trigger, prompt, enabled, onEnabledChange, overlap, queued, runStats, focused, selected, resolvedPreset, archivedChildren,
   onFocus, onClose, onMove, onTriggerChange, onPromptChange, onOverlapChange, onClearQueue, onColorChange,
   onOpenArchiveSearch, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, cameraRef
@@ -218,6 +221,8 @@ export function AutomationCard({
   const scriptsSocketPath = useScriptsSocketPathStore(s => s.path)
   const status = useMemo(() => describeTrigger(kind, draft, scriptsSocketPath), [kind, draft, scriptsSocketPath])
   const fg = resolvedPreset?.titleBarBg ?? '#f0a94a'
+  /** The card's dim surface: its body, and a disabled gear's fill. */
+  const surface = resolvedPreset?.terminalBg ?? DEFAULT_PRESET.terminalBg
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('.node-titlebar__actions, .node-titlebar__color-picker, .archive-body')) return
@@ -277,7 +282,7 @@ export function AutomationCard({
         // The terminal background for the card's colour, at full opacity rather
         // than `cardSurfaceColor`'s half: the edge to the card's children runs
         // underneath, and showing through a form it reads as part of it.
-        backgroundColor: resolvedPreset?.terminalBg ?? DEFAULT_PRESET.terminalBg,
+        backgroundColor: surface,
         '--automation-fg': fg,
       } as React.CSSProperties}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
@@ -286,7 +291,25 @@ export function AutomationCard({
       // card's custom property does not reach it.
       // The gear drags and focuses the card like its body does: it reads as
       // part of the card, so a press on it should act like one.
-      behindContent={<div className="automation-gear-backdrop" style={{ ...GEAR_BACKDROP_STYLE, backgroundColor: fg }} aria-hidden="true" onMouseDown={handleMouseDown} />}
+      // Disabled, the gear is hollow: the card's own dim surface inside a bright
+      // outline, so it never shows the canvas through it.
+      behindContent={
+        <>
+          <div
+            className="automation-gear-backdrop"
+            style={{ ...GEAR_BACKDROP_STYLE, backgroundColor: enabled ? fg : surface }}
+            aria-hidden="true"
+            onMouseDown={handleMouseDown}
+          />
+          {!enabled && (
+            <div
+              className="automation-gear-backdrop automation-gear-backdrop--outline"
+              style={{ ...GEAR_BACKDROP_STYLE, maskImage: GEAR_OUTLINE_MASK, WebkitMaskImage: GEAR_OUTLINE_MASK, backgroundColor: fg }}
+              aria-hidden="true"
+            />
+          )}
+        </>
+      }
     >
       <div className="automation-card__body">
         <div className="automation-card__row">
@@ -311,6 +334,15 @@ export function AutomationCard({
               </button>
             </span>
           )}
+          <label className="automation-card__enabled">
+            <input
+              type="checkbox"
+              className="automation-card__control"
+              checked={enabled}
+              onChange={(e) => onEnabledChange(id, e.target.checked)}
+            />
+            Enabled
+          </label>
         </div>
         <div className="automation-card__trigger-row">
           <select

@@ -1773,3 +1773,10 @@ describe('automation run costs', () => {
     expect(sm.getAutomations()).toEqual([])
   })
 })
+
+describe('new automation cards', () => {
+  it('start disabled, so one does not fire while it is being written', () => {
+    const { sm } = harness()
+    expect(sm.createAutomation(ROOT_NODE_ID, 0, 0).enabled).toBe(false)
+  })
+})

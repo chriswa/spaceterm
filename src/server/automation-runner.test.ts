@@ -274,4 +274,45 @@ describe('AutomationRunner', () => {
     expect(host.spawned.map((s) => s.automationId)).toEqual([asNodeId('b')])
     expect(host.logs.some((l) => l.includes('no pty'))).toBe(true)
   })
+
+  describe('disabled cards', () => {
+    const disabled = (id: string, trigger: string, overlap: AutomationOverlap = 'parallel') =>
+      ({ ...automation(id, trigger, overlap), enabled: false })
+
+    it('ignore their cron', () => {
+      host.add(disabled('a', EVERY_15))
+      runner.start(T0 + MIN)
+      runner.tick(T0 + 15 * MIN + 5_000)
+      expect(host.spawned).toEqual([])
+    })
+
+    it('do not hear events, and are not counted as listening', () => {
+      host.add(disabled('a', 'custom_x'))
+      expect(runner.fireEvent('custom_x', 1, T0)).toBe(0)
+      expect(host.spawned).toEqual([])
+    })
+
+    it('hold their queue until switched back on', () => {
+      host.add({ ...disabled('a', 'custom_x', 'queue'), queue: [{ kind: 'event', at: T0, eventId: 'custom_x', payload: 1 }] })
+      runner.drainQueues()
+      expect(host.spawned).toEqual([])
+      host.get('a').enabled = true
+      runner.drainQueues()
+      expect(host.spawned).toHaveLength(1)
+    })
+
+    it('do not catch up on slots that passed while off', () => {
+      host.add(disabled('a', EVERY_15))
+      runner.start(T0 + MIN)
+      runner.tick(T0 + 20 * MIN)
+      host.get('a').enabled = true
+      runner.tick(T0 + 25 * MIN)
+      expect(host.spawned).toEqual([])
+    })
+
+    it('treat a card from before the switch existed as on', () => {
+      host.add(automation('a', 'custom_x'))
+      expect(runner.fireEvent('custom_x', 1, T0)).toBe(1)
+    })
+  })
 })

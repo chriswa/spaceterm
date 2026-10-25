@@ -73,6 +73,12 @@ export interface AutomationPatch {
   trigger?: string
   overlap?: AutomationOverlap
   prompt?: string
+  enabled?: boolean
+}
+
+/** Whether a card acts on its trigger. See `AutomationNodeData.enabled` for why absent is on. */
+export function isAutomationEnabled(node: Pick<AutomationNodeData, 'enabled'>): boolean {
+  return node.enabled !== false
 }
 
 export function isAutomationOverlap(value: unknown): value is AutomationOverlap {

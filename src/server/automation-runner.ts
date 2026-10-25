@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import { Cron } from 'croner'
 import {
+  isAutomationEnabled,
   parseTrigger,
   triggerLine,
   type AutomationFiring,
@@ -146,7 +147,7 @@ export class AutomationRunner {
     this.checkedUntil = now
     this.heartbeat.write(now)
     if (now > after) {
-      for (const automation of this.host.automations()) {
+      for (const automation of this.enabledAutomations()) {
         const trigger = parseTrigger(automation.trigger)
         if (trigger.kind !== 'cron') continue
         const slots = cronSlotsBetween(trigger.expression, after, now)
@@ -165,7 +166,7 @@ export class AutomationRunner {
   /** Fire every card listening for `eventId`. Returns how many there were. */
   fireEvent(eventId: string, payload: unknown, now: number): number {
     let matched = 0
-    for (const automation of this.host.automations()) {
+    for (const automation of this.enabledAutomations()) {
       const trigger = parseTrigger(automation.trigger)
       if (trigger.kind !== 'event' || trigger.eventId !== eventId) continue
       matched++
@@ -180,13 +181,22 @@ export class AutomationRunner {
    * that is what frees a queued card.
    */
   drainQueues(): void {
-    for (const automation of this.host.automations()) {
+    for (const automation of this.enabledAutomations()) {
       if (automation.queue.length === 0) continue
       if (this.host.childrenOf(automation.id).length > 0) continue
       const [next, ...rest] = automation.queue
       this.host.setQueue(automation.id, rest)
       this.run(automation, { action: 'spawn' }, next)
     }
+  }
+
+  /**
+   * The cards that act at all. A disabled card is skipped everywhere: its cron
+   * slots pass unfired (and are not caught up when it is switched back on), an
+   * event does not match it, and its queue waits.
+   */
+  private enabledAutomations(): AutomationNodeData[] {
+    return this.host.automations().filter(isAutomationEnabled)
   }
 
   private fire(automation: AutomationNodeData, firing: AutomationFiring): void {

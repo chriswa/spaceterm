@@ -24,3 +24,17 @@ export const GEAR_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10
 
 /** The gear as a CSS mask image. Quoted: WebKit drops an unquoted data URL in a mask. */
 export const GEAR_MASK = `url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(GEAR_SVG)}")`
+
+/**
+ * The gear's outline alone, drawn inside its edge: the path stroked at twice the
+ * width and clipped to itself, so the line never reaches past the solid gear's
+ * silhouette and the two masks line up exactly. Includes the centre hole's rim.
+ * A disabled automation card draws this in its bright colour over a dim-filled
+ * gear.
+ */
+export const GEAR_OUTLINE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+  + `<defs><clipPath id="g"><path clip-rule="evenodd" d="${GEAR_PATH}"/></clipPath></defs>`
+  + `<path fill="none" stroke="#000" stroke-width="6" clip-path="url(#g)" d="${GEAR_PATH}"/>`
+  + '</svg>'
+
+export const GEAR_OUTLINE_MASK = `url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(GEAR_OUTLINE_SVG)}")`

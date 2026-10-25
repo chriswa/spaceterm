@@ -12,7 +12,7 @@ import { DirectoryCard } from './components/DirectoryCard'
 import { FileCard } from './components/FileCard'
 import { TitleCard } from './components/TitleCard'
 import { AutomationCard } from './components/AutomationCard'
-import { isAutomationRun, type AutomationOverlap } from '../../../shared/automation'
+import { isAutomationEnabled, isAutomationRun, type AutomationOverlap } from '../../../shared/automation'
 import { lookupIn } from '../../../shared/node-ancestry'
 import type { AddNodeType } from './components/AddNodeBody'
 import { CanvasBackground } from './components/CanvasBackground'
@@ -2042,6 +2042,10 @@ export function App() {
     sendTitleText(id, text)
   }, [])
 
+  const handleAutomationEnabledChange = useCallback((id: NodeId, enabled: boolean) => {
+    void sendAutomationUpdate(id, { enabled })
+  }, [])
+
   const handleAutomationPromptChange = useCallback((id: NodeId, prompt: string) => {
     void sendAutomationUpdate(id, { prompt })
   }, [])
@@ -2915,6 +2919,8 @@ export function App() {
             onTriggerChange={handleAutomationTriggerChange}
             prompt={a.prompt ?? ''}
             onPromptChange={handleAutomationPromptChange}
+            enabled={isAutomationEnabled(a)}
+            onEnabledChange={handleAutomationEnabledChange}
             onOverlapChange={handleAutomationOverlapChange}
             onClearQueue={handleAutomationClearQueue}
           />

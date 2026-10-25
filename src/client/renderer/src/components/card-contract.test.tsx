@@ -118,6 +118,8 @@ const CARDS: CardCase[] = [
         trigger="custom_contract"
         prompt=""
         onPromptChange={vi.fn()}
+        enabled
+        onEnabledChange={vi.fn()}
         overlap="single"
         queued={0}
         onTriggerChange={vi.fn()}

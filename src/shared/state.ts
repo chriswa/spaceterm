@@ -324,6 +324,13 @@ export interface AutomationNodeData extends BaseNodeData {
    */
   prompt?: string
   overlap: AutomationOverlap
+  /**
+   * Off means the card ignores its trigger: no cron firing, no event match, and
+   * nothing queued starts. New cards start off, so one is not fired while it is
+   * still being written. Absent on cards made before the switch existed, which
+   * were all running, so absent reads as on. Read it through `isAutomationEnabled`.
+   */
+  enabled?: boolean
   /** Firings waiting for the card's children to be archived, oldest first. */
   queue: AutomationFiring[]
   /** epoch ms an agent was last started or sent a firing. */

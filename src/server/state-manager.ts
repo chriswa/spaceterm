@@ -2023,6 +2023,7 @@ export class StateManager {
       zIndex: this.state.nextZIndex++,
       trigger: '',
       overlap: DEFAULT_AUTOMATION_OVERLAP,
+      enabled: false,
       queue: [],
       archivedChildren: [],
       colorPresetId: 'inherit'
@@ -2044,7 +2045,8 @@ export class StateManager {
     this.patchNode(node, {
       ...(patch.trigger !== undefined ? { trigger: patch.trigger } : {}),
       ...(patch.overlap !== undefined ? { overlap: patch.overlap } : {}),
-      ...(patch.prompt !== undefined ? { prompt: patch.prompt } : {})
+      ...(patch.prompt !== undefined ? { prompt: patch.prompt } : {}),
+      ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {})
     })
   }
 

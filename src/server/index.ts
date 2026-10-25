@@ -2780,7 +2780,13 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         send(client.link, { type: 'server-error', message: 'automation-update: prompt must be a string' })
         break
       }
-      stateManager.updateAutomation(msg.nodeId, { trigger: msg.trigger, overlap: msg.overlap, prompt: msg.prompt })
+      if (msg.enabled !== undefined && typeof msg.enabled !== 'boolean') {
+        send(client.link, { type: 'server-error', message: 'automation-update: enabled must be a boolean' })
+        break
+      }
+      stateManager.updateAutomation(msg.nodeId, { trigger: msg.trigger, overlap: msg.overlap, prompt: msg.prompt, enabled: msg.enabled })
+      // Switching a card back on may let its queue start.
+      if (msg.enabled === true) scheduleAutomationDrain()
       stateManager.recordInteraction(msg.nodeId, Date.now())
       send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
