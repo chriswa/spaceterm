@@ -27,14 +27,16 @@ function setup(startZ = 2) {
 afterEach(cleanup)
 
 describe('useZoomDrag', () => {
-  it('zooms out about the anchor by the distance moved, in any direction', () => {
+  it('zooms out about the anchor moving down, in moving up, and ignores sideways', () => {
     const { zoom, begin } = setup(2)
     const drag = begin(100, 100)
     drag.move({ x: 100, y: 200 })
     expect(zoom).toHaveBeenLastCalledWith({ x: 100, y: 100 }, 2 * Math.exp(-100 * ZOOM_DRAG_SENSITIVITY))
+    drag.move({ x: 100, y: 0 })
+    expect(zoom).toHaveBeenLastCalledWith({ x: 100, y: 100 }, 2 * Math.exp(100 * ZOOM_DRAG_SENSITIVITY))
+    drag.move({ x: 300, y: 0 })
+    expect(zoom).toHaveBeenLastCalledWith({ x: 100, y: 100 }, 2 * Math.exp(100 * ZOOM_DRAG_SENSITIVITY))
     drag.move({ x: 0, y: 100 })
-    expect(zoom).toHaveBeenLastCalledWith({ x: 100, y: 100 }, 2 * Math.exp(-100 * ZOOM_DRAG_SENSITIVITY))
-    drag.move({ x: 100, y: 100 })
     expect(zoom).toHaveBeenLastCalledWith({ x: 100, y: 100 }, 2)
   })
 

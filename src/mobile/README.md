@@ -47,8 +47,8 @@ Touches never reach xterm (`terminal-gesture.ts`):
 On the canvas, a long press on a card is the desktop's ⌘-click: the
 quick-actions toolbar; moving on without lifting drags the card instead.
 A long press on the bare background is the desktop's right-button drag: a
-dot marks the press, and moving the finger away from it zooms out about it
-(`useZoomDrag`), back toward it zooms back in.
+dot marks the press, and moving the finger down from it zooms out about it,
+up zooms in (`useZoomDrag`); sideways is ignored.
 The server rebuilds the bundle a couple of seconds after its sources stop
 changing (`MobileBuildKeeper` in `src/server/mobile-build.ts`) and tells the
 phone. Anything waiting — a server restart an agent flagged, a newer native

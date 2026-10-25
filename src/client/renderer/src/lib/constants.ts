@@ -80,8 +80,8 @@ export const WHEEL_ZOOM_MAX_RATE = 12
 // WHEEL_ZOOM_MAX_RATE * this (~1.8x) rather than an unbounded amount.
 export const WHEEL_ZOOM_RATE_WINDOW_MS = 50
 // Exponent factor (per pixel) for right-button drag-to-zoom. Zoom scales as
-// e^(dragPixels * ZOOM_DRAG_SENSITIVITY), so this controls how many pixels of
-// drag double the zoom: ln(2)/0.0075 ≈ 92px per 2x.
+// e^(-dragPixelsDown * ZOOM_DRAG_SENSITIVITY), so this controls how many pixels
+// of vertical drag double or halve the zoom: ln(2)/0.0075 ≈ 92px per 2x.
 export const ZOOM_DRAG_SENSITIVITY = 0.0075
 export const ZOOM_RUBBER_BAND_HIGH = 0.08
 export const ZOOM_RUBBER_BAND_LOW = 0.02

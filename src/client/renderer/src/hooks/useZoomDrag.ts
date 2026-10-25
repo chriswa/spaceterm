@@ -20,11 +20,11 @@ const ANCHOR_RADIUS_PX = 5
  * Drag-to-zoom about a fixed point: the desktop's right-button drag on the
  * background, and the phone's long press on it.
  *
- * Logarithmic, like cmd+scroll: radial distance from the anchor maps to a zoom
- * *ratio*, so equal drag distances produce equal zoom multiples regardless of
- * the current zoom. Any direction zooms out; coming back toward the anchor
- * returns to the zoom it started at. The anchor is the zoom's fixed point, so
- * it stays under where the drag began.
+ * Logarithmic, like cmd+scroll: vertical distance from the anchor maps to a
+ * zoom *ratio*, so equal drag distances produce equal zoom multiples regardless
+ * of the current zoom. Down zooms out, up zooms in, and sideways is ignored;
+ * coming back level with the anchor returns to the zoom it started at. The
+ * anchor is the zoom's fixed point, so it stays under where the drag began.
  *
  * While it runs, the overlay marks the anchor with a dot and draws a line from
  * it to the pointer — something to hold on to while everything else scales.
@@ -60,9 +60,9 @@ export function useZoomDrag(
     return {
       move(point) {
         if (ended) return
-        // Distance is always >= 0, so this only ever zooms out from startZ.
-        const dist = Math.hypot(point.x - anchor.x, point.y - anchor.y)
-        zoomRef.current(anchor, startZ * Math.exp(-dist * ZOOM_DRAG_SENSITIVITY))
+        // Screen y grows downward, so below the anchor this zooms out.
+        const down = point.y - anchor.y
+        zoomRef.current(anchor, startZ * Math.exp(-down * ZOOM_DRAG_SENSITIVITY))
         pointerRef.current = local(point)
         lineRef.current?.setAttribute('x2', String(pointerRef.current.x))
         lineRef.current?.setAttribute('y2', String(pointerRef.current.y))
