@@ -15,7 +15,13 @@ import { spawn } from 'child_process'
  */
 
 /** What the mobile bundle is built from, relative to the repo root. */
-const SOURCES = ['src/mobile', 'src/client/renderer/src', 'src/shared', 'package-lock.json']
+const SOURCES = [
+  'src/mobile', 'src/client/renderer/src', 'src/shared', 'package-lock.json',
+  // Voice Operator's SDK, which the iPhone app is built with: the bundle's `build.json` names the
+  // app version it expects (src/mobile/ios/native-version.mjs, which hashes these too), so an SDK
+  // change must rebuild the page — or the update badge stays lit after the app is updated.
+  '../voiceop/sdk/VoiceOperatorKit/Sources', '../voiceop/sdk/VoiceOperatorKit/Package.swift',
+]
 
 export interface MobileBuildDeps {
   /** Newest modification time among build inputs, in ms; 0 when none. */
