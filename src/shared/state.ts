@@ -339,6 +339,8 @@ export interface AutomationRunStats {
     costUsd: number
     /** How large the run's context was at its last status line. */
     tokens: number
+    /** When the run's process started, if known. */
+    startedAt?: number
     endedAt: number
   }
 }

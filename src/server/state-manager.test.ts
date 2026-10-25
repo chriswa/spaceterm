@@ -1747,7 +1747,8 @@ describe('automation run costs', () => {
 
     expect(sm.getNode(run.id)).toBeUndefined()
     const stats = (sm.getNode(auto.id) as typeof auto).runStats
-    expect(stats).toEqual({ runs: 1, totalCostUsd: 0.42, last: { costUsd: 0.42, tokens: 18_000, endedAt: 5_000 } })
+    expect(stats).toMatchObject({ runs: 1, totalCostUsd: 0.42, last: { costUsd: 0.42, tokens: 18_000, endedAt: 5_000 } })
+    expect(stats?.last.startedAt).toEqual(expect.any(Number))
   })
 
   it('totals runs, including one archived deep under the card', () => {

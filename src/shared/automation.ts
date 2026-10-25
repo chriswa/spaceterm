@@ -156,7 +156,7 @@ export function automationOf(lookup: NodeLookup, node: NodeData | undefined): Au
 /** `stats` with one more run added. */
 export function addRun(
   stats: AutomationRunStats | undefined,
-  run: { costUsd: number; tokens: number; endedAt: number }
+  run: AutomationRunStats['last']
 ): AutomationRunStats {
   return {
     runs: (stats?.runs ?? 0) + 1,

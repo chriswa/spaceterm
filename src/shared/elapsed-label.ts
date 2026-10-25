@@ -121,3 +121,13 @@ function fromMinutes(ms: number, minutes: number): string {
   if (hours < 24) return `${hours}h`
   return `${Math.round(ms / DAY_MS)}d`
 }
+
+/**
+ * How long something took, in one unit like {@link formatElapsedShort} but
+ * counting seconds under a minute: `59s`, then `1m`, `2h`, `3d`. A duration is
+ * read for its size, and a run that took 40 seconds is not one that took none.
+ */
+export function formatDurationShort(durationMs: number): string {
+  if (durationMs < MINUTE_MS) return `${Math.max(0, Math.floor(durationMs / SECOND_MS))}s`
+  return formatElapsedShort(durationMs)
+}

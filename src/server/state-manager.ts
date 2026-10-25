@@ -1695,10 +1695,12 @@ export class StateManager {
     if (node.type !== 'terminal' || node.automationRunSettled === node.sessionId) return
     const automation = automationOf(lookupIn(this.state.nodes), node)
     if (!automation) return
+    const startedAt = Date.parse(node.terminalSessions[node.terminalSessions.length - 1]?.startedAt ?? '')
     this.patchNode(automation, {
       runStats: addRun(automation.runStats, {
         costUsd: node.claudeCostUsd ?? 0,
         tokens: node.claudeContextTokens ?? 0,
+        ...(Number.isFinite(startedAt) ? { startedAt } : {}),
         endedAt: now
       })
     })

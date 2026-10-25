@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatCountdownClock, formatCountdownMinutes, formatElapsedShort } from './elapsed-label'
+import { formatCountdownClock, formatCountdownMinutes, formatElapsedShort, formatDurationShort } from './elapsed-label'
 
 const SECOND = 1000
 const MINUTE = 60 * SECOND
@@ -86,5 +86,14 @@ describe('formatCountdownMinutes', () => {
   it('never says 0m while the cache is still warm', () => {
     expect(formatCountdownMinutes(20 * SECOND)).toBe('1m')
     expect(formatCountdownMinutes(1)).toBe('1m')
+  })
+})
+
+describe('formatDurationShort', () => {
+  it('counts seconds under a minute, then one coarser unit', () => {
+    expect(formatDurationShort(0)).toBe('0s')
+    expect(formatDurationShort(59_900)).toBe('59s')
+    expect(formatDurationShort(60_000)).toBe('1m')
+    expect(formatDurationShort(3 * 3_600_000)).toBe('3h')
   })
 })
