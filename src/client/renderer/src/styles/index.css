@@ -2019,7 +2019,12 @@ html, body, #root {
    Out of flow and click-through, so the card is grabbed and measured as before. */
 .automation-gear-backdrop {
   position: absolute;
-  pointer-events: none;
+  /* Takes presses (see AutomationCard), within a circle as far out as the teeth
+     reach. Hit-testing honours clip-path, not mask, so without this the whole
+     square box around the gear would be grabbable. 47% is the glyph's tip
+     radius, so nothing visible is clipped. */
+  clip-path: circle(47% at 50% 50%);
+  cursor: grab;
   mask-size: 100% 100%;
   -webkit-mask-size: 100% 100%;
   mask-repeat: no-repeat;

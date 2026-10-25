@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { agentSurfaceFootprint, canFitAt, computePlacement, placeDirectlyBelow } from './node-placement'
-import { PLACEMENT_MARGIN, CARD_AGENT_MARK_HEIGHT, CARD_HAT_HEIGHT, terminalPixelSize } from '../shared/node-size'
+import { PLACEMENT_MARGIN, AUTOMATION_GEAR_REACH, CARD_AGENT_MARK_HEIGHT, CARD_HAT_HEIGHT, terminalPixelSize } from '../shared/node-size'
 import { measureCard as nodePixelSize } from '../shared/card-types'
 import { layOutNodeLabel, layOutStatusLabel } from '../shared/node-label'
 import type { NodeData, TerminalNodeData } from '../shared/state'
@@ -308,9 +308,9 @@ describe('placeDirectlyBelow', () => {
     expect(placeDirectlyBelow(automation, card).x).toBe(100)
   })
 
-  it('leaves room above the child for its agent mark and hat', () => {
+  it('leaves room above the child for its agent mark and hat, below the gear behind an automation', () => {
     const { y } = placeDirectlyBelow(automation, card)
-    const parentBottom = 200 + nodePixelSize(automation).height / 2
+    const parentBottom = 200 + Math.max(nodePixelSize(automation).height / 2, AUTOMATION_GEAR_REACH)
     const childTop = y - card.height / 2
     expect(childTop - parentBottom).toBeGreaterThan(CARD_AGENT_MARK_HEIGHT + CARD_HAT_HEIGHT)
   })

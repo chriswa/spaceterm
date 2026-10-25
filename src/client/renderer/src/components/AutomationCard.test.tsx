@@ -14,12 +14,12 @@ const overlapSelect = () => document.querySelector('.automation-card__overlap') 
 const id = asNodeId('auto-1')
 
 function renderCard(props: { trigger?: string; overlap?: AutomationOverlap; queued?: number; runStats?: AutomationRunStats } = {}) {
-  const handlers = { onTriggerChange: vi.fn(), onOverlapChange: vi.fn(), onClearQueue: vi.fn() }
+  const handlers = { onTriggerChange: vi.fn(), onOverlapChange: vi.fn(), onClearQueue: vi.fn(), onFocus: vi.fn(), onMove: vi.fn() }
   render(
     <AutomationCard
       id={id} x={0} y={0} zIndex={1} zoom={1} focused selected={false} archivedChildren={[]}
       trigger={props.trigger ?? ''} overlap={props.overlap ?? 'single'} queued={props.queued ?? 0} runStats={props.runStats}
-      onFocus={vi.fn()} onClose={vi.fn()} onMove={vi.fn()} onColorChange={vi.fn()} onOpenArchiveSearch={vi.fn()}
+      onClose={vi.fn()} onColorChange={vi.fn()} onOpenArchiveSearch={vi.fn()}
       cameraRef={{ current: { x: 0, y: 0, z: 1 } }}
       {...handlers}
     />
@@ -112,5 +112,18 @@ describe('AutomationCard', () => {
   it('hides the queue for a mode that never queues and has nothing waiting', () => {
     renderCard({ overlap: 'parallel', queued: 0 })
     expect(screen.queryByText(/queued/)).toBeNull()
+  })
+
+  it('focuses the card from a click on the gear behind it, and drags it from there', () => {
+    const { onFocus, onMove } = renderCard()
+    const gear = document.querySelector('.automation-gear-backdrop') as HTMLElement
+    fireEvent.mouseDown(gear, { clientX: 0, clientY: 0 })
+    fireEvent.mouseUp(window)
+    expect(onFocus).toHaveBeenCalledWith(id)
+
+    fireEvent.mouseDown(gear, { clientX: 0, clientY: 0 })
+    fireEvent.mouseMove(window, { clientX: 40, clientY: 30 })
+    fireEvent.mouseUp(window)
+    expect(onMove).toHaveBeenCalledWith(id, 40, 30, false, false)
   })
 })

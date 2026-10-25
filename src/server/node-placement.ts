@@ -8,7 +8,8 @@ import {
   DEFAULT_COLS,
   DEFAULT_ROWS,
   CARD_AGENT_MARK_HEIGHT,
-  CARD_HAT_HEIGHT
+  CARD_HAT_HEIGHT,
+  AUTOMATION_GEAR_REACH
 } from '../shared/node-size'
 
 // --- Geometry types ---
@@ -164,10 +165,14 @@ const BELOW_GAP = 20
  * at a time, where that spot is the child's.
  */
 export function placeDirectlyBelow(parent: NodeData, child: { height: number }): { x: number; y: number } {
-  const parentHeight = nodePixelSize(parent).height
+  // An automation card's gear reaches well past its body; clear the teeth, or
+  // the run sits under a gear that takes the presses meant for it.
+  const parentReach = parent.type === 'automation'
+    ? Math.max(AUTOMATION_GEAR_REACH, nodePixelSize(parent).height / 2)
+    : nodePixelSize(parent).height / 2
   return {
     x: parent.x,
-    y: parent.y + parentHeight / 2 + BELOW_GAP + CARD_AGENT_MARK_HEIGHT + CARD_HAT_HEIGHT + child.height / 2
+    y: parent.y + parentReach + BELOW_GAP + CARD_AGENT_MARK_HEIGHT + CARD_HAT_HEIGHT + child.height / 2
   }
 }
 

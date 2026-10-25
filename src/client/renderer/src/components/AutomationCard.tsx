@@ -242,7 +242,9 @@ export function AutomationCard({
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}
       // A sibling of the card element, so it is given the colour directly: the
       // card's custom property does not reach it.
-      behindContent={<div className="automation-gear-backdrop" style={{ ...GEAR_BACKDROP_STYLE, backgroundColor: fg }} aria-hidden="true" />}
+      // The gear drags and focuses the card like its body does: it reads as
+      // part of the card, so a press on it should act like one.
+      behindContent={<div className="automation-gear-backdrop" style={{ ...GEAR_BACKDROP_STYLE, backgroundColor: fg }} aria-hidden="true" onMouseDown={handleMouseDown} />}
     >
       <div className="automation-card__body">
         <div className="automation-card__row">
