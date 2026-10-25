@@ -21,6 +21,7 @@ function harness(title = 'Fix the parser', extra: NodeData[] = []) {
   const node = terminal(NODE, title)
   const nodes = new Map<string, NodeData>([[NODE, node], ...extra.map((n) => [n.id, n] as const)])
   let enabled = true
+  let exempt = false
   const prompts: string[] = []
   const replies: Array<(r: AutoStampReply | Error) => void> = []
   const timers: Array<{ fn: () => void; cancelled: boolean }> = []
@@ -34,6 +35,7 @@ function harness(title = 'Fix the parser', extra: NodeData[] = []) {
     getNode: (id) => nodes.get(id),
     getNodes: () => [...nodes.values()],
     isEnabled: () => enabled,
+    isExempt: () => exempt,
     setAutoStamp: (id, autoStamp: AutoStamp) => { nodes.get(id)!.autoStamp = autoStamp },
     schedule: (fn) => {
       const timer = { fn, cancelled: false }
@@ -45,6 +47,7 @@ function harness(title = 'Fix the parser', extra: NodeData[] = []) {
   return {
     node, nodes, stamper, prompts,
     setEnabled(value: boolean) { enabled = value },
+    setExempt(value: boolean) { exempt = value },
     setTitle(t: string) { (node as { shellTitleHistory: string[] }).shellTitleHistory = [t]; stamper.titleMaybeChanged(NODE) },
     /** Fire every live settle timer. */
     settle() { for (const t of timers.splice(0)) if (!t.cancelled) t.fn() },
@@ -88,6 +91,17 @@ describe('parseAutoStampReply', () => {
 })
 
 describe('AutoStamper', () => {
+  it('never draws for an exempt surface, an automation run', () => {
+    const h = harness()
+    h.setExempt(true)
+    h.setTitle('Fix the parser')
+    h.settle()
+    h.stamper.resume()
+    h.stamper.regenerate(NODE)
+    h.settle()
+    expect(h.prompts).toEqual([])
+  })
+
   it('draws a new title once it has settled', async () => {
     const h = harness()
     h.setTitle('Fix the lexer')

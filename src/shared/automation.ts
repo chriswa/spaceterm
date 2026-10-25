@@ -1,4 +1,6 @@
 import { Cron } from 'croner'
+import { ancestorsOf, type NodeLookup } from './node-ancestry'
+import type { NodeData } from './state'
 
 /**
  * Automation cards: a trigger that starts a Claude surface beneath the card.
@@ -128,4 +130,20 @@ export function triggerLine(firing: AutomationFiring): string {
   const times = count === 1 ? 'once' : `${count} times`
   return `${base} (late: it was due at ${formatLocalTime(firstDueAt)}` +
     `${count > 1 ? ` and missed ${times}` : ''} while Spaceterm was not running, so it ran as soon as possible)`
+}
+
+/**
+ * Whether a node is an automation's run: a terminal with an automation card
+ * anywhere above it.
+ *
+ * Runs are many, short-lived and unattended, so they skip what a hand-started
+ * surface gets for being looked at: no generated icon (a gear stands in), no
+ * title caption above the card, and no cache or idle caption below it.
+ */
+export function isAutomationRun(lookup: NodeLookup, node: NodeData | undefined): boolean {
+  if (node?.type !== 'terminal') return false
+  for (const ancestor of ancestorsOf(lookup, node.id)) {
+    if (ancestor.type === 'automation') return true
+  }
+  return false
 }

@@ -72,6 +72,9 @@ describeE2E('automation cards', () => {
     expect(await fire(launched.home, 'custom_e2e_reuse', { n: 1 })).toEqual(expect.objectContaining({ matched: 1 }))
     expect((await automationNode(launched, id)).lastFiredAt).toEqual(expect.any(Number))
 
+    // The child is a run: a gear in place of a generated icon.
+    await launched.window.waitForSelector('[aria-label="Started by an automation"]', { timeout: 30_000 })
+
     expect(await fire(launched.home, 'custom_e2e_typo')).toEqual(expect.objectContaining({ matched: 0 }))
     expect((await fire(launched.home, 'no_prefix')).error).toContain('custom_')
   })

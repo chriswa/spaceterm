@@ -10,7 +10,8 @@ import type { AutoStamp, NodeData } from '../shared/state'
  * one-sentence descriptions, never the SVGs, which keeps the request small and
  * stops it iterating on a shape it already committed to.
  *
- * Every terminal surface gets one while generation is turned on.
+ * Every terminal surface gets one while generation is turned on, except an
+ * automation's runs, which are too many and too short-lived to be worth one.
  */
 
 /** How long a title has to hold still before it is drawn. Agent titles churn while a turn starts. */
@@ -39,6 +40,8 @@ export interface AutoStamperDeps {
   getNodes(): NodeData[]
   /** The shared on/off setting. Off means nothing new is drawn. */
   isEnabled(): boolean
+  /** Surfaces that never get an icon, whatever the setting: automation runs. */
+  isExempt(node: NodeData): boolean
   setAutoStamp(nodeId: NodeId, autoStamp: AutoStamp): void
   /** Run `fn` after `ms`. Returns a cancel function. */
   schedule(fn: () => void, ms: number): () => void
@@ -99,7 +102,7 @@ export class AutoStamper {
   constructor(private readonly deps: AutoStamperDeps) {}
 
   private eligible(node: NodeData | undefined): node is NodeData {
-    return node?.type === 'terminal' && !node.ephemeral && this.deps.isEnabled()
+    return node?.type === 'terminal' && !node.ephemeral && this.deps.isEnabled() && !this.deps.isExempt(node)
   }
 
   /**

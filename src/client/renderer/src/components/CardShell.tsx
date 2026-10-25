@@ -14,6 +14,8 @@ import { nodeActionRegistry } from '../lib/action-registry'
 import { hasLiveChildren } from '../lib/tree-utils'
 import { cardChromeScale, ROOT_CHROME_SCALE } from '../../../../shared/card-types'
 import { useNodeStore } from '../stores/nodeStore'
+import { isAutomationRun } from '../../../../shared/automation'
+import { lookupIn } from '../../../../shared/node-ancestry'
 import { useDimStaleStore } from '../stores/dimStaleStore'
 import { staleFilter } from '../lib/dim-stale'
 import type { NodeAlert } from '../../../../shared/state'
@@ -100,6 +102,7 @@ export function CardShell({
 
   const stampValue = useNodeStore(s => s.nodes[nodeId]?.stamp)
   const autoStamp = useNodeStore(s => s.nodes[nodeId]?.autoStamp)
+  const automationRun = useNodeStore(s => isAutomationRun(lookupIn(s.nodes), s.nodes[nodeId]))
   const regenerateAutoStamp = useCallback(() => { void sendRegenerateAutoStamp(nodeId) }, [nodeId])
 
   // Alert badge (visible when unfocused)
@@ -278,6 +281,7 @@ export function CardShell({
       <StampMark
         stamp={stampValue}
         autoStamp={autoStamp}
+        automationRun={automationRun}
         // The label's colour, so the icon reads as part of the node's name.
         autoStampColor={(preset ?? DEFAULT_PRESET).titleBarBg}
         onRegenerateAutoStamp={regenerateAutoStamp}

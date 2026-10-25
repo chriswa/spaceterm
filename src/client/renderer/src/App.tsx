@@ -12,7 +12,8 @@ import { DirectoryCard } from './components/DirectoryCard'
 import { FileCard } from './components/FileCard'
 import { TitleCard } from './components/TitleCard'
 import { AutomationCard } from './components/AutomationCard'
-import type { AutomationOverlap } from '../../../shared/automation'
+import { isAutomationRun, type AutomationOverlap } from '../../../shared/automation'
+import { lookupIn } from '../../../shared/node-ancestry'
 import type { AddNodeType } from './components/AddNodeBody'
 import { CanvasBackground } from './components/CanvasBackground'
 import type { TreeLineNode, MaskRect, ReparentEdge } from './components/CanvasBackground'
@@ -306,7 +307,10 @@ export function App() {
    */
   const nameLabels = useMemo(() => {
     const laidOut: NodeLabel[] = []
+    const lookup = lookupIn(nodes)
     for (const node of nodeList) {
+      // An automation's runs go uncaptioned: they are many, and the card above says what they are.
+      if (isAutomationRun(lookup, node)) continue
       // File-backed markdown keeps its text in the store's fileContents, not on
       // the node — the same substitution the card itself makes.
       const content = node.type === 'markdown' && node.fileBacked ? (fileContents[node.id] ?? '') : undefined
@@ -314,7 +318,7 @@ export function App() {
       if (label) laidOut.push(label)
     }
     return laidOut
-  }, [nodeList, fileContents])
+  }, [nodeList, nodes, fileContents])
 
   /**
    * Status captions under the agent cards — a prompt-cache countdown while one
@@ -327,12 +331,14 @@ export function App() {
    */
   const statusLabels = useMemo(() => {
     const laidOut: NodeLabel[] = []
+    const lookup = lookupIn(nodes)
     for (const node of nodeList) {
+      if (isAutomationRun(lookup, node)) continue
       const label = layOutStatusLabel(node, coarseNow)
       if (label) laidOut.push(label)
     }
     return laidOut
-  }, [nodeList, coarseNow])
+  }, [nodeList, nodes, coarseNow])
 
   /**
    * The root node's working directory, captioned under the disc while the root

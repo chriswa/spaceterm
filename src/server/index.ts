@@ -34,7 +34,7 @@ import { serverLog, serverLogSync, sanitizeForLog } from './server-log'
 import { MobileEventsLog } from './mobile-events'
 import { expandTilde } from './cwd'
 import { AutomationRunner, fileHeartbeat } from './automation-runner'
-import { isAutomationOverlap } from '../shared/automation'
+import { isAutomationOverlap, isAutomationRun } from '../shared/automation'
 import { DaemonClient } from './daemon-client'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
@@ -3677,6 +3677,7 @@ async function startServer(): Promise<void> {
     getNode: (nodeId) => stateManager.getNode(nodeId),
     getNodes: () => stateManager.getNodes(),
     isEnabled: () => stateManager.getAutoStampsEnabled(),
+    isExempt: (node) => isAutomationRun((id) => stateManager.getNode(id), node),
     setAutoStamp: (nodeId, autoStamp) => stateManager.setNodeAutoStamp(nodeId, autoStamp),
     schedule(fn, ms) {
       const timer = setTimeout(fn, ms)
