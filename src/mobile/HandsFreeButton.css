@@ -25,24 +25,6 @@
 .m-hands-free__threshold line { stroke: #e11d48; stroke-width: 2; }
 /* Over the gauges, which are positioned and would otherwise cover it. */
 .m-hands-free__icon { position: relative; }
-/* Hands-free's microphone link's rate in kHz, at the top right (HandsFreeButton.tsx): 24, or 48. */
-.m-hands-free__rate {
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  min-width: 16px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: 7px;
-  background: var(--m-surface);
-  color: var(--m-text);
-  box-shadow: 0 0 0 1.5px var(--m-raised);
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 14px;
-  text-align: center;
-  pointer-events: none;
-}
 .m-hands-free.m-hands-free--preparing {
   background: #000;
   color: #fff;
@@ -50,7 +32,7 @@
 }
 .m-hands-free.m-hands-free--held { background: #fff; color: #11111b; }
 /* The conversation window (HandsFreeButton.tsx): no "Control" needed until
-   this blue ring has drained. It moves a second at a time; the transition
+   this deep blue ring has drained. It moves a second at a time; the transition
    makes that a steady drain. All of hands-free shows on this button, on the
    phone and the Mac alike. */
 .m-hands-free__ring {
@@ -63,7 +45,8 @@
 }
 .m-hands-free__ring circle {
   fill: none;
-  stroke: #89b4fa;
+  /* A deep blue: the pale one vanished against the held button's white. */
+  stroke: #1e66f5;
   stroke-width: 3;
   stroke-linecap: round;
   transition: stroke-dashoffset 1s linear;

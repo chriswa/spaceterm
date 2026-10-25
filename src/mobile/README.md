@@ -302,16 +302,17 @@ The app's audio session is changed on its own queue, never the main thread:
 activating it blocks for a second or two while AirPods change profile, and
 on the main thread that froze the screen after every dictation.
 
-Hands-free on headphones that comes up at more than 24 kHz anyway asks, on
-the active session, for iOS 26's AirPods high-quality recording
-(`bluetoothHighQualityRecording`): iOS sometimes brings the AirPods'
-microphone link up at 48 kHz on its own, and there it sent only exact zeros
-unless this had been asked for, while every 48 kHz start that asked for it
-heard. At 24 kHz nothing changes: that link heard every time, and was the
-one of hands-free's best session so far. A dictation does not ask,
-as it may add input latency. (A dictation asked for it on October 12; then
-hands-free with voice processing following one of its dictations came up
-dead.) `native-mic-running`'s `highQuality` says whether it took.
+Hands-free never runs on the AirPods' 48 kHz microphone link: it knocks out
+Spotify, which hands-free plays under, and comes up on its own often. A
+hands-free start that comes up at 48 kHz is activated again at once, up to
+three times; still at 48 kHz, it is refused and tried again after 0.5, 1, 2,
+4, then every 8 s until it gets 24 kHz, which has heard every time (Voice
+Operator's SDK, `VoiceAudioEngine.swift`). Each try is in the record as
+`native-mic-rate`, with the rate either side and whether other audio was
+playing, to find what leaves Spotify paused. A dictation takes 48 kHz,
+asking for iOS 26's AirPods high-quality recording
+(`bluetoothHighQualityRecording`): without it that link sent only exact
+zeros, every time. `native-mic-running`'s `highQuality` says whether it took.
 
 The app's audio session is changed on its own queue, never the main thread:
 activating it blocks for a second or two while AirPods change profile, and
@@ -502,7 +503,7 @@ Spaceterm is its client (`hands-free.ts`):
   all of it on the hands-free button, the same on the phone and the Mac
   (the microphone button only turns orange while your words are taken
   down): a thick dark ring while speech is checked for "Control"; the
-  conversation window as a blue ring, draining as its quiet runs out; and
+  conversation window as a deep blue ring, draining as its quiet runs out; and
   while a dictation runs, the button's two halves — **left, green**, Smart Turn's latest
   answer, with a **red line** at the threshold while it is being asked;
   **right, magenta**, the quiet since you last spoke, ending it at the top.

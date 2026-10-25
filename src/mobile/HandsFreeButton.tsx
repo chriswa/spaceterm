@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { holdState, onHoldStateChange, setHoldMicrophone, type HoldState } from './held-microphone'
-import { nativeMicrophoneAvailable, onNativeSampleRate } from './native-microphone'
+import { nativeMicrophoneAvailable } from './native-microphone'
 import { endSilence, setHandsFree, useHandsFree } from './hands-free'
 import { Spark } from './Spark'
 import { conversationLeft } from './mic-button'
@@ -11,13 +11,6 @@ export function useHoldState(): HoldState {
   const [hold, setHold] = useState(holdState)
   useEffect(() => onHoldStateChange(setHold), [])
   return hold
-}
-
-/** The app's microphone link's rate, in Hz, as it changes; undefined while it does not run. */
-function useNativeSampleRate(): number | undefined {
-  const [rate, setRate] = useState<number | undefined>(undefined)
-  useEffect(() => onNativeSampleRate(setRate), [])
-  return rate
 }
 
 /** Fill an end gauge `fill` (0..1) of the way up, from the bottom. */
@@ -64,9 +57,6 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
   const app = nativeMicrophoneAvailable()
   /** Holding is hands-free mode: in the app, and on the Mac. */
   const handsFree = app || desktop
-  // While hands-free holds the app's microphone: its link's rate in kHz, 24 or 48 on AirPods. Shown only.
-  const rate = useNativeSampleRate()
-  const badge = app && hold === 'held' && rate ? String(Math.round(rate / 1000)) : null
   const phase = useHandsFree((s) => s.phase)
   const conversation = useHandsFree((s) => s.conversation)
   const secondsLeft = useHandsFree((s) => s.secondsLeft)
@@ -141,7 +131,6 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
         </>
       )}
       <HandsFreeIcon />
-      {badge && <span className="m-hands-free__rate" title={`Microphone at ${badge} kHz`} aria-hidden="true">{badge}</span>}
     </button>
   )
 }
