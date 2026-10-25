@@ -182,12 +182,17 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
         quiet = { since: null, patienceMs: null }
         closesAt = null
         useHandsFree.setState({ phase: 'off', conversation: false, secondsLeft: null, checking: false, turn: null, sampling: null })
-        // Ended from the other side — turned on on another device (`replaced`), lost, incognito:
-        // off here too, so the button does not say it is listening when nothing is.
+        // Voice Operator restarting, or its connection gone: still on, waiting
+        // ("getting ready") — it is started again as soon as Voice Operator is back.
+        if (why === 'restarting' || why === 'disconnected') break
+        // Ended from the other side — "let me turn this off", turned on on another
+        // device, lost, incognito: off here too, so the button does not say it is
+        // listening when nothing is.
         if (why !== 'off' && useHandsFree.getState().on) {
           useHandsFree.setState({ on: false })
           deps.link.stop()
-          if (why !== 'disconnected' && why !== 'replaced') deps.playCue('error')
+          // Said by voice, it has its own cue already; on another device is the user's doing.
+          if (why !== 'shutdown' && why !== 'replaced') deps.playCue('error')
         }
         break
       }

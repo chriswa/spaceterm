@@ -389,8 +389,6 @@ conversation window, or a composer's dictation:
 | grey | the microphone is closed |
 | outlined, a gold spark running round | hands-free is on, waiting for the microphone (the hands-free button shows the spark too) |
 | white, lock badge, thin white ring | hands-free holds it, streaming to Voice Operator, which listens for "Control" |
-| white, thick bright ring | hands-free heard speech and is asking the Mac whether it was for Control |
-| blue ring, draining | the conversation window: just talk. The ring is the quiet left before "Control" is needed again |
 | dark, a gold spark running round the rim | a tap was taken and the microphone is starting — AirPods playing music take seconds to switch. Don't talk yet |
 | dark, amber icon and spark | it did not start; trying once more by itself (the app's microphone needs no second tap) |
 | solid orange, level bars | your voice is leaving the phone, whatever started it — the bars are its level (`mic-level.ts`, fed by each dictation). Only once sound is really arriving |
@@ -497,10 +495,12 @@ Spaceterm is its client (`hands-free.ts`):
   it. The hold (`held-microphone.ts`) is the switch, as before; the stream
   follows it. In a browser there is no SDK, so the hold is only a held
   microphone for AirPods.
-- **What it shows** comes from Voice Operator's messages, animated here: the
-  phase (the microphone button's orange), the conversation window (the blue
-  ring, draining as its quiet runs out), and while a dictation runs, the
-  hands-free button's two halves — **left, green**, Smart Turn's latest
+- **What it shows** comes from Voice Operator's messages, animated here, and
+  all of it on the hands-free button, the same on the phone and the Mac
+  (the microphone button only turns orange while your words are taken
+  down): a thick dark ring while speech is checked for "Control"; the
+  conversation window as a blue ring, draining as its quiet runs out; and
+  while a dictation runs, the button's two halves — **left, green**, Smart Turn's latest
   answer, with a **red line** at the threshold while it is being asked;
   **right, magenta**, the quiet since you last spoke, ending it at the top.
   Both hold while what you said is sent, so you can see which ended it.
@@ -519,10 +519,12 @@ Spaceterm is its client (`hands-free.ts`):
   down at once; once Voice Operator says it was for Control, it is cut off
   (`cut-in`), counted to when you began talking. If nothing is caught after
   "Control", Control says it had not finished and carries on.
-- **"Let me turn this off"** — or "Control, shutdown" — sends Control away at
-  once, for when someone in the room needs you: Voice Operator closes the
-  window and the server takes it as Away (`src/shared/control-shutdown.ts`).
-  The hold stays on, and the next "Control" brings it back.
+- **"Let me turn this off"** — or "Control, shutdown" — turns hands-free off
+  by voice, for when someone in the room needs you: Voice Operator ends the
+  session (the button goes off, and on the phone the hold with it) and the
+  server takes the words as Away (`src/shared/control-shutdown.ts`).
+- **Voice Operator restarting** leaves hands-free on, getting ready (the
+  spark), and it starts again by itself once Voice Operator is back.
 - **Why it did or did not trigger** is Voice Operator's record now:
   `~/Library/Application Support/VoiceOperator/hands-free/decisions.jsonl`
   and its `clips/`, with what Apple's model heard and every Smart Turn answer.

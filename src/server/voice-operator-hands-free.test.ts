@@ -68,6 +68,27 @@ describe('VoiceOperatorHandsFree', () => {
     expect(vo.connections[1].written.at(-1)).toEqual({ type: 'stop' })
   })
 
+  it('starts the Mac again when Voice Operator comes back from a restart, but not after the user turned it off', () => {
+    const vo = fakeVoiceOperator()
+    const link = new VoiceOperatorHandsFree(vo.deps, () => {}, true)
+    link.check()
+    vo.connections[0].say({ type: 'welcome', protocol: 1 })
+    link.setMac(true)
+    vo.connections[0].say({ type: 'session-ended', why: 'restarting' })
+    vo.connections[0].drop()
+    vo.restart(43)
+    link.check()
+    vo.connections[1].say({ type: 'welcome', protocol: 1 })
+    expect(vo.connections[1].written.at(-1)).toEqual({ type: 'start', source: 'mac' })
+    // Said by voice: off for good.
+    vo.connections[1].say({ type: 'session-ended', why: 'shutdown' })
+    vo.connections[1].drop()
+    vo.restart(44)
+    link.check()
+    vo.connections[2].say({ type: 'welcome', protocol: 1 })
+    expect(vo.connections[2].written).toEqual([{ type: 'hello', protocol: 1, client: 'spaceterm', trigger: 'control' }])
+  })
+
   it('opens a phone\'s stream as a connection of its own', () => {
     const vo = fakeVoiceOperator()
     const link = new VoiceOperatorHandsFree(vo.deps, () => {}, true)

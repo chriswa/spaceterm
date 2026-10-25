@@ -49,3 +49,24 @@
   box-shadow: inset 0 0 0 2px #fff;
 }
 .m-hands-free.m-hands-free--held { background: #fff; color: #11111b; }
+/* The conversation window (HandsFreeButton.tsx): no "Control" needed until
+   this blue ring has drained. It moves a second at a time; the transition
+   makes that a steady drain. All of hands-free shows on this button, on the
+   phone and the Mac alike. */
+.m-hands-free__ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+  pointer-events: none;
+}
+.m-hands-free__ring circle {
+  fill: none;
+  stroke: #89b4fa;
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 1s linear;
+}
+/* Speech heard, and being checked for "Control": the ring thick and dark. */
+.m-hands-free.m-hands-free--checking { box-shadow: inset 0 0 0 3.5px #11111b; }

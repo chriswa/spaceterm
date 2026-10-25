@@ -149,6 +149,26 @@ describe('hands-free, following Voice Operator', () => {
     expect(h.calls).toEqual(['start', 'stop'])
   })
 
+  it('turns off when ended by voice, with no error on top of its own cue', () => {
+    h = harness()
+    setHandsFree(true)
+    h.vo({ type: 'cue', name: 'shutdown' })
+    h.vo({ type: 'session-ended', why: 'shutdown' })
+    expect(useHandsFree.getState().on).toBe(false)
+    expect(h.tones).toEqual(['controlShutdown'])
+    expect(h.cues).toEqual([])
+  })
+
+  it('stays on, getting ready, while Voice Operator restarts', () => {
+    h = harness()
+    setHandsFree(true)
+    h.state('listening')
+    h.vo({ type: 'session-ended', why: 'restarting' })
+    expect(useHandsFree.getState()).toMatchObject({ on: true, phase: 'off' })
+    expect(h.calls).toEqual(['start'])
+    expect(h.cues).toEqual([])
+  })
+
   it('goes off quietly when hands-free was turned on on another device', () => {
     h = harness()
     setHandsFree(true)

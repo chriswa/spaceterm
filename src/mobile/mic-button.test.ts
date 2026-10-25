@@ -3,7 +3,7 @@ import { conversationLeft, micLook, type MicInputs } from './mic-button'
 
 const QUIET: MicInputs = {
   error: false, own: 'idle', composer: 'idle', capturing: false, transcribing: false,
-  hold: 'off', handsFree: 'off', conversation: false, checking: false,
+  hold: 'off', handsFree: 'off',
 }
 
 describe('what the microphone looks like', () => {
@@ -11,9 +11,6 @@ describe('what the microphone looks like', () => {
     expect(micLook(QUIET)).toBe('off')
     expect(micLook({ ...QUIET, hold: 'preparing' })).toBe('preparing')
     expect(micLook({ ...QUIET, hold: 'held', handsFree: 'listening' })).toBe('armed')
-    expect(micLook({ ...QUIET, hold: 'held', handsFree: 'listening', conversation: true })).toBe('conversation')
-    // Speech heard, its check under way: neither the armed look nor yet orange.
-    expect(micLook({ ...QUIET, hold: 'held', handsFree: 'listening', checking: true })).toBe('checking')
   })
 
   it('is not orange until sound arrives: a tap first shows the microphone connecting, then retrying', () => {
@@ -28,7 +25,7 @@ describe('what the microphone looks like', () => {
       { own: 'listening' },
       { composer: 'listening' },
       { capturing: true },
-      { hold: 'held', handsFree: 'hearing', conversation: true },
+      { hold: 'held', handsFree: 'hearing' },
     ]
     for (const source of sources) expect(micLook({ ...QUIET, ...source })).toBe('hearing')
   })

@@ -3,6 +3,7 @@ import { holdState, onHoldStateChange, setHoldMicrophone, type HoldState } from 
 import { nativeMicrophoneAvailable, onNativeSampleRate } from './native-microphone'
 import { endSilence, setHandsFree, useHandsFree } from './hands-free'
 import { Spark } from './Spark'
+import { conversationLeft } from './mic-button'
 import './HandsFreeButton.css'
 
 /** Whether the microphone is held open (held-microphone.ts), as it changes. */
@@ -67,10 +68,18 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
   const rate = useNativeSampleRate()
   const badge = app && hold === 'held' && rate ? String(Math.round(rate / 1000)) : null
   const phase = useHandsFree((s) => s.phase)
+  const conversation = useHandsFree((s) => s.conversation)
+  const secondsLeft = useHandsFree((s) => s.secondsLeft)
+  const checking = useHandsFree((s) => s.checking)
   const turn = useHandsFree((s) => s.turn)
   const sampling = useHandsFree((s) => s.sampling)
   const line = sampling === null ? null : thresholdLine(sampling)
   const ending = phase === 'hearing' || phase === 'sending'
+  /** The conversation window's length: `secondsLeft` at its fullest, which it is when it opens. */
+  const fullest = useRef(0)
+  if (!conversation) fullest.current = 0
+  else if (secondsLeft !== null) fullest.current = Math.max(fullest.current, secondsLeft)
+  const windowOpen = on && conversation && !ending
 
   // The quiet gauge, moved once a frame from the endpointer — not through React.
   const quietRef = useRef<SVGSVGElement>(null)
@@ -84,11 +93,14 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
   }, [ending])
 
   const label = unavailable ?? (on
-    ? `${hold === 'preparing' ? 'Getting the microphone ready' : handsFree ? 'Hands-free: always listening for "Control"' : 'Microphone held open'} — ${chrome === 'toolbar' ? 'click' : 'tap'} to stop`
+    ? `${hold === 'preparing' ? 'Getting the microphone ready'
+      : checking && !ending ? 'Hands-free: heard something — checking whether it was for Control'
+      : windowOpen ? `Hands-free, in conversation with Control: just talk, no need to say "Control"${secondsLeft !== null ? ` — ${secondsLeft} seconds of quiet left` : ''}`
+      : handsFree ? 'Hands-free: always listening for "Control"' : 'Microphone held open'} — ${chrome === 'toolbar' ? 'click' : 'tap'} to stop`
     : handsFree ? 'Hands-free: always listen for "Control"' : 'Hold the microphone open with AirPods')
   return (
     <button
-      className={`${chrome === 'toolbar' ? 'toolbar__btn toolbar__hands-free' : 'm-bar__button'} m-hands-free m-hands-free--${hold}`}
+      className={`${chrome === 'toolbar' ? 'toolbar__btn toolbar__hands-free' : 'm-bar__button'} m-hands-free m-hands-free--${hold}${checking && on && !ending ? ' m-hands-free--checking' : ''}`}
       aria-label={label}
       aria-pressed={on}
       // aria-disabled rather than disabled, so the tooltip giving the reason still shows on hover.
@@ -103,6 +115,13 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
     >
       {/* Turned on, the microphone not held yet: a spark round the rim until it is. */}
       {hold === 'preparing' && <Spark />}
+      {windowOpen && (
+        // The conversation window: no "Control" needed until this ring has drained.
+        <svg className="m-hands-free__ring" viewBox="0 0 42 42" aria-hidden="true">
+          <circle cx="21" cy="21" r="19.5" pathLength="100" strokeDasharray="100"
+            strokeDashoffset={100 * (1 - conversationLeft(secondsLeft, fullest.current))} />
+        </svg>
+      )}
       {ending && (
         <>
           <svg className="m-hands-free__gauge m-hands-free__gauge--turn" viewBox="0 0 42 42" aria-hidden="true"

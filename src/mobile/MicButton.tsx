@@ -13,7 +13,7 @@ import { useHoldState } from './HandsFreeButton'
 import { useHandsFree, type HandsFreePhase } from './hands-free'
 import { nativeMicrophoneAvailable } from './native-microphone'
 import { micLevel } from './mic-level'
-import { conversationLeft, micLook, type MicInputs, type MicLook } from './mic-button'
+import { micLook, type MicInputs, type MicLook } from './mic-button'
 import { outputKind, useAudioOutput, type OutputKind } from './audio-output'
 
 /**
@@ -37,9 +37,6 @@ import { outputKind, useAudioOutput, type OutputKind } from './audio-output'
 
 /** How long a failure stays on the button, red, unless a tap tries again first. */
 const ERROR_SHOWN_MS = 8000
-/** The conversation window's ring: its radius in a 52-unit box, inside the button's edge. */
-const RING_R = 24
-
 type Mic = { kind: 'idle' } | { kind: 'starting' } | { kind: 'retrying' } | { kind: 'listening'; dictation: Dictation } | { kind: 'sending' }
 
 export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void }) {
@@ -50,14 +47,11 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
 
   const hold = useHoldState()
   const handsFree = useHandsFree((s) => s.phase)
-  const conversation = useHandsFree((s) => s.conversation)
-  const secondsLeft = useHandsFree((s) => s.secondsLeft)
   const capturing = useMicActivity((s) => s.capturing > 0)
   const transcribing = useMicActivity((s) => s.transcribing > 0)
   const composer = useDictationSession((s) => s.mic.kind)
-  const checking = useHandsFree((s) => s.checking)
   const output = useAudioOutput()
-  const look = micLook({ error: error !== null, own: mic.kind, composer, capturing, transcribing, hold, handsFree, conversation, checking })
+  const look = micLook({ error: error !== null, own: mic.kind, composer, capturing, transcribing, hold, handsFree })
 
   // Never leave the microphone open behind a button that has gone.
   const micRef = useRef(mic)
@@ -75,11 +69,6 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
     const timer = setTimeout(() => setError(null), ERROR_SHOWN_MS)
     return () => clearTimeout(timer)
   }, [error])
-
-  /** The conversation window's length: `secondsLeft` at its fullest, which it is when it opens. */
-  const fullest = useRef(0)
-  if (!conversation) fullest.current = 0
-  else if (secondsLeft !== null) fullest.current = Math.max(fullest.current, secondsLeft)
 
   // The level bars, moved once a frame from the voice going out — not through
   // React, which would redraw the bar for every block of audio.
@@ -187,7 +176,7 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
 
   const handsFreeOn = hold !== 'off'
   const label = micLabel({
-    look, own: mic.kind, composer, handsFree, secondsLeft,
+    look, own: mic.kind, composer, handsFree,
     tap: reopens ? 'Still dictating — tap to open the composer and stop or ship it'
       : elsewhere ? 'Still dictating — open a composer to stop or ship it'
       : answering ? 'Cut Control off and talk'
@@ -207,13 +196,6 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
         aria-disabled={mic.kind === 'sending'}
         onClick={onTap}
       >
-        {look === 'conversation' && (
-          // The conversation window's quiet running out, as a ring that drains.
-          <svg className="m-mic__ring" viewBox="0 0 52 52" aria-hidden="true">
-            <circle cx="26" cy="26" r={RING_R} pathLength="100" strokeDasharray="100"
-              strokeDashoffset={100 * (1 - conversationLeft(secondsLeft, fullest.current))} />
-          </svg>
-        )}
         {/* Waiting on what a press, or the hold, asked for: a spark round the rim. */}
         {(look === 'connecting' || look === 'preparing') && <Spark />}
         {look === 'retrying' && <Spark tone="amber" />}
@@ -235,18 +217,16 @@ export function MicButton({ onReopenComposer }: { onReopenComposer?: () => void 
 }
 
 /** What the button is doing, then what a tap does, when it says something. */
-function micLabel({ look, own, composer, handsFree, secondsLeft, tap }: {
+function micLabel({ look, own, composer, handsFree, tap }: {
   look: MicLook
   own: Mic['kind']
   composer: MicInputs['composer']
   handsFree: HandsFreePhase
-  secondsLeft: number | null
   tap: string
 }): string {
   switch (look) {
     case 'connecting': return 'Starting the microphone — wait for orange to talk; tap to give up'
     case 'retrying': return 'The microphone did not start; trying once more — tap to give up'
-    case 'checking': return `Heard something — checking whether it was for Control. ${tap}`
     case 'error': return `Failed — tap to try again`
     case 'hearing':
       if (own === 'listening') return 'Listening — tap to send'
@@ -256,8 +236,6 @@ function micLabel({ look, own, composer, handsFree, secondsLeft, tap }: {
     case 'transcribing':
       if (handsFree === 'sending' && own !== 'sending') return 'Sending what you said to Control'
       return 'Transcribing'
-    case 'conversation':
-      return `In conversation with Control: just talk, no need to say "Control"${secondsLeft !== null ? ` — ${secondsLeft} seconds of quiet left` : ''}. ${tap}`
     case 'armed':
       return nativeMicrophoneAvailable()
         ? `Listening for "Control" at the start of what you say — everything else is ignored. ${tap}`

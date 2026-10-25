@@ -151,7 +151,8 @@ export class VoiceOperatorHandsFree {
       this.reportedRefusal = why
       return
     }
-    if (message.type === 'session-ended') this.macWanted = false
+    // Voice Operator quitting to restart is not the user turning it off: started again when it is back.
+    if (message.type === 'session-ended' && message.why !== 'restarting') this.macWanted = false
     this.onEvent(message)
   }
 }
