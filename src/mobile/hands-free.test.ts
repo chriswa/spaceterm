@@ -146,6 +146,16 @@ describe('hands-free, following Voice Operator', () => {
     h.vo({ type: 'session-ended', why: 'incognito' })
     expect(useHandsFree.getState().on).toBe(false)
     expect(h.cues).toEqual(['error'])
+    expect(h.calls).toEqual(['start', 'stop'])
+  })
+
+  it('goes off quietly when hands-free was turned on on another device', () => {
+    h = harness()
+    setHandsFree(true)
+    h.vo({ type: 'session-ended', why: 'replaced' })
+    expect(useHandsFree.getState().on).toBe(false)
+    expect(h.calls).toEqual(['start', 'stop'])
+    expect(h.cues).toEqual([])
   })
 })
 

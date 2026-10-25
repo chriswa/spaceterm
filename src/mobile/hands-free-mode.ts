@@ -1,5 +1,5 @@
-import { installHandsFree, phoneHandsFreeLink, realHandsFreeDeps, setHandsFree } from './hands-free'
-import { installHeldMicrophone, onHoldStateChange, type HoldHost } from './held-microphone'
+import { installHandsFree, phoneHandsFreeLink, realHandsFreeDeps, setHandsFree, useHandsFree } from './hands-free'
+import { holdState, installHeldMicrophone, onHoldStateChange, setHoldMicrophone, type HoldHost } from './held-microphone'
 import { nativeMicrophoneAvailable } from './native-microphone'
 import type { HandsFreeApi } from '../shared/api'
 
@@ -28,7 +28,12 @@ export function installHandsFreeMode(
     if (state === 'held') setHandsFree(true)
     else if (state === 'off') setHandsFree(false)
   })
+  // Ended from the other side (turned on on the Mac, lost): the hold that was for it goes too.
+  const offEnded = useHandsFree.subscribe((state, prev) => {
+    if (prev.on && !state.on && holdState() !== 'off') setHoldMicrophone(false)
+  })
   return () => {
+    offEnded()
     offFollow()
     offHandsFree()
     link.dispose()

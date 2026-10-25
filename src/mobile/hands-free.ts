@@ -182,9 +182,12 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
         quiet = { since: null, patienceMs: null }
         closesAt = null
         useHandsFree.setState({ phase: 'off', conversation: false, secondsLeft: null, checking: false, turn: null, sampling: null })
-        if (why !== 'off' && why !== 'replaced') {
+        // Ended from the other side — turned on on another device (`replaced`), lost, incognito:
+        // off here too, so the button does not say it is listening when nothing is.
+        if (why !== 'off' && useHandsFree.getState().on) {
           useHandsFree.setState({ on: false })
-          if (why !== 'disconnected') deps.playCue('error')
+          deps.link.stop()
+          if (why !== 'disconnected' && why !== 'replaced') deps.playCue('error')
         }
         break
       }
