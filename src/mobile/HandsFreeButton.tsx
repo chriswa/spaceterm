@@ -35,9 +35,9 @@ export function thresholdLine(at: number): { x1: number; x2: number; y: number }
  *
  * While hands-free is taking a dictation, the button shows the two things
  * that can end it, a half each, filling from the bottom like a glass.
- * Left, green: the turn model's latest answer at a pause (Smart Turn), 0 to
- * 1, snapping to each answer; a red line across it marks the threshold that
- * ends the dictation, while the model is being asked. Right: the quiet since
+ * Left, green: the turn model's one answer about this pause (Smart Turn,
+ * asked about 0.2 s in), 0 to 1; a red line across it marks the threshold
+ * that would have ended the dictation there. Right: the quiet since
  * you last spoke, the top the patience that ends it regardless. Both stay up while what you said is sent,
  * so you can see which one ended it.
  *
@@ -63,7 +63,9 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
   const checking = useHandsFree((s) => s.checking)
   const turn = useHandsFree((s) => s.turn)
   const sampling = useHandsFree((s) => s.sampling)
-  const line = sampling === null ? null : thresholdLine(sampling)
+  // The threshold the pause's one answer was held to, beside it — and while it is being asked.
+  const threshold = sampling ?? turn?.threshold ?? null
+  const line = threshold === null ? null : thresholdLine(threshold)
   const ending = phase === 'hearing' || phase === 'sending'
   /** The conversation window's length: `secondsLeft` at its fullest, which it is when it opens. */
   const fullest = useRef(0)
