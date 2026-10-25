@@ -1,3 +1,4 @@
+import { DICTATION_RESUME_GRACE_MS } from '../shared/protocol'
 import type { SpeechResponse, VoiceOperator } from './voice-operator'
 
 /**
@@ -8,8 +9,14 @@ import type { SpeechResponse, VoiceOperator } from './voice-operator'
  * Operator. The client streams PCM here over its ordinary connection, and this
  * relays it to Voice Operator's transcription sessions in order.
  *
- * Each session belongs to the client that opened it. A client cannot touch
- * another's, and a client that disconnects has its sessions cancelled.
+ * Each session belongs to the device that opened it (its `client-hello`
+ * device id; a client without one owns by connection), so a phone that
+ * reconnects owns it still. A device cannot touch another's. One whose
+ * connection drops has {@link DICTATION_RESUME_GRACE_MS} to come back and
+ * carry on (`resume`) before its dictation is cancelled: Wi-Fi coming back
+ * drops the phone's socket for a moment, and that once cost a dictation
+ * (October 2026). Audio carries its offset, so what the phone resends after a
+ * drop is taken once, and a finish whose reply was lost can be asked again.
  */
 
 export type DictationOutcome<T> = { ok: true; value: T } | { ok: false; error: string }
@@ -22,6 +29,12 @@ interface Session {
   chain: Promise<void>
   /** The first audio failure, reported at finish rather than dropped. */
   failure?: string
+  /** Samples taken so far: where the next chunk must start. */
+  received: number
+  /** Asked to finish: the outcome, given again to a repeated finish. */
+  result?: Promise<DictationOutcome<string>>
+  /** Calls off the cancel its owner's disconnect set going. */
+  cancelGrace?: () => void
 }
 
 /**
@@ -46,6 +59,9 @@ const REAL_SCHEDULE = (ms: number, fn: () => void): (() => void) => {
   const timer = setTimeout(fn, ms)
   return () => clearTimeout(timer)
 }
+
+/** Why a dictation cannot be finished or resumed: its connection was gone too long, or it never was. */
+const GONE = 'That dictation is no longer on the Mac: it has ended, or the connection was gone too long'
 
 type Voice = Pick<VoiceOperator, 'startTranscription' | 'sendTranscriptionAudio' | 'finishTranscription' | 'cancelTranscription'>
 
@@ -93,25 +109,54 @@ export class RemoteDictation {
       owner,
       forControl,
       chain: Promise.resolve(),
+      received: 0,
     })
     this.setListening(id, true)
     return { ok: true, value: id }
   }
 
-  /** Queue one chunk. Fire-and-forget for the client; failures surface at finish. */
-  audio(owner: string, id: string, pcm: Uint8Array): void {
+  /**
+   * Queue one chunk of s16 PCM starting `at` samples in (after what came
+   * before, when absent). What was already taken is dropped, and so is a chunk
+   * that would leave a gap: the client resumes, and resends from `received`.
+   * Fire-and-forget for the client; failures surface at finish.
+   */
+  audio(owner: string, id: string, pcm: Uint8Array, at?: number): void {
     const session = this.owned(owner, id)
-    if (!session) return
+    if (!session || session.result) return
+    this.heardFrom(session)
+    const start = at ?? session.received
+    const samples = Math.floor(pcm.length / 2)
+    if (start > session.received) return
+    const skip = session.received - start
+    if (skip >= samples) return
+    const fresh = skip > 0 ? pcm.subarray(skip * 2, samples * 2) : pcm
+    session.received += samples - skip
     session.chain = session.chain.then(async () => {
       if (session.failure) return
-      const response = await this.voice.sendTranscriptionAudio(id, pcm)
+      const response = await this.voice.sendTranscriptionAudio(id, fresh)
       if (response?.status !== 204) session.failure = describe(response, 'take the audio')
     })
   }
 
-  async finish(owner: string, id: string): Promise<DictationOutcome<string>> {
+  /** A client back after a drop: how many samples of its dictation are here, to send the rest from. */
+  resume(owner: string, id: string): DictationOutcome<number> {
     const session = this.owned(owner, id)
-    if (!session) return { ok: false, error: 'That dictation has already ended' }
+    if (!session) return { ok: false, error: GONE }
+    this.heardFrom(session)
+    return { ok: true, value: session.received }
+  }
+
+  /** No more audio. Asked again — the reply was lost with the connection — it answers the same. */
+  finish(owner: string, id: string): Promise<DictationOutcome<string>> {
+    const session = this.owned(owner, id)
+    if (!session) return Promise.resolve({ ok: false, error: GONE })
+    this.heardFrom(session)
+    session.result ??= this.finishOnce(id, session)
+    return session.result
+  }
+
+  private async finishOnce(id: string, session: Session): Promise<DictationOutcome<string>> {
     // The user has stopped talking. Words for Control are still to come, and
     // Control waits for them; anything else is no concern of its.
     if (!session.forControl) this.setListening(id, false)
@@ -125,7 +170,10 @@ export class RemoteDictation {
 
   private async transcribe(id: string, session: Session): Promise<DictationOutcome<string>> {
     await session.chain
-    this.sessions.delete(id)
+    // Kept a while, for a finish asked again; gone from Voice Operator now either way.
+    this.schedule(DICTATION_RESUME_GRACE_MS, () => {
+      if (this.sessions.get(id) === session) this.sessions.delete(id)
+    })
     if (session.failure) {
       void this.voice.cancelTranscription(id)
       return { ok: false, error: session.failure }
@@ -140,8 +188,7 @@ export class RemoteDictation {
 
   /** Words for Control are on their way back from the phone: still talking, to Control, until they arrive. */
   private awaitWords(id: string, owner: string): void {
-    const schedule = this.hooks.schedule ?? REAL_SCHEDULE
-    const cancelLimit = schedule(WORDS_FOR_CONTROL_LIMIT_MS, () => this.settle(id))
+    const cancelLimit = this.schedule(WORDS_FOR_CONTROL_LIMIT_MS, () => this.settle(id))
     this.awaiting.set(id, { owner, cancelLimit })
   }
 
@@ -162,18 +209,47 @@ export class RemoteDictation {
   }
 
   cancel(owner: string, id: string): void {
-    if (!this.owned(owner, id)) return
+    const session = this.owned(owner, id)
+    if (!session) return
+    session.cancelGrace?.()
     this.sessions.delete(id)
+    // Finishing or finished, it is Voice Operator's no longer, nor still being spoken.
+    if (session.result) return
     this.setListening(id, false)
     void this.voice.cancelTranscription(id)
   }
 
-  /** The client went away mid-dictation, or with words for Control not yet handed on. */
-  cancelAllFor(owner: string): void {
+  /**
+   * A connection of the owner's went away. Its dictations still being spoken
+   * are cancelled unless it comes back within the grace and carries on —
+   * Control holds for them meanwhile, as the user may still be talking. Words
+   * for Control not yet handed on are let go of now: the message carrying
+   * them went with the connection.
+   *
+   * Armed on every drop, even with another connection of the owner's still
+   * up: anything the owner sends about the dictation calls it off, so a stale
+   * socket's late close cannot cancel a dictation going on elsewhere.
+   */
+  disconnected(owner: string): void {
     for (const [id, session] of this.sessions) {
-      if (session.owner === owner) this.cancel(owner, id)
+      if (session.owner !== owner || session.result) continue
+      session.cancelGrace?.()
+      session.cancelGrace = this.schedule(DICTATION_RESUME_GRACE_MS, () => {
+        session.cancelGrace = undefined
+        this.cancel(owner, id)
+      })
     }
     this.delivered(owner)
+  }
+
+  /** The owner is here, about this dictation: a disconnect's cancel is off. */
+  private heardFrom(session: Session): void {
+    session.cancelGrace?.()
+    session.cancelGrace = undefined
+  }
+
+  private schedule(ms: number, fn: () => void): () => void {
+    return (this.hooks.schedule ?? REAL_SCHEDULE)(ms, fn)
   }
 
   private owned(owner: string, id: string): Session | undefined {

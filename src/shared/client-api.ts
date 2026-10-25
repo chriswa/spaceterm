@@ -193,9 +193,12 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
     },
     dictation: {
       start: (sampleRate, forControl) => client.dictationStart(sampleRate, forControl),
-      audio: (id, pcm) => client.dictationAudio(id, pcm),
+      audio: (id, pcm, at) => client.dictationAudio(id, pcm, at),
+      resume: (id) => client.dictationResume(id),
       finish: (id) => client.dictationFinish(id),
-      cancel: (id) => client.dictationCancel(id)
+      cancel: (id) => client.dictationCancel(id),
+      isConnected: () => client.isConnected(),
+      onConnect: (listener) => client.onLifecycle('connect', listener)
     },
     handsFree: {
       say: (text, interrupted) => client.receptionistHandsFree(text, interrupted),

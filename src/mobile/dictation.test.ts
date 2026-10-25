@@ -50,7 +50,9 @@ function fakeApi(): DictationApi & { sent: number } {
     audio: () => { api.sent++ },
     finish: () => Promise.resolve('words'),
     cancel: () => undefined,
-    turnCheck: () => Promise.resolve(null),
+    resume: () => Promise.resolve(0),
+    isConnected: () => true,
+    onConnect: () => () => undefined,
   }
   return api
 }

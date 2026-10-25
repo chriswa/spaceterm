@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 24
+export const CLIENT_PROTOCOL_VERSION = 25
 
 /**
  * Oldest client protocol this build still serves.
@@ -112,5 +112,10 @@ export const CLIENT_PROTOCOL_VERSION = 24
  * `hands-free-tuning`), which Voice Operator does now: its checks are answered
  * with a `server-error`, so its hands-free hears nothing. It loses nothing else;
  * the page reloads onto this build's hands-free.
+ *
+ * v24 sends dictation audio without its offset (`at`) and never resumes a
+ * dictation (`dictation-resume`), so a dictation its dropped connection
+ * interrupted is lost, as before — now ~30 s after the drop rather than at
+ * once. It loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

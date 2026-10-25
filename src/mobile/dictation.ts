@@ -132,6 +132,8 @@ export class Dictation {
 
   private id: string | null = null
   private queued: Int16Array[] = []
+  /** Samples sent so far: where the next chunk starts. */
+  private sentSamples = 0
   private timer: number | undefined
   /** Capture has stopped, whether to finish or to cancel. */
   private stopped = false
@@ -320,7 +322,8 @@ export class Dictation {
       offset += block.length
     }
     this.queued = []
-    this.api.audio(this.id, pcmToBase64(joined))
+    this.api.audio(this.id, pcmToBase64(joined), this.sentSamples)
+    this.sentSamples += total
   }
 
   private stopCapture(broken = false): void {

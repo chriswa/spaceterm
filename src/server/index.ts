@@ -416,6 +416,11 @@ const handsFreeStreams = new Map<string, LineConnection>()
 const mobileEventsLog = new MobileEventsLog()
 /** What the phone calls itself in `client-hello` (src/mobile/main.tsx). */
 const MOBILE_CLIENT_NAME = 'spaceterm-mobile'
+/**
+ * Who owns a client's dictations: its device, which a reconnect keeps, so a
+ * phone back from a dropped connection can carry on with what it was saying.
+ */
+const dictationOwner = (client: { device?: ClientDevice; id: string }) => client.device?.id ?? client.id
 const clientLabel = (client: { name?: string; id: string }) => `${client.name ?? 'client'} ${client.id.slice(0, 8)}`
 
 /** The phone's "App update" badge builds and installs the iPhone app from here. */
@@ -1183,7 +1188,8 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
       // The phone's socket dropping, which the phone itself — asleep, or killed — often cannot record.
       if (client.name === MOBILE_CLIENT_NAME) mobileEventsLog.server('client-disconnected', clientLabel(client))
       updateSystemStatsWatched()
-      remoteDictation.cancelAllFor(client.id)
+      // Kept a while for the device to come back and carry on: see remote-dictation.ts.
+      remoteDictation.disconnected(dictationOwner(client))
       // Voice Operator keeps the session a while for the phone to come back and resume it.
       handsFreeStreams.get(client.id)?.close()
       remoteSpeech.clientGone(client.id)
@@ -2017,7 +2023,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'dictation-start': {
       const seq = msg.seq
-      void remoteDictation.start(client.id, msg.sampleRate, msg.forControl === true).then((outcome) => {
+      void remoteDictation.start(dictationOwner(client), msg.sampleRate, msg.forControl === true).then((outcome) => {
         send(client.link, outcome.ok
           ? { type: 'dictation-started', seq, id: outcome.value }
           : { type: 'server-error', seq, message: outcome.error })
@@ -2026,13 +2032,22 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'dictation-audio': {
-      remoteDictation.audio(client.id, msg.id, Buffer.from(msg.pcm, 'base64'))
+      remoteDictation.audio(dictationOwner(client), msg.id, Buffer.from(msg.pcm, 'base64'), typeof msg.at === 'number' ? msg.at : undefined)
+      break
+    }
+
+    case 'dictation-resume': {
+      const outcome = remoteDictation.resume(dictationOwner(client), msg.id)
+      serverLog(`[dictation] client=${client.id.slice(0, 8)} resume ${outcome.ok ? `from ${outcome.value} samples` : `failed: ${outcome.error}`}`)
+      send(client.link, outcome.ok
+        ? { type: 'dictation-resumed', seq: msg.seq, received: outcome.value }
+        : { type: 'server-error', seq: msg.seq, message: outcome.error })
       break
     }
 
     case 'dictation-finish': {
       const seq = msg.seq
-      void remoteDictation.finish(client.id, msg.id).then((outcome) => {
+      void remoteDictation.finish(dictationOwner(client), msg.id).then((outcome) => {
         serverLog(`[dictation] client=${client.id.slice(0, 8)} ${outcome.ok ? `${outcome.value.length} chars` : `failed: ${outcome.error}`}`)
         send(client.link, outcome.ok
           ? { type: 'dictation-result', seq, text: outcome.value }
@@ -2042,7 +2057,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'dictation-cancel': {
-      remoteDictation.cancel(client.id, msg.id)
+      remoteDictation.cancel(dictationOwner(client), msg.id)
       break
     }
 
@@ -2088,7 +2103,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       const text = msg.text.trim()
       if (msg.type === 'receptionist-hands-free') handsFreePresence.delivered()
       if (!receptionist) {
-        remoteDictation.delivered(client.id)
+        remoteDictation.delivered(dictationOwner(client))
         break
       }
       // A dictation for Control caught nothing for it. Whatever its start
@@ -2102,7 +2117,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
         }
         receptionist.heardNothing(msg.type === 'receptionist-hands-free' && msg.interrupted === true)
-        remoteDictation.delivered(client.id)
+        remoteDictation.delivered(dictationOwner(client))
         break
       }
       // "Let me turn this off" or "Control, shutdown" (control-shutdown.ts),
@@ -2114,7 +2129,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         serverLog(`[receptionist] "${text}" from ${client.device?.label ?? 'a client'}: away until "Control" again`)
         setReceptionistHolder(null)
         receptionist.sentAway(msg.type === 'receptionist-hands-free' && msg.interrupted === true)
-        remoteDictation.delivered(client.id)
+        remoteDictation.delivered(dictationOwner(client))
         break
       }
       // The wake word names Control, and typing in its transcript is writing
@@ -2127,7 +2142,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       // Heard before the dictation that carried the words lets go, so that
       // letting go finds them already taken rather than resuming without them.
       void receptionist.hear(text, msg.type === 'receptionist-say' && msg.spoken !== true ? 'typed' : 'spoken')
-      remoteDictation.delivered(client.id)
+      remoteDictation.delivered(dictationOwner(client))
       break
     }
 

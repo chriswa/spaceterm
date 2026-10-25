@@ -419,11 +419,36 @@ export interface DictationStartMessage {
   forControl?: boolean
 }
 
+/**
+ * How long the server keeps a dictation whose client has disconnected, for it
+ * to come back and carry on (`dictation-resume`); and how long a finished
+ * one's result is kept, for a client whose reply was lost. The phone's
+ * finish waits as long for its connection.
+ */
+export const DICTATION_RESUME_GRACE_MS = 30_000
+
 /** One chunk of audio, base64. Fire-and-forget: failures surface at finish. */
 export interface DictationAudioMessage {
   type: 'dictation-audio'
   id: string
   pcm: string
+  /**
+   * Where in the dictation's audio this chunk starts, in samples. The server
+   * drops what it already has, and a chunk that would leave a gap. Absent
+   * (protocol v24 and below): straight after what came before.
+   */
+  at?: number
+}
+
+/**
+ * Carry on with a dictation after reconnecting: replies `dictation-resumed`
+ * with how many samples the server has, to send the rest from; or a
+ * correlated `server-error` once it is gone ({@link DICTATION_RESUME_GRACE_MS}).
+ */
+export interface DictationResumeMessage {
+  type: 'dictation-resume'
+  seq: number
+  id: string
 }
 
 /** No more audio. Replies `dictation-result`, or a correlated `server-error`. */
@@ -1301,6 +1326,7 @@ export type ClientMessage =
   | TerminalReturnSizeMessage
   | DictationStartMessage
   | DictationAudioMessage
+  | DictationResumeMessage
   | DictationFinishMessage
   | DictationCancelMessage
   | HandsFreeMacMessage
@@ -2149,6 +2175,13 @@ export interface DictationStartedMessage {
   id: string
 }
 
+export interface DictationResumedMessage {
+  type: 'dictation-resumed'
+  seq: number
+  /** Samples of the dictation's audio the server has. */
+  received: number
+}
+
 export interface DictationResultMessage {
   type: 'dictation-result'
   seq: number
@@ -2185,6 +2218,7 @@ export interface AgentMemoryResultMessage {
 export type ServerMessage =
   | AgentMemoryResultMessage
   | DictationStartedMessage
+  | DictationResumedMessage
   | DictationResultMessage
   | AgentMetaAvailabilityResult
   | AgentSearchResult

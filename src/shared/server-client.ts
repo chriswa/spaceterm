@@ -85,6 +85,13 @@ export type LifecycleEvent = 'connect' | 'disconnect' | 'protocol-mismatch'
 const INITIAL_RECONNECT_DELAY = 200
 const MAX_RECONNECT_DELAY = 1000
 
+/**
+ * A request that failed for want of a connection — none when it was asked, or
+ * it dropped before the reply — rather than because the server said no. Worth
+ * asking again once connected; see `Dictation.finish`.
+ */
+export class ConnectionLostError extends Error {}
+
 interface PendingRequest {
   resolve: (msg: ServerMessage) => void
   reject: (err: Error) => void
@@ -188,7 +195,7 @@ export class ServerClient {
   }
 
   private rejectAllPending(): void {
-    this.pending.forEach((req) => req.reject(new Error('Disconnected from server')))
+    this.pending.forEach((req) => req.reject(new ConnectionLostError('Disconnected from server')))
     this.pending.clear()
   }
 
@@ -331,6 +338,7 @@ export class ServerClient {
       case 'agent-meta-availability-result':
       case 'agent-search-result':
       case 'dictation-started':
+      case 'dictation-resumed':
       case 'dictation-result':
       case 'agent-memory-result':
       case 'receptionist-transcript-result':
@@ -383,7 +391,7 @@ export class ServerClient {
   private request(msg: RequestMessage): Promise<ServerMessage> {
     return new Promise((resolve, reject) => {
       if (!this.connected) {
-        reject(new Error('Not connected to server'))
+        reject(new ConnectionLostError('Not connected to server'))
         return
       }
       const seq = ++this.seq
@@ -799,9 +807,19 @@ export class ServerClient {
     return unexpected(resp)
   }
 
-  /** Base64 PCM, s16le mono. Dropped silently when disconnected; finish will fail. */
-  dictationAudio(id: string, pcmBase64: string): void {
-    this.fireAndForget({ type: 'dictation-audio', id, pcm: pcmBase64 })
+  /**
+   * Base64 PCM, s16le mono, starting `at` samples into the dictation. Dropped
+   * silently when disconnected: the dictation resumes and resends.
+   */
+  dictationAudio(id: string, pcmBase64: string, at: number): void {
+    this.fireAndForget({ type: 'dictation-audio', id, pcm: pcmBase64, at })
+  }
+
+  /** After a reconnect: how many samples of the dictation the server has. */
+  async dictationResume(id: string): Promise<number> {
+    const resp = await this.request({ type: 'dictation-resume', id })
+    if (resp.type === 'dictation-resumed') return resp.received
+    return unexpected(resp)
   }
 
   async dictationFinish(id: string): Promise<string> {

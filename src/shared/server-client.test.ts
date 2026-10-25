@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { ServerClient, type ServerTransport, type TransportHandlers } from './server-client'
+import { ConnectionLostError, ServerClient, type ServerTransport, type TransportHandlers } from './server-client'
 import { createApi } from './client-api'
 import type { PlatformApi } from './api'
 import { asNodeId, asPtySessionId } from './ids'
@@ -96,6 +96,7 @@ describe('ServerClient', () => {
     const pending = client.syncRequest()
     t.drop()
     await expect(pending).rejects.toThrow('Disconnected')
+    await expect(pending).rejects.toBeInstanceOf(ConnectionLostError)
     expect(disconnects).toHaveBeenCalledTimes(1)
     expect(client.isConnected()).toBe(false)
 
@@ -108,6 +109,16 @@ describe('ServerClient', () => {
     const t = new FakeTransport()
     const client = new ServerClient(t, { clientName: 'test', device: { id: 'phone-1', label: 'Phone' } })
     await expect(client.list()).rejects.toThrow('Not connected')
+    await expect(client.list()).rejects.toBeInstanceOf(ConnectionLostError)
+  })
+
+  it('resumes a dictation: sends audio with its offset, and asks how much the server has', async () => {
+    const { t, client } = connected()
+    client.dictationAudio('d1', 'AAAA', 320)
+    expect(t.last('dictation-audio').msg).toMatchObject({ id: 'd1', pcm: 'AAAA', at: 320 })
+    const resumed = client.dictationResume('d1')
+    t.receive({ type: 'dictation-resumed', seq: t.last('dictation-resume').seq, received: 160 })
+    await expect(resumed).resolves.toBe(160)
   })
 
   it('stops reconnecting after disconnect()', () => {

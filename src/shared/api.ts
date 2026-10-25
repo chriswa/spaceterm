@@ -271,11 +271,24 @@ export interface DictationApi {
    * — so the caller must hand them over, or say there were none.
    */
   start(sampleRate: number, forControl?: boolean): Promise<string>
-  /** One chunk, base64. */
-  audio(id: string, pcmBase64: string): void
-  /** No more audio; resolves to the transcript exactly as Wispr returned it. */
+  /** One chunk, base64, starting `at` samples into the dictation. Dropped while disconnected. */
+  audio(id: string, pcmBase64: string, at: number): void
+  /**
+   * After a reconnect: how many samples the server has, to send the rest
+   * from. Rejects once the dictation is gone from the server.
+   */
+  resume(id: string): Promise<number>
+  /**
+   * No more audio; resolves to the transcript exactly as Wispr returned it.
+   * Rejects with a `ConnectionLostError` for want of a connection, when it
+   * may be asked again once connected.
+   */
   finish(id: string): Promise<string>
   cancel(id: string): void
+  /** Whether the server can be reached now. */
+  isConnected(): boolean
+  /** Fires on every reconnect. Returns the unsubscribe. */
+  onConnect(listener: () => void): () => void
 }
 
 /**
