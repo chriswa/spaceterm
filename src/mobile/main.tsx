@@ -4,7 +4,7 @@ import { installApi } from '@/lib/install-api'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
 import { deferCameraScaleWhileMoving } from '@/hooks/useCamera'
 import { webSocketTransport, gatewayUrl } from './ws-transport'
-import { browserPlatform, forwardLogs, canvasOnScreen } from './browser-platform'
+import { browserPlatform, forwardLogs, canvasOnScreen, pageHidden } from './browser-platform'
 import { controlModeGate, installControlMode } from './control-mode'
 import { canvasLifecycle } from './canvas-lifecycle'
 import { retainServerSync } from '@/lib/server-sync'
@@ -125,6 +125,7 @@ if (!token) {
     // snapshots before the canvas's cards mount and ask for theirs.
     const canvasMounted = canvasLifecycle({
       controlMode,
+      hidden: pageHidden,
       startMounted: false,
       log: (message) => window.api.log(message),
     })

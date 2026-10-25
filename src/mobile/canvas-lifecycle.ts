@@ -14,10 +14,12 @@ import { createGate, type Gate } from './gate'
  *   first mounts when you leave the transcript.
  * - Leaving Control mode — closing the transcript, or the screen coming back
  *   on with the canvas or a terminal in front — always mounts it.
- * - After `IDLE_MS` in Control mode, it is unmounted. Coming back to the
- *   transcript keeps it unmounted; coming back to the canvas mounts it again,
- *   and App restores the camera and focus it saved (localStorage), which puts
- *   you back on the same view, or in the same terminal.
+ * - The page going out of sight — the screen off, another app in front —
+ *   unmounts it at once. After `IDLE_MS` with the transcript up, it is
+ *   unmounted too. Coming back to the transcript keeps it unmounted; coming
+ *   back to the canvas mounts it again, and App restores the camera and focus
+ *   it saved (localStorage), which puts you back on the same view, or in the
+ *   same terminal.
  *
  * Nothing outside the canvas depends on it being mounted: the stores it
  * draws from are kept current by the server sync, which main.tsx holds for
@@ -44,6 +46,8 @@ export function holdCanvas(): () => void {
 
 export interface CanvasLifecycleDeps {
   controlMode: Gate
+  /** The page out of sight: part of Control mode, and unmounts at once rather than after `IDLE_MS`. */
+  hidden: Gate
   /** Mounted from the start, rather than on first leaving Control mode. */
   startMounted: boolean
   /** Something that must not lose the canvas under it, such as an open composer. */
@@ -54,6 +58,7 @@ export interface CanvasLifecycleDeps {
 
 export function canvasLifecycle({
   controlMode,
+  hidden,
   startMounted,
   pinned = () => holds > 0,
   setTimer = (fn, ms) => { const id = setTimeout(fn, ms); return () => clearTimeout(id) },
@@ -74,16 +79,28 @@ export function canvasLifecycle({
     }, IDLE_MS)
   }
 
-  if (controlMode.on && mounted.on) armIdle()
-  controlMode.subscribe((on) => {
-    if (on) {
-      if (mounted.on) armIdle()
+  const update = () => {
+    if (!controlMode.on) {
+      cancelIdle?.()
+      cancelIdle = null
+      if (!mounted.on) log('[canvas] mounted')
+      mounted.set(true)
       return
     }
-    cancelIdle?.()
-    cancelIdle = null
-    if (!mounted.on) log('[canvas] mounted')
-    mounted.set(true)
-  })
+    if (!mounted.on) return
+    // Held, it waits out the timer like the transcript does, and looks again after.
+    if (hidden.on && !pinned()) {
+      cancelIdle?.()
+      cancelIdle = null
+      log('[canvas] unmounted: page out of sight')
+      mounted.set(false)
+      return
+    }
+    armIdle()
+  }
+
+  update()
+  controlMode.subscribe(update)
+  hidden.subscribe(update)
   return { get on() { return mounted.on }, subscribe: mounted.subscribe }
 }

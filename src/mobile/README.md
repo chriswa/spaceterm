@@ -343,9 +343,10 @@ card, so it is only mounted while it might be looked at
   reopens as it was left on this device, on the phone and the Mac alike. The
   canvas first mounts when you leave the transcript — closing it, the rocket's
   surface list, or an agent's name in it.
-- **Five minutes in Control mode unmounts it** — transcript up, another app in
-  front, or the phone asleep — with the terminal view and composer that are
-  part of it. An open composer keeps it.
+- **The screen going off, or another app coming in front, unmounts it at
+  once**, with the terminal view and composer that are part of it.
+- **Five minutes with the transcript up unmounts it** too. An open composer
+  keeps it through both, and it is looked at again every five minutes.
 - **Coming back** to the transcript leaves it unmounted. Coming back to the
   canvas or a terminal mounts it again, and App restores the camera and focus
   it saved, which puts you back on the same view or in the same terminal.
