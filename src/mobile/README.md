@@ -529,6 +529,11 @@ Spaceterm is its client (`hands-free.ts`):
   server takes the words as Away (`src/shared/control-shutdown.ts`).
 - **Voice Operator restarting** leaves hands-free on, getting ready (the
   spark), and it starts again by itself once Voice Operator is back.
+- **So does a Spaceterm restart**: whether hands-free was on is remembered
+  (`hands-free-memory.ts`) across the server restarting, the page reloading
+  and the app or desktop client relaunching — not across the app being
+  replaced, which starts with it off. On the phone, a session the server took
+  more than Voice Operator's 10 s to come back to starts afresh, unnoticed.
 - **Why it did or did not trigger** is Voice Operator's record now:
   `~/Library/Application Support/VoiceOperator/hands-free/decisions.jsonl`
   and its `clips/`, with what Apple's model heard and every Smart Turn answer.

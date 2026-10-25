@@ -1,5 +1,6 @@
 import type { ServerClient } from '../../../../shared/server-client'
-import { installHandsFree, macHandsFreeLink, realHandsFreeDeps } from '../../../../mobile/hands-free'
+import { installHandsFree, macHandsFreeLink, realHandsFreeDeps, setHandsFree, useHandsFree } from '../../../../mobile/hands-free'
+import { rememberHandsFree, rememberedHandsFree } from '../../../../mobile/hands-free-memory'
 import { mobileEvents } from '../../../../mobile/mobile-events'
 
 /**
@@ -34,7 +35,16 @@ export function installDesktopHandsFree(client: Pick<ServerClient, 'mobileEvents
   mobileEvents.setSender((events) => client.mobileEvents(events))
   const offConnect = client.onLifecycle('connect', () => mobileEvents.flush())
   const offHandsFree = installHandsFree(realHandsFreeDeps(window.api, macHandsFreeLink(window.api.handsFree)))
+  // On across a server restart (which reloads this page) and the client relaunching.
+  const offRemember = useHandsFree.subscribe((state, prev) => {
+    if (state.on !== prev.on) rememberHandsFree(state.on, 'desktop')
+  })
+  if (rememberedHandsFree('desktop')) {
+    window.api.log('[hands-free] it was on before this page loaded: on again')
+    setHandsFree(true)
+  }
   return () => {
+    offRemember()
     offHandsFree()
     offConnect()
   }

@@ -119,7 +119,9 @@ export class VoiceOperatorHandsFree {
   setMac(on: boolean): void {
     this.macWanted = on
     if (!this.welcomed) {
-      if (on) this.onEvent({ type: 'session-ended', why: this.claim ? 'unavailable' : 'not-operator-home' })
+      // Not registered yet — this server just started, or Voice Operator is restarting: it is
+      // started as soon as it is (`fromControl`). Only a home that will never register says no.
+      if (on && !this.claim) this.onEvent({ type: 'session-ended', why: 'not-operator-home' })
       return
     }
     this.control?.write(JSON.stringify(on ? { type: 'start', source: 'mac' } : { type: 'stop' }))

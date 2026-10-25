@@ -2,6 +2,7 @@ import { installHandsFree, phoneHandsFreeLink, realHandsFreeDeps, setHandsFree, 
 import { holdState, installHeldMicrophone, onHoldStateChange, setHoldMicrophone, type HoldHost } from './held-microphone'
 import { nativeMicrophoneAvailable } from './native-microphone'
 import type { HandsFreeApi } from '../shared/api'
+import { rememberHandsFree, rememberedHandsFree } from './hands-free-memory'
 
 /**
  * Hands-free on the phone: the microphone held open (held-microphone.ts) and,
@@ -32,7 +33,18 @@ export function installHandsFreeMode(
   const offEnded = useHandsFree.subscribe((state, prev) => {
     if (prev.on && !state.on && holdState() !== 'off') setHoldMicrophone(false)
   })
+  // On across a server restart (which reloads this page) or the app relaunching; not once the
+  // app has been replaced. The app opens its microphone without a tap, so it can simply come back.
+  const build = window.spacetermNativeVersion ?? 'app'
+  const offRemember = useHandsFree.subscribe((state, prev) => {
+    if (state.on !== prev.on) rememberHandsFree(state.on, build)
+  })
+  if (rememberedHandsFree(build) && holdState() === 'off') {
+    window.api?.log('[hands-free] it was on before this page loaded: on again')
+    setHoldMicrophone(true)
+  }
   return () => {
+    offRemember()
     offEnded()
     offFollow()
     offHandsFree()
