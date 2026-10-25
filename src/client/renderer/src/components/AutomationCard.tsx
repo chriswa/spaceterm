@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Cron } from 'croner'
+import cronstrue from 'cronstrue'
 import { AUTOMATION_WIDTH, AUTOMATION_HEIGHT, AUTOMATION_GEAR_SIZE } from '../../../../shared/node-size'
 import { DEFAULT_PRESET, type ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
@@ -111,9 +112,30 @@ function describeTrigger(kind: TriggerKind, trigger: string, scriptsSocketPath: 
       }
     case 'cron': {
       const next = new Cron(parsed.expression, { paused: true }).nextRun()
-      return { text: next ? `Next run ${next.toLocaleString()}` : 'Never runs again', error: false }
+      const when = next ? `Next run ${next.toLocaleString()}` : 'Never runs again'
+      const english = describeCron(parsed.expression)
+      return { text: english ? `${english}\n${when}` : when, error: false }
     }
   }
+}
+
+/**
+ * A cron expression in English: `At 09:00 AM, Monday through Friday`. Null when
+ * cronstrue cannot read something croner accepted, rather than showing its error
+ * for a trigger that works.
+ */
+function describeCron(expression: string): string | null {
+  try {
+    return cronstrue.toString(expression, { use24HourTimeFormat: false, verbose: false })
+  } catch {
+    return null
+  }
+}
+
+/** crontab.guru, opened on the expression being edited. The site writes spaces in its URL as underscores. */
+export function crontabGuruUrl(expression: string): string {
+  const trimmed = expression.trim()
+  return trimmed ? `https://crontab.guru/#${trimmed.split(/\s+/).join('_')}` : 'https://crontab.guru/'
 }
 
 function formatUsd(usd: number): string {
@@ -309,8 +331,20 @@ export function AutomationCard({
             }}
           />
         </div>
-        <div className={`automation-card__status ${status.error ? 'automation-card__status--error' : ''}`} title={status.detail}>
-          {status.text}
+        <div className="automation-card__status-row">
+          <div className={`automation-card__status ${status.error ? 'automation-card__status--error' : ''}`} title={status.detail}>
+            {status.text}
+          </div>
+          {kind === 'cron' && (
+            <button
+              type="button"
+              className="automation-card__control automation-card__help"
+              title="Open crontab.guru to build or check a cron expression"
+              onClick={() => { void window.api.openExternal(crontabGuruUrl(draft)) }}
+            >
+              crontab.guru ↗
+            </button>
+          )}
         </div>
         <textarea
           ref={promptRef}

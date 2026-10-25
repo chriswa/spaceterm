@@ -92,9 +92,24 @@ describe('AutomationCard', () => {
     expect(screen.getByText('Total $3.10 · 12 runs')).toBeTruthy()
   })
 
-  it('shows when a cron trigger next runs', () => {
-    renderCard({ trigger: '0 9 * * *' })
-    expect(screen.getByText(/^Next run/)).toBeTruthy()
+  it('says a cron trigger in English, and when it next runs', () => {
+    renderCard({ trigger: '0 9 * * 1-5' })
+    const status = document.querySelector('.automation-card__status') as HTMLElement
+    const [english, next] = status.textContent!.split('\n')
+    expect(english).toBe('At 09:00 AM, Monday through Friday')
+    expect(next).toMatch(/^Next run/)
+  })
+
+  it('opens crontab.guru on the expression being edited, only for a cron trigger', () => {
+    const bridge = installFakeBridge(globalThis as never)
+    renderCard({ trigger: '*/15 * * * *' })
+    fireEvent.click(screen.getByRole('button', { name: /crontab\.guru/ }))
+    expect(bridge.calls.some((c) => c.method === 'openExternal' && c.args[0] === 'https://crontab.guru/#*/15_*_*_*_*')).toBe(true)
+  })
+
+  it('offers no cron help for an event trigger', () => {
+    renderCard({ trigger: 'custom_x' })
+    expect(screen.queryByRole('button', { name: /crontab\.guru/ })).toBeNull()
   })
 
   it('changes the overlap mode', () => {

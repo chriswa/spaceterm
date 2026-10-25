@@ -2082,6 +2082,33 @@ html, body, #root {
   min-width: 0;
 }
 
+.automation-card__status-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.automation-card__status-row .automation-card__status {
+  flex: 1;
+  min-width: 0;
+}
+
+.automation-card__help {
+  font: inherit;
+  font-size: 11px;
+  color: var(--automation-fg, #f0a94a);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: none;
+}
+
+.automation-card__help:hover {
+  text-decoration: underline;
+}
+
 /* Up to three lines: a bad trigger's explanation has to be readable, not
    ellipsised after a few characters. */
 .automation-card__status {
