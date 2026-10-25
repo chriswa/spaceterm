@@ -2084,13 +2084,19 @@ html, body, #root {
 
 .automation-card__status-row {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 8px;
+  margin-top: -6px;
 }
 
-.automation-card__status-row .automation-card__status {
-  flex: 1;
+.automation-card__next-run {
+  font-size: 11px;
+  opacity: 0.7;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .automation-card__help {
@@ -2160,6 +2166,13 @@ html, body, #root {
   font-variant-numeric: tabular-nums;
   border-top: 1px solid rgba(255, 255, 255, 0.12);
   padding-top: 6px;
+}
+
+/* With a cron trigger the next run has its own row below, so the description
+   keeps two lines and the three together fill the space three lines did. */
+.automation-card__status--cron {
+  -webkit-line-clamp: 2;
+  min-height: calc(11px * 1.35);
 }
 
 .automation-card__status--error {

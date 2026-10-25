@@ -86,7 +86,11 @@ function triggerKindOf(trigger: string): TriggerKind {
  * quotes the input back, so a bad cron gets a short one with croner's in the
  * tooltip.
  */
-function describeTrigger(kind: TriggerKind, trigger: string, scriptsSocketPath: string | undefined): { text: string; detail?: string; error: boolean } {
+function describeTrigger(
+  kind: TriggerKind,
+  trigger: string,
+  scriptsSocketPath: string | undefined
+): { text: string; detail?: string; error: boolean; nextRun?: string } {
   const trimmed = trigger.trim()
   if (kind === 'event') {
     if (!trimmed) return { text: 'Type an event id that starts with custom_', error: false }
@@ -113,8 +117,10 @@ function describeTrigger(kind: TriggerKind, trigger: string, scriptsSocketPath: 
     case 'cron': {
       const next = new Cron(parsed.expression, { paused: true }).nextRun()
       const when = next ? `Next run ${next.toLocaleString()}` : 'Never runs again'
+      // The English goes on top, where it may wrap; the next run shares the
+      // line below with the crontab.guru link, since it is always short.
       const english = describeCron(parsed.expression)
-      return { text: english ? `${english}\n${when}` : when, error: false }
+      return english ? { text: english, nextRun: when, error: false } : { text: when, error: false }
     }
   }
 }
@@ -331,11 +337,15 @@ export function AutomationCard({
             }}
           />
         </div>
-        <div className="automation-card__status-row">
-          <div className={`automation-card__status ${status.error ? 'automation-card__status--error' : ''}`} title={status.detail}>
-            {status.text}
-          </div>
-          {kind === 'cron' && (
+        <div
+          className={`automation-card__status${kind === 'cron' ? ' automation-card__status--cron' : ''}${status.error ? ' automation-card__status--error' : ''}`}
+          title={status.detail}
+        >
+          {status.text}
+        </div>
+        {kind === 'cron' && (
+          <div className="automation-card__status-row">
+            <span className="automation-card__next-run">{status.nextRun ?? ''}</span>
             <button
               type="button"
               className="automation-card__control automation-card__help"
@@ -344,8 +354,8 @@ export function AutomationCard({
             >
               crontab.guru ↗
             </button>
-          )}
-        </div>
+          </div>
+        )}
         <textarea
           ref={promptRef}
           className="automation-card__control automation-card__prompt"
