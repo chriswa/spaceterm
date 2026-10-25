@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { DictationApi } from '../shared/api'
 import type { Capture } from './held-microphone'
-import { AudioStats, Dictation, NO_AUDIO_TIMEOUT_MS, whenHearing } from './dictation'
+import { DICTATION_RESUME_GRACE_MS } from '../shared/protocol'
+import { ConnectionLostError } from '../shared/server-client'
+import { AudioStats, CONNECTION_GONE, Dictation, NO_AUDIO_TIMEOUT_MS, whenHearing } from './dictation'
 
 describe('AudioStats', () => {
   it('tells a microphone that sent nothing from one that sent silence', () => {
@@ -114,5 +116,134 @@ describe('whenHearing', () => {
     await vi.advanceTimersByTimeAsync(NO_AUDIO_TIMEOUT_MS + 5000)
     await failed
     expect(other.released()).toBe(true)
+  })
+})
+
+/**
+ * The server as the dictation sees it through a connection that drops: it
+ * takes audio only while connected, as the real one takes each sample once
+ * (remote-dictation.ts), and says how much it has when resumed.
+ */
+function droppingServer() {
+  const listeners = new Set<() => void>()
+  const server = {
+    connected: true,
+    /** Samples the server has. */
+    received: 0,
+    resumes: 0,
+    /** What the next finish does, before answering. */
+    onFinish: (): Promise<string> => Promise.resolve('words'),
+    drop() { server.connected = false },
+    reconnect() {
+      server.connected = true
+      for (const listener of [...listeners]) listener()
+    },
+    resume: (): Promise<number> => {
+      server.resumes++
+      return Promise.resolve(server.received)
+    },
+  }
+  const api: DictationApi = {
+    start: () => Promise.resolve('session'),
+    audio: (_id, pcm, at) => {
+      if (!server.connected || at > server.received) return
+      const samples = atob(pcm).length / 2
+      server.received = Math.max(server.received, at + samples)
+    },
+    resume: () => server.connected ? server.resume() : Promise.reject(new ConnectionLostError('Not connected to server')),
+    finish: () => server.connected ? server.onFinish() : Promise.reject(new ConnectionLostError('Not connected to server')),
+    cancel: () => undefined,
+    isConnected: () => server.connected,
+    onConnect: (listener) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+  }
+  return { server, api }
+}
+
+/** A dictation under way, hearing, and the means to talk into it. */
+async function talking(api: DictationApi) {
+  const mic = fakeCapture()
+  const dictation = await Dictation.begin(api, {}, { acquire: async () => mic.capture, replaceSilent: async () => undefined })
+  /** Speak `blocks` blocks of 1600 samples, sent as they would be. */
+  const say = async (blocks: number) => {
+    for (let i = 0; i < blocks; i++) {
+      mic.speak()
+      await vi.advanceTimersByTimeAsync(100)
+    }
+  }
+  return { dictation, say }
+}
+
+describe('Dictation through a dropped connection', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('sends, after a reconnect, everything the server lacks, from where it got to', async () => {
+    const { server, api } = droppingServer()
+    const { dictation, say } = await talking(api)
+    await say(4)
+    expect(server.received).toBe(4 * 1600)
+    server.drop()
+    await say(6)
+    server.reconnect()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(server.resumes).toBe(1)
+    expect(server.received).toBe(10 * 1600)
+    await say(2)
+    await expect(dictation.finish()).resolves.toBe('words')
+    expect(server.received).toBe(12 * 1600)
+  })
+
+  it('waits, when stopped while disconnected, for the connection to come back, then finishes', async () => {
+    const { server, api } = droppingServer()
+    const { dictation, say } = await talking(api)
+    await say(3)
+    server.drop()
+    await say(2)
+    const finished = dictation.finish()
+    await vi.advanceTimersByTimeAsync(10_000)
+    server.reconnect()
+    await expect(finished).resolves.toBe('words')
+    expect(server.received).toBe(5 * 1600)
+  })
+
+  it('gives up, saying why, when the connection does not come back within the grace', async () => {
+    const { server, api } = droppingServer()
+    const { dictation } = await talking(api)
+    server.drop()
+    const failed = expect(dictation.finish()).rejects.toThrow(CONNECTION_GONE)
+    await vi.advanceTimersByTimeAsync(DICTATION_RESUME_GRACE_MS)
+    await failed
+  })
+
+  it('asks again for a finish lost with the connection', async () => {
+    const { server, api } = droppingServer()
+    const { dictation, say } = await talking(api)
+    await say(2)
+    let asked = 0
+    server.onFinish = () => {
+      asked++
+      if (asked > 1) return Promise.resolve('words')
+      server.drop()
+      return Promise.reject(new ConnectionLostError('Disconnected from server'))
+    }
+    const finished = dictation.finish()
+    await vi.advanceTimersByTimeAsync(1000)
+    server.reconnect()
+    await expect(finished).resolves.toBe('words')
+    expect(asked).toBe(2)
+    expect(server.resumes).toBe(1)
+  })
+
+  it('fails with the server’s reason once the server has let the dictation go', async () => {
+    const { server, api } = droppingServer()
+    const { dictation } = await talking(api)
+    server.drop()
+    server.resume = () => Promise.reject(new Error('That dictation is no longer on the Mac'))
+    const finished = dictation.finish()
+    server.reconnect()
+    await expect(finished).rejects.toThrow('no longer on the Mac')
   })
 })

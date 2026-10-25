@@ -2,6 +2,7 @@ import type { PlatformApi } from '../../../../shared/api'
 import type { ClientDevice } from '../../../../shared/protocol'
 import { createApi } from '../../../../shared/client-api'
 import { ServerClient, type ServerTransport } from '../../../../shared/server-client'
+import { reloadGuard as REAL_RELOAD_GUARD, type ReloadGuard } from './reload-guard'
 
 /**
  * How long startup waits for the server before showing the canvas anyway.
@@ -20,12 +21,16 @@ const STARTUP_CONNECT_GRACE_MS = 8_000
  * Resolves once connected, or once the grace period runs out, whichever is
  * first. Rendering then proceeds either way: an empty canvas is worse than a
  * working one and far better than nothing.
+ *
+ * `reload` and `guard` are seams for tests: the page's reload, and what may
+ * hold it off (reload-guard.ts).
  */
 export async function installApi(
   transport: ServerTransport,
   platform: PlatformApi,
   clientName: string,
-  device: ClientDevice
+  device: ClientDevice,
+  { reload = () => window.location.reload(), guard = REAL_RELOAD_GUARD }: { reload?: () => void; guard?: ReloadGuard } = {}
 ): Promise<ServerClient> {
   const client = new ServerClient(transport, { clientName, device, log: (m) => platform.log(m) })
   window.api = createApi(client, platform)
@@ -57,11 +62,24 @@ export async function installApi(
     needsResync = true
     platform.log('Lost connection to the spaceterm server; reconnecting')
   })
+  let reloadDeferred = false
   client.onLifecycle('connect', () => {
     flushFocus()
     if (!needsResync) return
-    platform.log('Server reconnected; reloading for an authoritative resync')
-    window.location.reload()
+    if (!guard.held) {
+      platform.log('Server reconnected; reloading for an authoritative resync')
+      reload()
+      return
+    }
+    // A dictation still being spoken or sent would go with the page: it
+    // resumes over this connection, and the reload waits for it to end.
+    if (reloadDeferred) return
+    reloadDeferred = true
+    platform.log('Server reconnected; the resync reload waits for the dictation under way')
+    void guard.free().then(() => {
+      platform.log('Dictation over; reloading for an authoritative resync')
+      reload()
+    })
   })
 
   return client

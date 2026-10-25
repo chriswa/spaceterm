@@ -58,6 +58,15 @@ describe('ServerClient', () => {
     expect(t.last('client-hello').msg).toMatchObject({ client: 'test', device: { id: 'phone-1', label: 'Phone' } })
   })
 
+  it('announces itself before anything a connect listener sends, which the server reads by device', () => {
+    const t = new FakeTransport()
+    const client = new ServerClient(t, { clientName: 'test', device: { id: 'phone-1', label: 'Phone' } })
+    client.onLifecycle('connect', () => { void client.dictationResume('d1').catch(() => undefined) })
+    void client.connect()
+    t.accept()
+    expect(t.sent.map((m) => m.type)).toEqual(['client-hello', 'dictation-resume'])
+  })
+
   it('correlates a reply to its request by seq, whatever arrives in between', async () => {
     const { t, client } = connected()
     const pending = client.attach(asPtySessionId('s1'))

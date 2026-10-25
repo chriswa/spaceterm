@@ -167,11 +167,13 @@ export class ServerClient {
         this.attempting = false
         this.connected = true
         this.reconnectDelay = INITIAL_RECONNECT_DELAY
+        // Sent first, so the server knows the device before anything a
+        // connect listener sends — a dictation resumed, Control let go —
+        // which it reads by device. Not awaited: the handshake is diagnostic,
+        // and blocking startup on it would make a report into a failure.
+        void this.handshake()
         this.connectionWaiters.splice(0).forEach((resolve) => resolve())
         this.emitLifecycle('connect')
-        // Deliberately after the waiters: the handshake is diagnostic, and
-        // blocking startup on it would make a report into a failure.
-        void this.handshake()
       },
       onData: (chunk) => this.feed(chunk),
       onClose: () => {

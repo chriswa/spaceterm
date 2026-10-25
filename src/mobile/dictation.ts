@@ -1,5 +1,8 @@
 import { create } from 'zustand'
 import type { DictationApi } from '../shared/api'
+import { DICTATION_RESUME_GRACE_MS } from '../shared/protocol'
+import { ConnectionLostError } from '../shared/server-client'
+import { reloadGuard } from '@/lib/reload-guard'
 import { Downsampler, TARGET_SAMPLE_RATE, pcmToBase64 } from './pcm'
 import { acquire, replaceSilentCapture, type Capture } from './held-microphone'
 import { recordMobileEvent } from './mobile-events'
@@ -21,10 +24,24 @@ import { noteMicLevel } from './mic-level'
  * and every step logs what it saw so the next such failure says why. In the
  * iPhone app such a dictation carries on with the app's own microphone
  * (`replaceSilentCapture`), which that WebKit fault does not reach.
+ *
+ * A dropped connection does not end it. Every sample is kept until it ends,
+ * each chunk sent says where it starts, and on every reconnect the server
+ * says how much it has (`resume`) and the rest is sent from there. A finish
+ * asked while the connection is down waits for it — up to the server's grace,
+ * {@link DICTATION_RESUME_GRACE_MS} — and only then fails. Wi-Fi coming back
+ * once dropped the socket mid-dictation and the stop that followed failed at
+ * once, "Not connected to server" (October 2026).
  */
 
 /** How much audio to batch per message: small enough to stream, large enough not to spam. */
 const SEND_INTERVAL_MS = 200
+
+/** The most one message carries: what a reconnect resends goes in pieces this size. */
+const MAX_SEND_SAMPLES = TARGET_SAMPLE_RATE * 5
+
+/** Why a finish gave up waiting for the connection. */
+export const CONNECTION_GONE = `Lost the connection to the Mac, and it did not come back within ${DICTATION_RESUME_GRACE_MS / 1000} s, so this dictation could not be sent.`
 
 const log = (message: string) => window.api?.log(`[dictation] ${message}`)
 
@@ -131,9 +148,22 @@ export class Dictation {
   static live = 0
 
   private id: string | null = null
-  private queued: Int16Array[] = []
-  /** Samples sent so far: where the next chunk starts. */
-  private sentSamples = 0
+  /**
+   * Every sample of the dictation, 16 kHz s16, kept until it ends: a reconnect
+   * resends from wherever the server got to. Grown by doubling; 32 kB a second.
+   */
+  private pcm = new Int16Array(TARGET_SAMPLE_RATE * 10)
+  private pcmLength = 0
+  /** Samples sent on this connection: where the next chunk starts. */
+  private sent = 0
+  /** Reconnected since the server last said how much it has: nothing is sent until it has. */
+  private stale = false
+  private resuming: Promise<void> | null = null
+  /** Why the server's session is gone, for finish to say. */
+  private lost: Error | null = null
+  private readonly offConnect: () => void
+  /** Holds off the page's own reload until the dictation is over: see reload-guard.ts. */
+  private readonly releaseReload = reloadGuard.hold()
   private timer: number | undefined
   /** Capture has stopped, whether to finish or to cancel. */
   private stopped = false
@@ -174,11 +204,15 @@ export class Dictation {
     Dictation.live++
     const backlog = options.backlog?.()
     if (backlog && backlog.length > 0) {
-      this.queued.push(backlog)
+      this.keep(backlog)
       log(`starting with ${(backlog.length / TARGET_SAMPLE_RATE).toFixed(1)}s already heard`)
     }
     this.listenTo(capture)
     this.timer = window.setInterval(() => this.flush(), SEND_INTERVAL_MS)
+    this.offConnect = api.onConnect(() => {
+      this.stale = true
+      void this.resync()
+    })
     started.then(
       (id) => {
         if (this.cancelled) {
@@ -217,7 +251,7 @@ export class Dictation {
       this.stats.push(block)
       noteMicLevel(block)
       const pcm = resampler.push(block)
-      if (pcm.length > 0) this.queued.push(pcm)
+      if (pcm.length > 0) this.keep(pcm)
     })
   }
 
@@ -288,8 +322,7 @@ export class Dictation {
     bump('transcribing', 1)
     try {
       const id = await this.started
-      this.flush()
-      const text = await this.api.finish(id)
+      const text = await this.finishWhenConnected(id)
       // Only how much: nothing said is recorded.
       recordMobileEvent('dictation-transcribed', { chars: text.length, ms: Math.round(performance.now() - asked) })
       return text
@@ -298,7 +331,77 @@ export class Dictation {
       throw err
     } finally {
       bump('transcribing', -1)
+      this.offConnect()
+      this.releaseReload()
     }
+  }
+
+  /**
+   * Send what the server lacks and finish — once connected, and caught up
+   * after a reconnect. A finish lost with the connection is asked again (the
+   * server answers a repeat with the same words). Gives up when the
+   * connection has not come back within the grace.
+   */
+  private async finishWhenConnected(id: string): Promise<string> {
+    const deadline = performance.now() + DICTATION_RESUME_GRACE_MS
+    for (;;) {
+      if (!this.api.isConnected()) {
+        log('finish: not connected; waiting for the connection to come back')
+        recordMobileEvent('dictation-finish-waiting', {})
+        if (!await this.connectedWithin(deadline - performance.now())) throw new Error(CONNECTION_GONE)
+      }
+      if (this.stale || this.resuming) await this.resync()
+      if (this.lost) throw this.lost
+      // The resume itself lost the connection: wait for the next one.
+      if (this.stale) continue
+      this.flush()
+      try {
+        return await this.api.finish(id)
+      } catch (err) {
+        if (!(err instanceof ConnectionLostError) || performance.now() >= deadline) throw err
+        log(`finish: ${err.message}; asking again once reconnected`)
+      }
+    }
+  }
+
+  private connectedWithin(ms: number): Promise<boolean> {
+    if (ms <= 0) return Promise.resolve(false)
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const off = this.api.onConnect(() => { clearTimeout(timer); off(); resolve(true) })
+      timer = setTimeout(() => { off(); resolve(false) }, ms)
+    })
+  }
+
+  /** Back after a drop: ask the server how much it has, and send the rest from there. */
+  private resync(): Promise<void> {
+    if (this.resuming) return this.resuming
+    this.stale = false
+    const id = this.id
+    // No session yet: the start was lost with the connection, and finish says so.
+    if (!id || this.lost || this.cancelled) return Promise.resolve()
+    this.resuming = this.api.resume(id).then(
+      (received) => {
+        const seconds = (n: number) => (n / TARGET_SAMPLE_RATE).toFixed(1)
+        log(`resumed after a reconnect: the server has ${seconds(received)}s of ${seconds(this.pcmLength)}s`)
+        recordMobileEvent('dictation-resumed', { serverMs: Math.round(received / TARGET_SAMPLE_RATE * 1000), heldMs: Math.round(this.pcmLength / TARGET_SAMPLE_RATE * 1000) })
+        this.sent = Math.min(received, this.pcmLength)
+      },
+      (err: unknown) => {
+        // Dropped again before the answer: the next connect asks again.
+        if (err instanceof ConnectionLostError) {
+          this.stale = true
+          return
+        }
+        this.lost = err instanceof Error ? err : new Error(String(err))
+        log(`resume failed: ${this.lost.message}`)
+        recordMobileEvent('dictation-resume-failed', { error: this.lost.message })
+      },
+    ).finally(() => {
+      this.resuming = null
+      this.flush()
+    })
+    return this.resuming
   }
 
   /** Abandon the dictation. `broken`: its microphone went silent, so a held one is closed too. */
@@ -309,21 +412,31 @@ export class Dictation {
     }
     this.cancelled = true
     this.stopCapture(broken)
+    this.offConnect()
+    this.releaseReload()
     if (this.id) this.api.cancel(this.id)
   }
 
-  private flush(): void {
-    if (!this.id || this.queued.length === 0) return
-    const total = this.queued.reduce((n, b) => n + b.length, 0)
-    const joined = new Int16Array(total)
-    let offset = 0
-    for (const block of this.queued) {
-      joined.set(block, offset)
-      offset += block.length
+  private keep(block: Int16Array): void {
+    const needed = this.pcmLength + block.length
+    if (needed > this.pcm.length) {
+      const grown = new Int16Array(Math.max(needed, this.pcm.length * 2))
+      grown.set(this.pcm.subarray(0, this.pcmLength))
+      this.pcm = grown
     }
-    this.queued = []
-    this.api.audio(this.id, pcmToBase64(joined), this.sentSamples)
-    this.sentSamples += total
+    this.pcm.set(block, this.pcmLength)
+    this.pcmLength = needed
+  }
+
+  /** Send what has not been sent on this connection, unless it is down or not yet caught up. */
+  private flush(): void {
+    const id = this.id
+    if (!id || this.cancelled || this.stale || this.resuming || this.lost || !this.api.isConnected()) return
+    while (this.sent < this.pcmLength) {
+      const end = Math.min(this.pcmLength, this.sent + MAX_SEND_SAMPLES)
+      this.api.audio(id, pcmToBase64(this.pcm.subarray(this.sent, end)), this.sent)
+      this.sent = end
+    }
   }
 
   private stopCapture(broken = false): void {
