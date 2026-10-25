@@ -74,7 +74,10 @@ The bottom bar (`BottomBar.tsx`) is a solid band the canvas stops above: AI usag
 with the reading's age; the server reads the tracker's `--json` CLI
 (`src/server/usage-tracker.ts`). Dictation streams 16 kHz PCM to the server, which
 relays it through Voice Operator (`src/server/remote-dictation.ts`) — the only
-process that may hold Wispr's rotating tokens.
+process that may hold Wispr's rotating tokens. A dropped connection does not end
+it: the server keeps it 30 s, the page keeps its audio and resends what the
+server lacks on reconnect (`dictation-resume`), a stop waits for the connection,
+and the resync reload waits for the dictation (`dictation.ts`, `reload-guard.ts`).
 
 Stacked under the AI usage on the bottom bar, against Control, is the Mac's
 system monitor as mini-stats (`~/mini-stats`) draws it in the menu bar
