@@ -322,18 +322,6 @@ export function AutomationCard({
               <option key={mode} value={mode}>{AUTOMATION_OVERLAP_LABELS[mode]}</option>
             ))}
           </select>
-          {(overlap === 'queue' || queued > 0) && (
-            <span className="automation-card__queue">
-              {queued} queued
-              <button
-                className="automation-card__control automation-card__clear"
-                disabled={queued === 0}
-                onClick={() => onClearQueue(id)}
-              >
-                Clear
-              </button>
-            </span>
-          )}
           <label className="automation-card__enabled">
             <input
               type="checkbox"
@@ -401,16 +389,34 @@ export function AutomationCard({
             if (e.key === 'Escape') { e.preventDefault(); setPromptDraft(prompt); promptRef.current?.blur() }
           }}
         />
+        {/* The queue sits on the stats' last line: the mode's label takes the
+            whole top row, so it can be read without opening the menu. */}
         <div className="automation-card__stats">
-          {runStats ? (
+          {runStats && (
             <>
               <span>Last run {formatUsd(runStats.last.costUsd)} · {formatTokens(runStats.last.tokens)} tokens</span>
               <span>{formatRunSpan(runStats.last)}</span>
-              <span>Total {formatUsd(runStats.totalCostUsd)} · {runStats.runs} {runStats.runs === 1 ? 'run' : 'runs'}</span>
             </>
-          ) : (
-            <span>No finished runs yet</span>
           )}
+          <div className="automation-card__stats-row">
+            <span>
+              {runStats
+                ? `Total ${formatUsd(runStats.totalCostUsd)} · ${runStats.runs} ${runStats.runs === 1 ? 'run' : 'runs'}`
+                : 'No finished runs yet'}
+            </span>
+            {(overlap === 'queue' || queued > 0) && (
+              <span className="automation-card__queue">
+                {queued} queued
+                <button
+                  className="automation-card__control automation-card__clear"
+                  disabled={queued === 0}
+                  onClick={() => onClearQueue(id)}
+                >
+                  Clear
+                </button>
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </CardShell>

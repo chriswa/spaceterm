@@ -2206,6 +2206,13 @@ html, body, #root {
   gap: 8px;
 }
 
+.automation-card__stats-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .automation-card__overlap,
 .automation-card__clear {
   font: inherit;
@@ -2215,6 +2222,14 @@ html, body, #root {
   border: 1px solid #585b70;
   border-radius: 6px;
   padding: 3px 6px;
+}
+
+/* Sized so the longest mode label is read whole on the closed menu beside the
+   Enabled box; the menu shrinks rather than pushing the box off the card. */
+.automation-card__overlap {
+  font-size: 11px;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 .automation-card__clear:disabled {

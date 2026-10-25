@@ -1779,4 +1779,9 @@ describe('new automation cards', () => {
     const { sm } = harness()
     expect(sm.createAutomation(ROOT_NODE_ID, 0, 0).enabled).toBe(false)
   })
+
+  it('queue overlapping triggers, so none is silently lost', () => {
+    const { sm } = harness()
+    expect(sm.createAutomation(ROOT_NODE_ID, 0, 0).overlap).toBe('queue')
+  })
 })

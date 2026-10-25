@@ -63,10 +63,12 @@ export function parseTrigger(text: string): ParsedTrigger {
  * - `reuse`: with exactly one child, send it the trigger line as a new prompt
  *   rather than starting another agent.
  */
-export const AUTOMATION_OVERLAPS = ['parallel', 'single', 'queue', 'reuse'] as const
+/** In menu order: the three single-agent modes, then fan-out. */
+export const AUTOMATION_OVERLAPS = ['queue', 'single', 'reuse', 'parallel'] as const
 export type AutomationOverlap = (typeof AUTOMATION_OVERLAPS)[number]
 
-export const DEFAULT_AUTOMATION_OVERLAP: AutomationOverlap = 'single'
+/** Queue, so a firing that lands while an agent is still at work is never silently lost. */
+export const DEFAULT_AUTOMATION_OVERLAP: AutomationOverlap = 'queue'
 
 /** The fields of an automation card the user edits. Any subset may change at once. */
 export interface AutomationPatch {
@@ -85,11 +87,16 @@ export function isAutomationOverlap(value: unknown): value is AutomationOverlap 
   return (AUTOMATION_OVERLAPS as readonly unknown[]).includes(value)
 }
 
+/**
+ * Worded to be read on the closed dropdown, without the others for contrast:
+ * how many agents, then what happens to a trigger while one is running. A
+ * single agent lasts until it exits (self-terminates, or is archived).
+ */
 export const AUTOMATION_OVERLAP_LABELS: Record<AutomationOverlap, string> = {
-  parallel: 'Run in parallel',
-  single: 'Skip if running',
-  queue: 'Queue until done',
-  reuse: 'Send to child'
+  queue: 'Single agent: queue triggers until it exits',
+  single: 'Single agent: drop triggers until it exits',
+  reuse: 'Single agent: send triggers as follow-up prompts',
+  parallel: 'Multiple agents: new agent per trigger'
 }
 
 /**
