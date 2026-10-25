@@ -2088,8 +2088,9 @@ html, body, #root {
   -webkit-box-orient: vertical;
   overflow: hidden;
   min-height: calc(11px * 1.35 * 2);
-  /* A socket path has no spaces to break at. */
+  /* A socket path has no spaces to break at, and goes on its own line. */
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 .automation-card__stats {

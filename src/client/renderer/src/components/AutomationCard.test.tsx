@@ -67,7 +67,7 @@ describe('AutomationCard', () => {
   it('names the socket an event arrives on, as the server reports it', () => {
     useScriptsSocketPathStore.getState().set('/srv/home/scripts.sock')
     renderCard({ trigger: 'custom_x' })
-    expect(document.querySelector('.automation-card__status')?.textContent).toBe('Runs when /srv/home/scripts.sock receives custom_x')
+    expect(document.querySelector('.automation-card__status')?.textContent).toBe('Runs when custom_x is sent to socket:\n/srv/home/scripts.sock')
   })
 
   it('asks for the custom_ prefix rather than reading an event id as cron', () => {

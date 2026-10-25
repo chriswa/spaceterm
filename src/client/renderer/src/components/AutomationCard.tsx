@@ -100,7 +100,12 @@ function describeTrigger(kind: TriggerKind, trigger: string, scriptsSocketPath: 
         ? { text: 'Not a cron expression. Five fields: minute hour day month weekday, e.g. 0 9 * * 1-5', detail: parsed.error, error: true }
         : { text: parsed.error, error: true }
     case 'event':
-      return { text: `Runs when ${scriptsSocketPath ?? 'the scripts socket'} receives ${parsed.eventId}`, error: false }
+      return {
+        text: scriptsSocketPath
+          ? `Runs when ${parsed.eventId} is sent to socket:\n${scriptsSocketPath}`
+          : `Runs when ${parsed.eventId} is sent to the scripts socket`,
+        error: false
+      }
     case 'cron': {
       const next = new Cron(parsed.expression, { paused: true }).nextRun()
       return { text: next ? `Next run ${next.toLocaleString()}` : 'Never runs again', error: false }
