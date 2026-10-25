@@ -238,6 +238,16 @@ function renderReturn(news: ReturnNews, spoke: boolean): string {
  */
 export const HEARD_AGAIN = 'YOU ARE NO LONGER QUIET: the user has reconnected you since you went quiet, so they hear you again. Speak as usual from this message on.'
 
+/**
+ * Opens the first message the user can hear after Control was told they were
+ * away — by `AWAY`, or by being sent away with a fixed phrase — when nothing
+ * they missed brings `renderReturn`'s news to say so. Without it the model
+ * reads the last word it had, that they are away, as still in force, and
+ * answers a question it can be heard answering with silence.
+ */
+export const LISTENING_AGAIN = 'THE USER IS LISTENING AGAIN: since you were last told they were away, a device has taken you back, so they hear you now. ' +
+  'Whatever said they were away no longer holds: speak as usual from this message on.'
+
 const USER_SAYS = 'THE USER SAYS: '
 /** Opens a backlog item brought up at a pause: see backlog-pause.ts. */
 const FROM_BACKLOG = 'FROM YOUR BACKLOG: the user has finished with the last topic and gone quiet, so this was taken off your backlog for you to bring up now: '
@@ -251,16 +261,16 @@ const WATCHING_TRAILER = /\n\nWATCHING [^\n]*$/
 /**
  * One turn's message: any events, and then what the user said — or nothing, when the turn is the receptionist
  * deciding whether events are worth speaking up about. `listener` is `away` when nobody can hear the reply, or
- * what the user missed when they have just come back. `heardAgain` opens it with `HEARD_AGAIN`. `watching` is the
+ * what the user missed when they have just come back. `heardAgain` opens it with `HEARD_AGAIN`, or `LISTENING_AGAIN`. `watching` is the
  * tokens of the agents Control is watching. `pulled` is the backlog item the system took off for Control to bring
  * up, as backlog_next would describe it: see backlog-pause.ts.
  */
 export function renderTurnBody(
-  events: readonly ReceptionistEvent[], heard: string | undefined, listener?: 'away' | ReturnNews, heardAgain = false, backlog = 0,
+  events: readonly ReceptionistEvent[], heard: string | undefined, listener?: 'away' | ReturnNews, heardAgain?: 'reconnected' | 'listening', backlog = 0,
   watching: readonly string[] = [], pulled?: string,
 ): string {
   const sections: string[] = []
-  if (heardAgain) sections.push(HEARD_AGAIN)
+  if (heardAgain) sections.push(heardAgain === 'reconnected' ? HEARD_AGAIN : LISTENING_AGAIN)
   if (listener && listener !== 'away') sections.push(renderReturn(listener, heard !== undefined))
   if (events.length) sections.push(`EVENTS:\n${events.map(renderEvent).join('\n')}`)
   if (pulled !== undefined) sections.push(`${FROM_BACKLOG}${pulled}`)

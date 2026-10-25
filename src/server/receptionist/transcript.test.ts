@@ -67,7 +67,7 @@ describe('parseRecordLine', () => {
   it("shows the user's words without what was sent along with them", () => {
     const body = renderTurnBody(
       [{ kind: 'agent-stopped', agent: '{Kevin:amber-otter}', nodeId: asNodeId('kevin'), state: 'stopped', lastSaid: 'done' }],
-      'what is Kevin doing?', undefined, false, 2, ['{Kevin:amber-otter}'],
+      'what is Kevin doing?', undefined, undefined, 2, ['{Kevin:amber-otter}'],
     )
     const entry = parseRecordLine(line('user', body), 0)
     expect(entry).toMatchObject({ kind: 'user', text: 'what is Kevin doing?' })
@@ -146,8 +146,8 @@ describe('splitTurnBody', () => {
   it.each([
     ['alone', renderTurnBody([], heard)],
     ['away', renderTurnBody([], heard, 'away')],
-    ['with a backlog', renderTurnBody([], heard, undefined, false, 1)],
-    ['back from away', renderTurnBody([], heard, { events: [], unheard: true }, true, 3)],
+    ['with a backlog', renderTurnBody([], heard, undefined, undefined, 1)],
+    ['back from away', renderTurnBody([], heard, { events: [], unheard: true }, 'reconnected', 3)],
   ])('recovers exactly what the user said: %s', (_, body) => {
     expect(splitTurnBody(body)?.heard).toBe(heard)
   })

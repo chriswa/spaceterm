@@ -6,7 +6,7 @@ import type { SpeechBackend, SpeechContent, SpeechStatus } from '../voice-operat
 import type { SideQuestionResult } from '../side-questions'
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
-import { ASK_AGENT_REMINDER, BACK_REQUEST, HANDOVER_PROMPT, HEARD_AGAIN, RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
+import { ASK_AGENT_REMINDER, BACK_REQUEST, HANDOVER_PROMPT, HEARD_AGAIN, LISTENING_AGAIN, RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
 import {
   MAX_TURN_RETRIES, PROMPT_HASH, RETRYING_AFTER_ERROR, TURN_RETRY_MS, Receptionist, SessionBusy, sideQuestionPrompt, STOP_HOLD_MS, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type ReceptionistDeps, type RecordedMessage, type SavedSession, type SessionTurn,
 } from './receptionist'
@@ -1010,8 +1010,14 @@ describe('Receptionist', () => {
         (turn) => {
           expect(turn.prompt).toContain('The user said a fixed phrase that sends you away')
           expect(turn.prompt).not.toContain('carry on from where you stopped')
-          expect(turn.prompt).toContain('THE USER SAYS: I am back')
+          // Being sent away is told with the very message they are back for: so is their being back, after it.
+          expect(turn.prompt.indexOf(LISTENING_AGAIN)).toBeGreaterThan(turn.prompt.indexOf('sends you away'))
+          expect(turn.prompt.indexOf(LISTENING_AGAIN)).toBeLessThan(turn.prompt.indexOf('THE USER SAYS: I am back'))
           return reply([{ from: 'control', text: 'Welcome back.' }])
+        },
+        (turn) => {
+          expect(turn.prompt).not.toContain(LISTENING_AGAIN)
+          return reply([{ from: 'control', text: 'Yes.' }])
         },
       ],
     })
@@ -1025,6 +1031,35 @@ describe('Receptionist', () => {
     await h.receptionist.hear('I am back', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
+    await h.receptionist.hear('still there?', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(3)
+  })
+
+  it('told the user is away, is told they are listening again with the next turn they can hear, though they missed nothing', async () => {
+    const h = harness({
+      replies: [
+        (turn) => {
+          expect(turn.prompt).toContain('THE USER IS AWAY')
+          return reply([])
+        },
+        (turn) => {
+          expect(turn.prompt).not.toContain('THE USER IS AWAY')
+          expect(turn.prompt).not.toContain('THE USER IS BACK')
+          expect(turn.prompt.indexOf(LISTENING_AGAIN)).toBeGreaterThanOrEqual(0)
+          expect(turn.prompt.indexOf(LISTENING_AGAIN)).toBeLessThan(turn.prompt.indexOf('THE USER SAYS: can you hear me?'))
+          return reply([{ from: 'control', text: 'Yes.' }])
+        },
+      ],
+    })
+    h.receptionist.setListener(undefined)
+    await h.receptionist.hear('hello?', 'typed')
+    await flush()
+    h.receptionist.setListener(h.listener)
+    await h.receptionist.hear('can you hear me?', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(said(h).at(-1)).toContain('Yes.')
   })
 
   it('never overlaps two messages to the session, and says when a reply was talked over', async () => {

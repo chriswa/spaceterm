@@ -664,6 +664,14 @@ export class Receptionist {
    */
   private letGoUntold = false
   /**
+   * Control has been told the user is away — a turn's `AWAY`, or `sentAway` —
+   * and not yet told otherwise. The first turn the user can hear opens with
+   * `LISTENING_AGAIN`, unless news of their return says so already: coming
+   * back with nothing missed starts no turn of its own, and the model, left
+   * with "away" as the last word, stayed silent to the next question.
+   */
+  private awayTold = false
+  /**
    * Sends not yet handed to the agent's terminal: one after an interrupt
    * waits for the Escape to settle first. restart_server waits for them, or
    * the message would go down with the server.
@@ -784,6 +792,7 @@ export class Receptionist {
    * a dictation with nothing for Control. `cutOff` as for `heardNothing`.
    */
   sentAway(cutOff: boolean): void {
+    this.awayTold = true
     if (cutOff || this.stoppedForUser) this.stoppedForUser = 'sent-away'
     else this.notes.push(SENT_AWAY)
     if (!this.held) this.resumeIfStopped()
@@ -1751,10 +1760,13 @@ export class Receptionist {
     this.keepAway()
     const heardAgain = !away && this.letGoUntold
     if (heardAgain) this.letGoUntold = false
+    const listeningAgain = !away && this.awayTold
+    this.awayTold = away
+    const again = heardAgain ? 'reconnected' as const : listeningAgain && !news ? 'listening' as const : undefined
     // As things stand at the turn's start, however late its message leaves: words carried to it change, nothing else does.
     const backlogSize = this.deps.backlog.size
     const watching = this.watching()
-    const render = (said: string | undefined) => renderTurnBody(events, said, away ? 'away' : news, heardAgain, backlogSize, watching, pulled?.described)
+    const render = (said: string | undefined) => renderTurnBody(events, said, away ? 'away' : news, again, backlogSize, watching, pulled?.described)
     // With the user's words, the events are in the transcript already, as what came with them.
     if (words === undefined && (events.length || news)) {
       this.trace('events', `${events.length ? `News: ${events.map(eventHeadline).join('; ')}` : 'You were back'}${away ? ', with nobody listening' : ''}`,
@@ -1779,7 +1791,7 @@ export class Receptionist {
     try {
       const reply = await this.converse(attempt, opening, earlier, away, taken)
       if (!attempt.isCurrent) {
-        this.requeue(attempt, events, news, heardAgain)
+        this.requeue(attempt, events, news, heardAgain, listeningAgain)
         this.putBack(taken)
         return
       }
@@ -1800,7 +1812,7 @@ export class Receptionist {
       this.putBack(taken)
       // Stopped before the session got the user's words, `ask` carried them on to the next message.
       const unsent = err instanceof Unsent && err.first
-      if (!attempt.isCurrent) { this.requeue(attempt, events, news, heardAgain); return }
+      if (!attempt.isCurrent) { this.requeue(attempt, events, news, heardAgain, listeningAgain); return }
       // Failed with the words, and any carried to them: tried again a little later, unless they have been tried enough.
       const { words: sent, failures } = opening
       const givenUp = sent !== undefined && !unsent && failures >= MAX_TURN_RETRIES
@@ -1877,8 +1889,9 @@ export class Receptionist {
    * that superseded this one may already be over by now — so this has to
    * offer them a turn of their own, not just wait for the next phase change.
    */
-  private requeue(attempt: Attempt, events: readonly ReceptionistEvent[], news: ReturnNews | undefined, heardAgain: boolean): void {
+  private requeue(attempt: Attempt, events: readonly ReceptionistEvent[], news: ReturnNews | undefined, heardAgain: boolean, listeningAgain: boolean): void {
     if (heardAgain) this.letGoUntold = true
+    if (listeningAgain) this.awayTold = true
     if (news) this.returnNews = mergeNews(news, this.returnNews)
     this.keepAway()
     if (!events.length && !news) return
