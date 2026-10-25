@@ -509,7 +509,7 @@ Spaceterm is its client (`hands-free.ts`):
   Turn's one answer about the pause (asked once, 0.5 s in), with a **red
   line** at its threshold, watched for comparison and deciding nothing;
   **middle, yellow**, turn-1-mini, which ends the dictation: its latest
-  answer, a red line at its threshold (0.17), and a dark tick at its highest
+  answer, a red line at its threshold (0.5 for now; Voice Operator sends it), and a dark tick at its highest
   since the pause began — half a second after it first reaches the line the
   dictation ends, unless you speak first; **right, magenta**, the quiet since you last
   spoke, ending it at the top (3 s, growing to 4 s at most in a long dictation).

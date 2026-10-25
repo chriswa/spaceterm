@@ -233,7 +233,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
           mini: typeof event.mini === 'number' ? {
             p: event.mini,
             peak: typeof event.miniPeak === 'number' ? event.miniPeak : null,
-            threshold: typeof event.miniThreshold === 'number' ? event.miniThreshold : 0.17,
+            threshold: typeof event.miniThreshold === 'number' ? event.miniThreshold : 0.5,
           } : null,
         })
         break
