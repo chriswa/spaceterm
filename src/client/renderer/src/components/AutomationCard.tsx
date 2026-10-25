@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Cron } from 'croner'
 import { AUTOMATION_WIDTH, AUTOMATION_HEIGHT } from '../../../../shared/node-size'
-import type { ColorPreset } from '../lib/color-presets'
+import { DEFAULT_PRESET, type ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
 import type { ArchivedNode } from '../../../../shared/state'
 import {
@@ -159,10 +159,10 @@ export function AutomationCard({
       isReparenting={reparentingNodeId === id}
       className={`automation-card ${focused ? 'automation-card--focused' : selected ? 'automation-card--selected' : ''}`}
       style={{
-        // Opaque, unlike a title card's half-transparent surface: the edge to
-        // the card's children runs underneath, and showing through a form it
-        // reads as part of it.
-        backgroundColor: '#000000',
+        // The terminal background for the card's colour, at full opacity rather
+        // than `cardSurfaceColor`'s half: the edge to the card's children runs
+        // underneath, and showing through a form it reads as part of it.
+        backgroundColor: resolvedPreset?.terminalBg ?? DEFAULT_PRESET.terminalBg,
         '--automation-fg': resolvedPreset?.titleBarBg ?? '#f0a94a',
       } as React.CSSProperties}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
