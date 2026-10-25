@@ -32,7 +32,7 @@
 }
 .m-hands-free.m-hands-free--held { background: #fff; color: #11111b; }
 /* The conversation window (HandsFreeButton.tsx): no "Control" needed until
-   this deep blue ring has drained. It moves a second at a time; the transition
+   this orange ring has drained. It moves a second at a time; the transition
    makes that a steady drain. All of hands-free shows on this button, on the
    phone and the Mac alike. */
 .m-hands-free__ring {
@@ -45,8 +45,8 @@
 }
 .m-hands-free__ring circle {
   fill: none;
-  /* A deep blue: the pale one vanished against the held button's white. */
-  stroke: #1e66f5;
+  /* A strong orange: pale and deep blues both read poorly against the held button's white. */
+  stroke: #fe640b;
   stroke-width: 3;
   stroke-linecap: round;
   transition: stroke-dashoffset 1s linear;

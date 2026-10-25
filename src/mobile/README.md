@@ -503,7 +503,7 @@ Spaceterm is its client (`hands-free.ts`):
   all of it on the hands-free button, the same on the phone and the Mac
   (the microphone button only turns orange while your words are taken
   down): a thick dark ring while speech is checked for "Control"; the
-  conversation window as a deep blue ring, draining as its quiet runs out; and
+  conversation window as an orange ring, draining as its quiet runs out; and
   while a dictation runs, the button's two halves — **left, green**, Smart Turn's latest
   answer, with a **red line** at the threshold while it is being asked;
   **right, magenta**, the quiet since you last spoke, ending it at the top.
