@@ -100,7 +100,13 @@ if [ "${device_tunnel:-}" = "unavailable" ]; then
 fi
 echo "Building for ${device_name}…"
 
-# Built against the SDK rather than a destination: a destination makes Xcode
+# The audio engine and hands-free's stream are Voice Operator's iOS SDK, a
+# local Swift package the project references by relative path:
+# ../../../../voiceop/sdk/VoiceOperatorKit — a voiceop checkout beside this
+# repo. Not fingerprinted by native-version.mjs: a change there alone does not
+# mark the installed app as behind.
+#
+# Built against the SDK rather than a destination:a destination makes Xcode
 # want the whole iOS platform component (simulators included) downloaded first.
 # Automatic signing registers the paired phone with the team if it is new.
 # A previous run's signed app must not pass for this one's.

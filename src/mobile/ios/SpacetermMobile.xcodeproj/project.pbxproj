@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		5E0000000000000000000040 /* VoiceOperatorHandsFree in Frameworks */ = {isa = PBXBuildFile; productRef = 5E0000000000000000000042 /* VoiceOperatorHandsFree */; };
+		5E0000000000000000000041 /* VoiceOperatorAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 5E0000000000000000000043 /* VoiceOperatorAudio */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		5E0000000000000000000001 /* SpacetermMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpacetermMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -36,6 +41,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5E0000000000000000000040 /* VoiceOperatorHandsFree in Frameworks */,
+				5E0000000000000000000041 /* VoiceOperatorAudio in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -77,6 +84,10 @@
 				5E0000000000000000000002 /* SpacetermMobile */,
 			);
 			name = SpacetermMobile;
+			packageProductDependencies = (
+				5E0000000000000000000042 /* VoiceOperatorHandsFree */,
+				5E0000000000000000000043 /* VoiceOperatorAudio */,
+			);
 			productName = SpacetermMobile;
 			productReference = 5E0000000000000000000001 /* SpacetermMobile.app */;
 			productType = "com.apple.product-type.application";
@@ -105,6 +116,9 @@
 			);
 			mainGroup = 5E0000000000000000000010;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				5E0000000000000000000044 /* XCLocalSwiftPackageReference "../../../../voiceop/sdk/VoiceOperatorKit" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 5E0000000000000000000011 /* Products */;
 			projectDirPath = "";
@@ -252,6 +266,26 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		5E0000000000000000000044 /* XCLocalSwiftPackageReference "../../../../voiceop/sdk/VoiceOperatorKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../../../voiceop/sdk/VoiceOperatorKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		5E0000000000000000000042 /* VoiceOperatorHandsFree */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5E0000000000000000000044 /* XCLocalSwiftPackageReference "../../../../voiceop/sdk/VoiceOperatorKit" */;
+			productName = VoiceOperatorHandsFree;
+		};
+		5E0000000000000000000043 /* VoiceOperatorAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5E0000000000000000000044 /* XCLocalSwiftPackageReference "../../../../voiceop/sdk/VoiceOperatorKit" */;
+			productName = VoiceOperatorAudio;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 5E0000000000000000000003 /* Project object */;
 }
