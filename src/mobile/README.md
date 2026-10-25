@@ -475,7 +475,7 @@ them, so the Ring/Silent switch does not silence them (`playHandsFreeCue`):
 | three soft steps up | hands-free is ready: Voice Operator is listening (its `ready` cue) |
 | two notes up | hands-free has begun taking your words down |
 | two notes down | they have been taken down and sent |
-| three soft steps down | the conversation window closed; "Control" is needed again |
+| three soft steps down | the conversation window closed, or you said "stop listening"; "Control" is needed again |
 | an octave down, held low | "Let me turn this off" (or "Control, shutdown"): Control is away until you say "Control" again |
 
 The microphone button leaves Control where it is — it does not bring Control
@@ -531,14 +531,17 @@ Spaceterm is its client (`hands-free.ts`):
 - **Its cues** are Voice Operator's to call and this device's to play: three
   soft steps up as it is ready, two notes up as your words begin to be taken
   down and two down as they are sent, the sad tune (`notWakeWord`) for speech
-  that did not start with "Control", three steps down as the window closes,
+  that did not start with "Control" (three times in a row at most, then quiet
+  until you say "Control" again), three steps down as the window closes,
   an octave down for "let me turn this off", and the soft repeating beep
   while it decides whether you said "Control" (`pending`).
 - **The conversation window**: after "Control", and as hands-free is turned
   on, anything you say starts a dictation without it — your first word kept,
   a cough or filler ignored — including cutting Control off mid-reply. It
   stays open while either of you is speaking and closes once neither has for
-  15 s.
+  15 s. **"Stop listening"** (or "Control, stop listening") closes it at once,
+  as if the 15 s had run out, and Control gets no words; hands-free stays on,
+  and the sad tune stays quiet until you say "Control" again.
 - **Interrupting Control.** Anyone speaking over Control's voice turns it
   down at once; once Voice Operator says it was for Control, it is cut off
   (`cut-in`), counted to when you began talking. If nothing is caught after
