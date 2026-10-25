@@ -1,4 +1,4 @@
-import { CARD_AGENT_MARK_HEIGHT, CARD_HAT_HEIGHT, ROOT_DISC_RADIUS, TITLE_CHAR_WIDTH, TITLE_H_PADDING, TITLE_HEIGHT, TITLE_LINE_HEIGHT } from './node-size'
+import { AUTOMATION_GEAR_SIZE, CARD_AGENT_MARK_HEIGHT, CARD_HAT_HEIGHT, ROOT_DISC_RADIUS, TITLE_CHAR_WIDTH, TITLE_H_PADDING, TITLE_HEIGHT, TITLE_LINE_HEIGHT } from './node-size'
 import { cacheCountdownText, formatCountdownClock, formatElapsedShort } from './elapsed-label'
 import { measureCard } from './card-types'
 import { isCacheTimerMuted, type NodeData } from './state'
@@ -48,6 +48,11 @@ export function nodeLabelText(data: NodeData, markdownContent?: string): string 
 
   if (data.type === 'terminal') {
     return data.shellTitleHistory[0]?.trim() || null
+  }
+
+  // What fires it, so a canvas of automations reads as a list of schedules and events.
+  if (data.type === 'automation') {
+    return data.trigger.trim() || null
   }
 
   if (data.type === 'markdown') {
@@ -296,6 +301,11 @@ function statusLabelOffsetY(cardHeight: number, labelHeight: number, scale: numb
  * without being hunted for. Cards are centre-anchored, so every term here is
  * measured from the centre outwards.
  */
+/** The height a name label is spaced above: the card, or for an automation the gear behind it. */
+function labelClearanceHeight(node: NodeData): number {
+  return node.type === 'automation' ? AUTOMATION_GEAR_SIZE : measureCard(node).height
+}
+
 export function layOutNodeLabel(node: NodeData, markdownContent?: string): NodeLabel | null {
   const text = nodeLabelText(node, markdownContent)
   if (!text) return null
@@ -309,7 +319,7 @@ export function layOutNodeLabel(node: NodeData, markdownContent?: string): NodeL
     lines,
     textScale,
     x: node.x,
-    y: node.y + nameLabelOffsetY(measureCard(node).height, box.height),
+    y: node.y + nameLabelOffsetY(labelClearanceHeight(node), box.height),
     anchorX: node.x,
     anchorY: node.y,
     ...box

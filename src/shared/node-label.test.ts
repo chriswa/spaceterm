@@ -6,7 +6,7 @@ import {
   labelClickAction, agentCaptionReserve, type NodeLabel, type CaptionReserve
 } from './node-label'
 import { ELAPSED_TICK_MS } from './elapsed-label'
-import { ROOT_DISC_RADIUS, TITLE_LINE_HEIGHT } from './node-size'
+import { AUTOMATION_GEAR_SIZE, ROOT_DISC_RADIUS, TITLE_LINE_HEIGHT } from './node-size'
 import { measureCard } from './card-types'
 import type { MarkdownNodeData, NodeData, TerminalNodeData } from './state'
 import { asNodeId, asPtySessionId, ROOT_NODE_ID } from './ids'
@@ -611,5 +611,23 @@ describe('placeNameTag', () => {
     const node = terminal()
     const tag = placeNameTag(node, 'Tessa', undefined)
     expect(tag.y + tag.height / 2).toBeLessThan(node.y - measureCard(node).height / 2 - LABEL_CARD_GAP)
+  })
+})
+
+describe('automation labels', () => {
+  const automation = (trigger: string, name?: string) => ({
+    id: asNodeId('auto'), parentId: ROOT_NODE_ID, x: 0, y: 0, zIndex: 0, archivedChildren: [],
+    type: 'automation', trigger, overlap: 'single', queue: [], ...(name ? { name } : {})
+  }) as NodeData
+
+  it('captions an automation with its trigger, unless it was named', () => {
+    expect(nodeLabelText(automation(' 0 9 * * 1-5 '))).toBe('0 9 * * 1-5')
+    expect(nodeLabelText(automation('custom_x', 'Morning briefing'))).toBe('Morning briefing')
+    expect(nodeLabelText(automation(''))).toBeNull()
+  })
+
+  it('sits above the gear behind the card, not on it', () => {
+    const label = layOutNodeLabel(automation('custom_x'))!
+    expect(label.y + label.height / 2).toBeLessThan(-AUTOMATION_GEAR_SIZE / 2)
   })
 })

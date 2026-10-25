@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Cron } from 'croner'
-import { AUTOMATION_WIDTH, AUTOMATION_HEIGHT } from '../../../../shared/node-size'
+import { AUTOMATION_WIDTH, AUTOMATION_HEIGHT, AUTOMATION_GEAR_SIZE } from '../../../../shared/node-size'
 import { DEFAULT_PRESET, type ColorPreset } from '../lib/color-presets'
 import type { Camera } from '../lib/camera'
 import type { ArchivedNode, AutomationRunStats } from '../../../../shared/state'
@@ -27,7 +27,7 @@ const DRAG_THRESHOLD = 5
  * constants rather than the shell's box, and out of flow, so it never changes
  * the size the card is measured or placed at.
  */
-const GEAR_BACKDROP_SIZE = AUTOMATION_WIDTH * 1.5
+const GEAR_BACKDROP_SIZE = AUTOMATION_GEAR_SIZE
 const GEAR_BACKDROP_STYLE: React.CSSProperties = {
   left: AUTOMATION_WIDTH / 2 - GEAR_BACKDROP_SIZE / 2,
   top: AUTOMATION_HEIGHT / 2 - GEAR_BACKDROP_SIZE / 2,
