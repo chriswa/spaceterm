@@ -45,6 +45,7 @@ const REAL_DEPS: DictationPresenceDeps = {
 export class DictationPresence {
   private phoneSpeaking = false
   private macSpeaking = false
+  private handsFreeSpeaking = false
   private lastMac: { launch: string; seq: number } | undefined
   private cancelLimit: (() => void) | undefined
 
@@ -53,11 +54,16 @@ export class DictationPresence {
     private readonly deps: DictationPresenceDeps = REAL_DEPS,
   ) {}
 
-  get speaking(): boolean { return this.phoneSpeaking || this.macSpeaking }
+  get speaking(): boolean { return this.phoneSpeaking || this.macSpeaking || this.handsFreeSpeaking }
 
   /** Whether anyone is dictating on the phone, as remote-dictation.ts reports it. */
   phone(speaking: boolean): void {
     this.update(() => { this.phoneSpeaking = speaking })
+  }
+
+  /** Whether anyone is talking to Control hands-free, through Voice Operator (voice-operator-hands-free.ts). */
+  handsFree(speaking: boolean): void {
+    this.update(() => { this.handsFreeSpeaking = speaking })
   }
 
   /**

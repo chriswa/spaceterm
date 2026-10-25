@@ -439,35 +439,32 @@ export interface DictationCancelMessage {
 }
 
 /**
- * At a pause: does the speaker sound finished? The server runs the turn model
- * (src/server/turn-detector.ts) over the dictation's last eight seconds as
- * received. Send it after the audio up to the pause. Replies
- * `dictation-turn-result`, or a correlated `server-error`.
+ * Hands-free on the Mac's microphone, on or off: the desktop toolbar's button.
+ * Voice Operator listens (voice-operator-hands-free.ts); what it says comes
+ * back as `hands-free-event`.
  */
-export interface DictationTurnCheckMessage {
-  type: 'dictation-turn-check'
-  seq: number
-  id: string
+export interface HandsFreeMacMessage {
+  type: 'hands-free-mac'
+  on: boolean
 }
 
 /**
- * Hands-free: is this short clip the wake word ("control") said on its own?
- * The client cut it out of what its held-open microphone heard; the server
- * asks Voice Operator, which checks it on the Mac with Apple's on-device
- * speech model — never Wispr, since the clip is whatever was said in the
- * room. Replies `wake-word-result`, or a correlated `server-error`.
+ * A phone's hands-free stream to Voice Operator, relayed by the server: the
+ * phone's Voice Operator SDK writes lines of Voice Operator's hands-free
+ * protocol, and reads its answers back (`hands-free-stream`). Open, then
+ * lines, then close; the server reads none of them.
  */
-export interface WakeWordCheckMessage {
-  type: 'wake-word-check'
-  seq: number
-  /** 16 kHz signed 16-bit little-endian mono, base64. */
-  pcm: string
-  /**
-   * `wake-word` (the default): does it start with "control"? `speech`: in the
-   * conversation window, is it words at all — not a cough, not filler (the
-   * tuning's `ignoredWords`)? An older server asks the wake-word question.
-   */
-  mode?: 'wake-word' | 'speech'
+export interface HandsFreeStreamOpenMessage {
+  type: 'hands-free-stream-open'
+}
+
+export interface HandsFreeStreamLineMessage {
+  type: 'hands-free-stream-line'
+  line: string
+}
+
+export interface HandsFreeStreamCloseMessage {
+  type: 'hands-free-stream-close'
 }
 
 /**
@@ -1306,8 +1303,10 @@ export type ClientMessage =
   | DictationAudioMessage
   | DictationFinishMessage
   | DictationCancelMessage
-  | DictationTurnCheckMessage
-  | WakeWordCheckMessage
+  | HandsFreeMacMessage
+  | HandsFreeStreamOpenMessage
+  | HandsFreeStreamLineMessage
+  | HandsFreeStreamCloseMessage
   | ReceptionistHandsFreeMessage
   | AgentSearchMessage
   | AgentMetaAvailabilityQueryMessage
@@ -2158,95 +2157,22 @@ export interface DictationResultMessage {
 }
 
 /**
- * The verdict on a `wake-word-check`. A failed check (Voice Operator not
- * running, too old) is no match plus `error`, not a `server-error`: a broadcast
- * error would toast on every short word said near the phone.
+ * What Voice Operator said about hands-free on the Mac's microphone (its
+ * DESIGN.md, "Hands-free"): `state`, `gauge`, `cue`, `cut-in`, `transcript`,
+ * `session`, `session-ended`, as it sent them. Broadcast; the desktop's
+ * hands-free button follows it.
  */
-/** Probability, 0..1, that the speaker has finished; null when the server has no turn model. */
-export interface DictationTurnResultMessage {
-  type: 'dictation-turn-result'
-  seq: number
-  probability: number | null
+export interface HandsFreeEventMessage {
+  type: 'hands-free-event'
+  source: 'mac'
+  event: Record<string, unknown>
 }
 
-export interface WakeWordResultMessage {
-  type: 'wake-word-result'
-  seq: number
-  match: boolean
-  error?: string
-  /**
-   * Which question was answered. A server too old for `speech` answers the
-   * wake-word question instead and leaves this out — which is how the phone
-   * tells it is talking to a server that needs restarting, rather than going
-   * quietly deaf in the conversation window.
-   */
-  mode?: 'wake-word' | 'speech'
-  /** For `speech`: the words began with the wake word ("Control." alone, in the window). */
-  wakeWord?: boolean
-  /**
-   * The words were "let me turn this off" (`whole`), or could be its start
-   * (`start`): see `wakeFreeShutdown` in control-shutdown.ts. Absent from
-   * servers that predate it.
-   */
-  shutdown?: 'whole' | 'start'
-}
-
-/**
- * Hands-free mode's thresholds, in milliseconds but for `turnThreshold`. Defaults live with
- * the listener (`src/mobile/wake-listener.ts`); the operator overrides any of
- * them in `~/.spaceterm/hands-free.json`, read again whenever it changes.
- */
-export interface HandsFreeTuning {
-  /**
-   * No speech for this long before speech for its start to be checked for the
-   * wake word — speech as a voice-activity model hears it, so music or a noisy
-   * room does not count, only someone talking.
-   */
-  noSpeechBeforeMs: number
-  /** How much of the start of what is said is sent to be checked. */
-  onsetWindowMs: number
-  /** Shorter bursts of speech (a click, a cough) are not checked at all. */
-  wordMinMs: number
-  /**
-   * After the wake word, at each pause this long: ask the turn model whether
-   * the speaker sounds finished (src/server/turn-detector.ts).
-   */
-  pauseCheckMs: number
-  /** Its probability at or above this — 0 to 1, not ms — ends the dictation there and then. */
-  turnThreshold: number
-  /**
-   * A first pause this soon after the start is the one after "Control." said
-   * on its own: the turn model is not asked about it, and it waits at least
-   * `afterWakeWordMs` for the speaker to go on.
-   */
-  wakeWordOnlyMs: number
-  afterWakeWordMs: number
-  /**
-   * Otherwise — the model unsure, or unavailable — quiet this long ends it: from
-   * `endSilenceMinMs` for a short request, growing with how long the speaker has
-   * been going to `endSilenceMaxMs` at `endSilenceRampMs`, room for a next thought.
-   */
-  endSilenceMinMs: number
-  endSilenceMaxMs: number
-  endSilenceRampMs: number
-  /** The longest anything said hands-free may run. */
-  maxUtteranceMs: number
-  /** After this device stops playing sound, how long before listening resumes (echo). */
-  playbackTailMs: number
-  /**
-   * The conversation window: after "Control", anything said starts a
-   * dictation without it, until neither side has spoken for this long. Paused
-   * while either is speaking.
-   */
-  conversationMs: number
-  /** Words that do not count as speech in the conversation window (server-side; see hands-free.ts). */
-  ignoredWords?: string[]
-}
-
-/** The operator's overrides from `~/.spaceterm/hands-free.json`. Sent on connect and on every change. */
-export interface HandsFreeTuningMessage {
-  type: 'hands-free-tuning'
-  tuning: Partial<HandsFreeTuning>
+/** A line from Voice Operator for this phone's stream, or word that the stream closed. */
+export interface HandsFreeStreamMessage {
+  type: 'hands-free-stream'
+  kind: 'line' | 'closed'
+  line?: string
 }
 
 export interface AgentMemoryResultMessage {
@@ -2304,9 +2230,8 @@ export type ServerMessage =
   | ReceptionistTranscriptResultMessage
   | ControlImageResultMessage
   | ReceptionistTranscriptAppendedMessage
-  | WakeWordResultMessage
-  | HandsFreeTuningMessage
-  | DictationTurnResultMessage
+  | HandsFreeEventMessage
+  | HandsFreeStreamMessage
   | AgentNamesMessage
   | RestartFlagResultMessage
   | RestartRequiredMessage

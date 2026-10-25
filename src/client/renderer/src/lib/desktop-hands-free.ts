@@ -1,29 +1,28 @@
-import type { ElectronHost } from '../../../../shared/api'
 import type { ServerClient } from '../../../../shared/server-client'
-import { installHandsFreeMode } from '../../../../mobile/hands-free-mode'
-import { onHoldStateChange } from '../../../../mobile/held-microphone'
+import { installHandsFree, macHandsFreeLink, realHandsFreeDeps } from '../../../../mobile/hands-free'
 import { mobileEvents } from '../../../../mobile/mobile-events'
 
 /**
- * Hands-free on the Mac: the phone's hands-free mode (src/mobile/hands-free-mode.ts),
- * switched on from the toolbar's hands-free button, beside Control. Nothing
- * here listens or decides: it is the same code as the phone's, with the Mac
- * as held-microphone.ts's host. What the Mac adds is only what its host needs:
+ * Hands-free on the Mac: Voice Operator listening on the Mac's own microphone
+ * for "Control", switched on and off from the toolbar's hands-free button,
+ * beside Control. Voice Operator does the listening and deciding; the server
+ * holds Spaceterm's connection to it (src/server/voice-operator-hands-free.ts)
+ * and relays what it says, and this follows it as the phone does
+ * (src/mobile/hands-free.ts) — the button's gauges, the cues, and the words
+ * for Control.
  *
- * - The audio and lifecycle record goes to the server as the phone's does, so
- *   `~/.spaceterm/mobile-events.jsonl` has the Mac's hands-free beside the
- *   phone's, each line under its client's name (`spaceterm-electron …`).
- * - While the microphone is held, Electron does not throttle the window's
- *   timers when it is behind others (`ElectronHost.microphoneHeld`).
+ * The record of what it heard is Voice Operator's; what is recorded here goes
+ * to `~/.spaceterm/mobile-events.jsonl` beside the phone's, under the client's
+ * name (`spaceterm-electron …`).
  *
- * Control's voice is Voice Operator's on the Mac, not the page's, so
- * hands-free hears straight through it: this assumes a headset, where nothing
- * played reaches the microphone.
+ * Control's voice is Voice Operator's on the Mac, and Voice Operator does not
+ * listen through it on the Mac's speakers, so cutting Control off by voice
+ * needs a headset.
  */
+
 /**
- * Why hands-free cannot run on this Mac, or null when it can. Hands-free asks
- * Voice Operator whether speech began with "Control", and Voice Operator's
- * check uses Apple's SpeechTranscriber, which macOS 26 introduced.
+ * Why hands-free cannot run on this Mac, or null when it can. Voice Operator's
+ * trigger-word check uses Apple's SpeechTranscriber, which macOS 26 introduced.
  */
 export function handsFreeBlocker(macOSVersion: string | null): string | null {
   if (macOSVersion === null) return 'Hands-free needs macOS 26'
@@ -31,17 +30,12 @@ export function handsFreeBlocker(macOSVersion: string | null): string | null {
   return major >= 26 ? null : `Hands-free needs macOS 26 (Voice Operator's wake-word check); this Mac is on macOS ${macOSVersion}`
 }
 
-export function installDesktopHandsFree(
-  client: Pick<ServerClient, 'mobileEvents' | 'onLifecycle'>,
-  host: Pick<ElectronHost, 'microphoneHeld'>,
-): () => void {
+export function installDesktopHandsFree(client: Pick<ServerClient, 'mobileEvents' | 'onLifecycle'>): () => void {
   mobileEvents.setSender((events) => client.mobileEvents(events))
   const offConnect = client.onLifecycle('connect', () => mobileEvents.flush())
-  const offHeld = onHoldStateChange((state) => host.microphoneHeld(state !== 'off'))
-  const offMode = installHandsFreeMode(window.api, 'desktop')
+  const offHandsFree = installHandsFree(realHandsFreeDeps(window.api, macHandsFreeLink(window.api.handsFree)))
   return () => {
-    offMode()
-    offHeld()
+    offHandsFree()
     offConnect()
   }
 }

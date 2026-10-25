@@ -167,7 +167,7 @@ which of them this machine has.
 
 | Companion | Used for | Without it | Get it |
 |---|---|---|---|
-| [Voice Operator](https://github.com/chriswa/voiceop) | Speech: Control, phone dictation and hands-free | Nothing is spoken; voice commands do nothing | Private repo — ask for access. Found through `~/Library/Application Support/VoiceOperator/speech-service.json`, which it writes when running. Needs a build with `/v1/subscribers` (October 2026 or later), or voice commands never reach Spaceterm. |
+| [Voice Operator](https://github.com/chriswa/voiceop) | Speech: Control, phone dictation and hands-free | Nothing is spoken; voice commands do nothing | Private repo — ask for access. Found through `~/Library/Application Support/VoiceOperator/speech-service.json`, which it writes when running. Needs a build with `/v1/subscribers` (October 2026 or later), or voice commands never reach Spaceterm; hands-free needs one with the hands-free socket (`hands_free_socket` in that file, late October 2026), which runs it. |
 | `claude-print-daemon` ([chriswa-devkit](https://github.com/chriswa/chriswa-devkit), `tools/claude-print-daemon`) | Control (the receptionist), auto-stamp icons | Control reports an error on every turn; auto-stamps fail | Needs Go. Build it into the devkit's `bin/` (see its README), and put `bin/` on PATH or set `CLAUDE_PRINT_DAEMON_BIN`. Uses your own signed-in Claude Code. |
 | `jev` ([chriswa-devkit](https://github.com/chriswa/chriswa-devkit), `tools/jev`) | Agent search; Control's judgement of interruptions and its backlog | Agent search fails with "could not run jev"; Control loses those judgements | Needs [Bun](https://bun.sh) and a paid `TYPESAFE_API_KEY` in your shell's rc files. Put `bin/jev` on PATH. |
 | Tailscale | Reaching the phone app | No phone app | MagicDNS and HTTPS certificates on; see `npm run mobile:link` and `src/mobile/README.md` |
@@ -202,8 +202,7 @@ handler prints nothing, so if you already had a status line, move its
 (as `{"statusLine": {…}}`) and the handler runs it for you, inside Spaceterm
 and out.
 
-The first use of hands-free downloads an 8 MB turn-detection model from
-Hugging Face into `~/.spaceterm/models`.
+Hands-free runs in Voice Operator, which fetches its own turn-detection model.
 
 ## Platform support
 

@@ -55,8 +55,6 @@
     "@xterm/xterm": "^5.5.0",
     "croner": "^9.1.0",
     "cronstrue": "^2.50.0",
-    "onnxruntime-node": "^1.23.2",
-    "onnxruntime-web": "^1.30.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "shell-quote": "^1.8.3",

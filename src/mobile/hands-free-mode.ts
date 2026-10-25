@@ -1,23 +1,37 @@
-import { installHandsFree, type HandsFreeDeps } from './hands-free'
+import { installHandsFree, phoneHandsFreeLink, realHandsFreeDeps, setHandsFree } from './hands-free'
 import { installHeldMicrophone, onHoldStateChange, type HoldHost } from './held-microphone'
-import { installReadyCue } from './ready-cue'
-import { playHandsFreeCue } from './cues'
+import { nativeMicrophoneAvailable } from './native-microphone'
+import type { HandsFreeApi } from '../shared/api'
 
 /**
- * Hands-free on this device: the microphone held open (held-microphone.ts),
- * "Control" listened for on it (hands-free.ts), and the ready tone as it is
- * first held (ready-cue.ts). The phone (src/mobile/main.tsx) and the Mac
- * (src/client/renderer/src/lib/desktop-hands-free.ts) both start it here, so
- * the two run the same sequence; `host` is the one difference, and is
- * held-microphone.ts's to act on.
+ * Hands-free on the phone: the microphone held open (held-microphone.ts) and,
+ * in the iPhone app, Voice Operator's SDK streaming it to Voice Operator,
+ * which listens for "Control" (hands-free.ts). Holding is hands-free there:
+ * the hands-free button switches the hold, and the stream follows it. In a
+ * browser the hold is only a held microphone for AirPods; there is no SDK.
+ *
+ * The Mac's hands-free is Voice Operator on the Mac's own microphone, switched
+ * from the toolbar (src/client/renderer/src/lib/desktop-hands-free.ts).
  */
-export function installHandsFreeMode(api: HandsFreeDeps['api'], host: HoldHost): () => void {
+export function installHandsFreeMode(
+  api: { handsFree: HandsFreeApi },
+  host: HoldHost,
+  device: () => string,
+  onConnect: (fn: () => void) => () => void,
+): () => void {
   const offHold = installHeldMicrophone(host)
-  const offHandsFree = installHandsFree(api)
-  const offReady = installReadyCue(onHoldStateChange, () => playHandsFreeCue('handsFreeReady'))
+  if (!nativeMicrophoneAvailable()) return offHold
+  const link = phoneHandsFreeLink(api.handsFree, device, onConnect)
+  const offHandsFree = installHandsFree(realHandsFreeDeps(api, link))
+  const offFollow = onHoldStateChange((state) => {
+    // A microphone reopening after a stall flips through `preparing`: the stream rides it out.
+    if (state === 'held') setHandsFree(true)
+    else if (state === 'off') setHandsFree(false)
+  })
   return () => {
-    offReady()
+    offFollow()
     offHandsFree()
+    link.dispose()
     offHold()
   }
 }

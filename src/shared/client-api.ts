@@ -69,7 +69,6 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
   const onReceptionistUnread = latest('receptionist-unread')
   const onReceptionistBacklog = latest('receptionist-backlog')
   const onAgentNames = latest('agent-names')
-  const onHandsFreeTuning = latest('hands-free-tuning')
 
   return {
     pty: {
@@ -196,13 +195,16 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       start: (sampleRate, forControl) => client.dictationStart(sampleRate, forControl),
       audio: (id, pcm) => client.dictationAudio(id, pcm),
       finish: (id) => client.dictationFinish(id),
-      cancel: (id) => client.dictationCancel(id),
-      turnCheck: (id) => client.dictationTurnCheck(id)
+      cancel: (id) => client.dictationCancel(id)
     },
     handsFree: {
-      checkWakeWord: (pcm, mode) => client.checkWakeWord(pcm, mode),
       say: (text, interrupted) => client.receptionistHandsFree(text, interrupted),
-      onTuning: (cb) => onHandsFreeTuning((m) => cb(m.tuning))
+      setMac: (on) => client.handsFreeMac(on),
+      onMacEvent: (cb) => on('hands-free-event', (m) => cb(m.event)),
+      openStream: () => client.handsFreeStreamOpen(),
+      streamLine: (line) => client.handsFreeStreamLine(line),
+      closeStream: () => client.handsFreeStreamClose(),
+      onStream: (cb) => on('hands-free-stream', (m) => cb(m.kind === 'line' && typeof m.line === 'string' ? { kind: 'line', line: m.line } : { kind: 'closed' }))
     },
     remoteSpeech: {
       onAudio: (cb) => on('speech-audio', ({ id, index, count, sampleRate, pcm, sentAt }) => cb({ id, index, count, sampleRate, pcm, sentAt })),

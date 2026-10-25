@@ -28,7 +28,7 @@ import type {
   SessionInfo,
   SnapshotMessage,
   SpeakOutcome,
-  ReceptionistPhase, SpeechProgressEvent, HandsFreeTuning, ControlTranscriptEntry, ReceptionistHoldAction
+  ReceptionistPhase, SpeechProgressEvent, ControlTranscriptEntry, ReceptionistHoldAction
 } from './protocol'
 import type { LaunchPrefs } from './launch-prefs'
 import type { AutomationPatch } from './automation'
@@ -276,46 +276,31 @@ export interface DictationApi {
   /** No more audio; resolves to the transcript exactly as Wispr returned it. */
   finish(id: string): Promise<string>
   cancel(id: string): void
-  /**
-   * At a pause: the probability, 0..1, that the speaker has finished — the
-   * server's turn model on the audio sent so far. Null when it has none.
-   */
-  turnCheck(id: string): Promise<number | null>
 }
 
 /**
- * A wake-word or speech check's answer. `answered`: which question the server
- * answered — absent from one too old to know `speech`. `wakeWord`: a `speech`
- * check's words began with "control".
- */
-export interface WakeWordCheckResult {
-  match: boolean
-  error?: string
-  answered?: 'wake-word' | 'speech'
-  wakeWord?: boolean
-  /** The words were "let me turn this off", or could be its start: see `WakeWordResultMessage.shutdown`. */
-  shutdown?: 'whole' | 'start'
-}
-
-/**
- * Hands-free mode: a client holding its microphone open listens for the wake
- * word on its own, and talks to Control without a press. See
- * `src/mobile/hands-free.ts`.
+ * Hands-free mode, which Voice Operator runs (its DESIGN.md, "Hands-free"):
+ * it listens for "control", decides when the user has finished, and hands
+ * back what they said. On the Mac it listens to the Mac's microphone; a phone
+ * streams its audio to it through the Voice Operator SDK in the iPhone app,
+ * relayed by the server. See `src/mobile/hands-free.ts`.
  */
 export interface HandsFreeApi {
-  /**
-   * Is this clip (16 kHz s16le mono, base64) the wake word alone? Checked on
-   * the Mac, on-device. `error` says why it could not be checked at all.
-   */
-  checkWakeWord(pcmBase64: string, mode?: 'wake-word' | 'speech'): Promise<WakeWordCheckResult>
   /**
    * Words said after the wake word: to Control, which comes to this device.
    * `interrupted`: the wake word cut Control's reply off — with no words, it
    * then says it had not finished and carries on.
    */
   say(text: string, interrupted?: boolean): void
-  /** The operator's tuning overrides; replayed to a late subscriber. */
-  onTuning(callback: (tuning: Partial<HandsFreeTuning>) => void): () => void
+  /** Hands-free on the Mac's microphone, on or off. */
+  setMac(on: boolean): void
+  /** What Voice Operator says about hands-free on the Mac, as it said it. */
+  onMacEvent(callback: (event: Record<string, unknown>) => void): () => void
+  /** This phone's stream to Voice Operator: open, lines out, close; lines back through `onStream`. */
+  openStream(): void
+  streamLine(line: string): void
+  closeStream(): void
+  onStream(callback: (message: { kind: 'line'; line: string } | { kind: 'closed' }) => void): () => void
 }
 
 /**

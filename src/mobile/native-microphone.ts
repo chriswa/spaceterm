@@ -93,7 +93,18 @@ interface NativeMicrophoneHost {
   audio(pcmBase64: string): void
   state(state: NativeState): void
   speech(event: NativeSpeechEvent): void
+  /** Hands-free, from Voice Operator's SDK in the app: a line for Voice Operator, or what it said. */
+  handsFree?(message: NativeHandsFreeMessage): void
 }
+
+/**
+ * From the app's Voice Operator SDK: `line` — a line of Voice Operator's
+ * hands-free protocol, to be carried to it (through the server); `event` —
+ * one of Voice Operator's messages about this phone's session, as it sent it.
+ */
+export type NativeHandsFreeMessage =
+  | { kind: 'line'; line: string }
+  | { kind: 'event'; event: Record<string, unknown> }
 
 declare global {
   interface Window {
@@ -137,6 +148,7 @@ const speechListeners = new Set<(event: NativeSpeechEvent) => void>()
 const stateWaiters = new Set<(state: NativeState) => void>()
 const outputListeners = new Set<(output: NativeOutput | undefined) => void>()
 const stateFollowers = new Set<(state: NativeState) => void>()
+const handsFreeListeners = new Set<(message: NativeHandsFreeMessage) => void>()
 
 function decode(pcmBase64: string): Float32Array {
   const bytes = Uint8Array.from(atob(pcmBase64), (c) => c.charCodeAt(0))
@@ -178,7 +190,38 @@ function install(): void {
     speech(event) {
       for (const fn of speechListeners) fn(event)
     },
+    handsFree(message) {
+      for (const fn of handsFreeListeners) fn(message)
+    },
   }
+}
+
+/**
+ * Hands-free in the app: Voice Operator's SDK listens on the app's microphone
+ * and streams it to Voice Operator on the Mac, the page carrying its lines to
+ * and from the server (hands-free.ts). The microphone itself is held as ever
+ * (`openNativeMicrophone`); these switch the stream on it.
+ */
+export const nativeHandsFree = {
+  start(device: string): void {
+    handler()?.postMessage({ action: 'hands-free-start', client: 'spaceterm', device })
+  },
+  stop(): void {
+    handler()?.postMessage({ action: 'hands-free-stop' })
+  },
+  /** The way to Voice Operator opened or closed: the SDK says hello, and resumes, on each open. */
+  transport(open: boolean): void {
+    handler()?.postMessage({ action: 'hands-free-transport', event: open ? 'open' : 'closed' })
+  },
+  /** A line from Voice Operator, for the SDK. */
+  line(line: string): void {
+    handler()?.postMessage({ action: 'hands-free-line', line })
+  },
+  on(fn: (message: NativeHandsFreeMessage) => void): () => void {
+    install()
+    handsFreeListeners.add(fn)
+    return () => { handsFreeListeners.delete(fn) }
+  },
 }
 
 /**

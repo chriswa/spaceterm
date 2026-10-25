@@ -2,11 +2,11 @@ import type {
   AgentSearchResponse, CommandOutcome,
   Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
   SessionInfo, SystemApi, TtsApi, WindowApi, DictationApi, RemoteSpeechApi,
-  ReceptionistApi, ReceptionistStatus, HandsFreeApi, WakeWordCheckResult, ControlTranscriptPage
+  ReceptionistApi, ReceptionistStatus, HandsFreeApi, ControlTranscriptPage
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
-import type { ControlTranscriptEntry, HandsFreeTuning, SnapshotMessage, SpeakOutcome } from '../../../../shared/protocol'
+import type { ControlTranscriptEntry, SnapshotMessage, SpeakOutcome } from '../../../../shared/protocol'
 import type { NodeData, ReceptionistHolder, ServerState } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import type { NodeId, PtySessionId } from '../../../../shared/ids'
@@ -186,7 +186,8 @@ export class FakeBridge implements Api {
   private readonly receptionistReplaying = new Set<(playing: { of: number; part: number } | null, refused?: string) => void>()
   private readonly receptionistSpeaking = new Set<(speaking: { of: number; parts: number[] } | null) => void>()
   private readonly transcriptAppended = new Set<(entries: ControlTranscriptEntry[]) => void>()
-  private readonly handsFreeTuning = new Set<(tuning: Partial<HandsFreeTuning>) => void>()
+  private readonly handsFreeMac = new Set<(event: Record<string, unknown>) => void>()
+  private readonly handsFreeStream = new Set<(message: { kind: 'line'; line: string } | { kind: 'closed' }) => void>()
   private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
   /** Mod envelope listeners, keyed by the modId they asked for. */
   private readonly modListeners = new Map<string, Set<(event: string, payload: unknown) => void>>()
@@ -295,7 +296,8 @@ export class FakeBridge implements Api {
       for (const fn of this.receptionistReplaying) fn(playing, refused)
     },
     transcriptAppended: (entries: ControlTranscriptEntry[]): void => { for (const fn of this.transcriptAppended) fn(entries) },
-    handsFreeTuning: (tuning: Partial<HandsFreeTuning>): void => { for (const fn of this.handsFreeTuning) fn(tuning) },
+    handsFreeMacEvent: (event: Record<string, unknown>): void => { for (const fn of this.handsFreeMac) fn(event) },
+    handsFreeStream: (message: { kind: 'line'; line: string } | { kind: 'closed' }): void => { for (const fn of this.handsFreeStream) fn(message) },
     systemMetrics: (sample: SystemMetricsSample): void => {
       for (const fn of this.systemMetrics) fn(sample)
     },
@@ -443,14 +445,17 @@ export class FakeBridge implements Api {
     start: (sampleRate, forControl) => this.reply('dictation.start', 'fake-dictation', sampleRate, forControl),
     audio: (id, pcm) => this.record('dictation.audio', id, pcm),
     finish: (id) => this.reply('dictation.finish', '', id),
-    cancel: (id) => this.record('dictation.cancel', id),
-    turnCheck: (id) => this.reply('dictation.turnCheck', null as number | null, id)
+    cancel: (id) => this.record('dictation.cancel', id)
   }
 
   readonly handsFree: HandsFreeApi = {
-    checkWakeWord: (pcm, mode) => this.reply('handsFree.checkWakeWord', { match: false, answered: mode ?? 'wake-word' } as WakeWordCheckResult, pcm, mode),
     say: (text, interrupted) => this.record('handsFree.say', text, interrupted),
-    onTuning: (cb) => subscribe(this.handsFreeTuning, cb)
+    setMac: (on) => this.record('handsFree.setMac', on),
+    onMacEvent: (cb) => subscribe(this.handsFreeMac, cb),
+    openStream: () => this.record('handsFree.openStream'),
+    streamLine: (line) => this.record('handsFree.streamLine', line),
+    closeStream: () => this.record('handsFree.closeStream'),
+    onStream: (cb) => subscribe(this.handsFreeStream, cb)
   }
 
   private readonly speechAudio = new Set<Parameters<RemoteSpeechApi['onAudio']>[0]>()

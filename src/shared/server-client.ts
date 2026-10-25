@@ -9,7 +9,7 @@ import type {
   CameraBounds,
   SpeakOutcome
 } from './protocol'
-import type { AgentSearchResponse, CommandOutcome, WakeWordCheckResult } from './api'
+import type { AgentSearchResponse, CommandOutcome, } from './api'
 import { unhandledVariant } from './exhaustive'
 import type { NodeId, PtySessionId } from './ids'
 import type { NodeStamp, ServerState } from './state'
@@ -75,7 +75,7 @@ export type ServerEventType =
   | 'agent-meta-availability' | 'server-error'
   | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
   | 'receptionist-transcript-appended' | 'receptionist-unread' | 'receptionist-backlog' | 'receptionist-replaying' | 'receptionist-speaking'
-  | 'hands-free-tuning'
+  | 'hands-free-event' | 'hands-free-stream'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
 
@@ -293,7 +293,8 @@ export class ServerClient {
       case 'receptionist-backlog':
       case 'receptionist-replaying':
       case 'receptionist-speaking':
-      case 'hands-free-tuning':
+      case 'hands-free-event':
+      case 'hands-free-stream':
         this.emit(msg)
         return
 
@@ -331,8 +332,6 @@ export class ServerClient {
       case 'agent-search-result':
       case 'dictation-started':
       case 'dictation-result':
-      case 'wake-word-result':
-      case 'dictation-turn-result':
       case 'agent-memory-result':
       case 'receptionist-transcript-result':
       case 'control-image-result': {
@@ -815,20 +814,24 @@ export class ServerClient {
     this.fireAndForget({ type: 'dictation-cancel', id })
   }
 
-  /** Whether the speaker sounds finished, 0..1; null without a turn model. */
-  async dictationTurnCheck(id: string): Promise<number | null> {
-    const resp = await this.request({ type: 'dictation-turn-check', id })
-    if (resp.type === 'dictation-turn-result') return resp.probability
-    return unexpected(resp)
-  }
-
   // ─── hands-free ───────────────────────────────────────────────────────────
 
-  /** Whether a clip (16 kHz s16le mono, base64) is the wake word alone; `error` when it could not be checked. */
-  async checkWakeWord(pcmBase64: string, mode: 'wake-word' | 'speech' = 'wake-word'): Promise<WakeWordCheckResult> {
-    const resp = await this.request({ type: 'wake-word-check', pcm: pcmBase64, ...(mode === 'speech' ? { mode } : {}) })
-    if (resp.type === 'wake-word-result') return { match: resp.match, error: resp.error, answered: resp.mode, wakeWord: resp.wakeWord, shutdown: resp.shutdown }
-    return unexpected(resp)
+  /** Hands-free on the Mac's microphone, which Voice Operator listens on. */
+  handsFreeMac(on: boolean): void {
+    this.fireAndForget({ type: 'hands-free-mac', on })
+  }
+
+  /** This phone's hands-free stream to Voice Operator, relayed by the server. */
+  handsFreeStreamOpen(): void {
+    this.fireAndForget({ type: 'hands-free-stream-open' })
+  }
+
+  handsFreeStreamLine(line: string): void {
+    this.fireAndForget({ type: 'hands-free-stream-line', line })
+  }
+
+  handsFreeStreamClose(): void {
+    this.fireAndForget({ type: 'hands-free-stream-close' })
   }
 
   /** Words said hands-free, for Control; `interrupted` when they cut its reply off. */

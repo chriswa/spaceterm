@@ -1,22 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { render, cleanup, fireEvent, screen } from '@testing-library/react'
-import { installFakeBridge } from '@/testing/fake-bridge'
-import { holdState, installHeldMicrophone, setHoldMicrophone } from './held-microphone'
+import { installFakeBridge, type FakeBridge } from '@/testing/fake-bridge'
+import { installHandsFree, macHandsFreeLink, realHandsFreeDeps, setHandsFree, useHandsFree } from './hands-free'
 import { HandsFreeButton } from './HandsFreeButton'
 
-// The Mac's toolbar button. A file of its own: the hold's host is set once
-// per page, and the phone's tests (MicButton.test.tsx) run as the phone.
+// The Mac's toolbar button: it switches Voice Operator's hands-free on the
+// Mac's own microphone (desktop-hands-free.ts), not a hold.
 
 let uninstall: () => void
+let bridge: FakeBridge
 
 beforeEach(() => {
-  installFakeBridge()
-  uninstall = installHeldMicrophone('desktop')
+  bridge = installFakeBridge()
+  uninstall = installHandsFree(realHandsFreeDeps(window.api, macHandsFreeLink(window.api.handsFree)))
 })
 
 afterEach(() => {
   cleanup()
-  setHoldMicrophone(false)
+  setHandsFree(false)
   uninstall()
 })
 
@@ -34,13 +35,14 @@ describe('the hands-free button on the Mac', () => {
     render(<HandsFreeButton chrome="toolbar" />)
     const button = screen.getByRole('button', { name: /always listen/ })
     fireEvent.click(button)
-    expect(holdState()).not.toBe('off')
+    expect(useHandsFree.getState().on).toBe(true)
     expect(button.getAttribute('aria-pressed')).toBe('true')
     expect(button.getAttribute('aria-label')).toMatch(/click to stop$/)
     expect(button.getAttribute('data-tooltip')).toBe(button.getAttribute('aria-label'))
     fireEvent.click(button)
-    expect(holdState()).toBe('off')
+    expect(useHandsFree.getState().on).toBe(false)
     expect(button.getAttribute('aria-pressed')).toBe('false')
+    expect(bridge.calls.filter((c) => c.method === 'handsFree.setMac').map((c) => c.args)).toEqual([[true], [false]])
   })
 
   it('does nothing when hands-free cannot run on this Mac, and says why', () => {
@@ -49,12 +51,13 @@ describe('the hands-free button on the Mac', () => {
     expect(button.getAttribute('aria-disabled')).toBe('true')
     expect(button.getAttribute('data-tooltip')).toBe('Hands-free needs macOS 26')
     fireEvent.click(button)
-    expect(holdState()).toBe('off')
+    expect(useHandsFree.getState().on).toBe(false)
   })
 
   it('is the phone\'s button, as the phone draws it, without the toolbar\'s chrome', () => {
     render(<HandsFreeButton />)
-    const button = screen.getByRole('button', { name: /always listen/ })
+    // A browser on the phone: no app, so a held microphone rather than hands-free.
+    const button = screen.getByRole('button', { name: /Hold the microphone open/ })
     expect(button.classList).toContain('m-bar__button')
     expect(button.hasAttribute('data-tooltip')).toBe(false)
   })

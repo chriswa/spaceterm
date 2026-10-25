@@ -16,7 +16,7 @@ second client: as much as possible is literally the same code.
 | Canvas | `App` | same `App`, plus touch (`useTouchCamera`) |
 | A focused terminal | live in its card | the same `TerminalCard`, chromeless, full screen (`TerminalView.tsx`) |
 | Ship it | `src/server/ship-it.ts` | same |
-| Hands-free (below) | `hands-free-mode.ts` from `renderer/src/lib/desktop-hands-free.ts`; the button in the toolbar, beside Control | `hands-free-mode.ts` from `main.tsx`; the button on the bottom bar |
+| Hands-free (below) | `desktop-hands-free.ts` from the renderer's `main.tsx`; the button in the toolbar, beside Control | `hands-free-mode.ts` from `main.tsx`; the button on the bottom bar |
 
 The one switch is `surfacePresenterStore`: with `external` set, `App` keeps
 every canvas card on snapshots and publishes which terminal is focused, and
@@ -24,8 +24,8 @@ every canvas card on snapshots and publishes which terminal is focused, and
 
 Phone-only: the gestures, the key row, the composer (dictate → edit → ship),
 the surface list, and the microphone button's dictation capture. Hands-free
-is the phone's code run on the Mac as well (see "On the Mac" below), so a
-change to it changes both.
+is Voice Operator's, followed by the same code on both (see "On the Mac"
+below).
 
 ## The terminal view
 
@@ -386,7 +386,7 @@ conversation window, or a composer's dictation:
 |---|---|
 | grey | the microphone is closed |
 | outlined, a gold spark running round | hands-free is on, waiting for the microphone (the hands-free button shows the spark too) |
-| white, lock badge, thin white ring | hands-free holds it; nothing leaves the phone until "Control" |
+| white, lock badge, thin white ring | hands-free holds it, streaming to Voice Operator, which listens for "Control" |
 | white, thick bright ring | hands-free heard speech and is asking the Mac whether it was for Control |
 | blue ring, draining | the conversation window: just talk. The ring is the quiet left before "Control" is needed again |
 | dark, a gold spark running round the rim | a tap was taken and the microphone is starting — AirPods playing music take seconds to switch. Don't talk yet |
@@ -453,7 +453,7 @@ them, so the Ring/Silent switch does not silence them (`playHandsFreeCue`):
 
 | Sound | Means |
 |---|---|
-| three soft steps up | hands-free is ready: the microphone is held and listening — the switch has just turned white (`ready-cue.ts`) |
+| three soft steps up | hands-free is ready: Voice Operator is listening (its `ready` cue) |
 | two notes up | hands-free has begun taking your words down |
 | two notes down | they have been taken down and sent |
 | three soft steps down | the conversation window closed; "Control" is needed again |
@@ -468,185 +468,80 @@ a leap to a long high note — played the same way as hands-free's tones (`playH
 ## Hands-free: "Control, …"
 
 The hands-free button right of the microphone (`HandsFreeButton.tsx`, an ear
-with a voice arriving at it), always on the bar, is the always-listen switch: a tap turns it on, and another off. While it
-holds the microphone, start talking with
+with a voice arriving at it), always on the bar, is the always-listen switch:
+a tap turns it on, and another off. While it is on, start talking with
 **"Control"** — "Control, what's Kevin doing?" — and just keep going. The
-phone taps once (a haptic) and the button turns orange; nothing waits on that, since
-the dictation is fed everything from your first syllable out of the
-listener's buffer. When you are done, just stop: once a pause reaches 0.8 s
-the Mac's turn model (Smart Turn, `src/server/turn-detector.ts`) judges from
-your words and intonation whether you sound finished, and goes on judging
-every half second (`TURN_SAMPLE_MS`) for as long as the pause lasts; the
-first time it is at least 85% sure, the dictation ends there. An answer that
-comes back after you have started talking again is dropped. If it is not, a pause still ends it once it
-outlasts a patience that grows with how long you have been talking — three
-seconds for a quick request, up to twenty seconds five minutes into a
-monologue. A long enough pause after "Control" alone waits at least five
-seconds instead, and Smart Turn is not asked about it; ten minutes in all
-ends it regardless.
+phone taps once (a haptic) and the button turns orange; nothing waits on
+that, since the dictation is fed everything from your first syllable. When
+you are done, just stop. Two taps mean it was heard and sent: "Control" comes
+off the front, and the rest goes to Control, which comes to this phone.
 
-While a dictation runs, the hands-free button shows both, a half each,
-filling from the bottom: **left, green**, Smart Turn's latest answer, 0 at
-the bottom to 1 at the top, snapping to each answer with no smoothing and
-empty while you talk, with a **red line** across it at the threshold while
-Smart Turn is being asked — green reaching the line ends it; **right,
-magenta**, the quiet since you last spoke, ending it at the top. Both hold while what you said is sent, so you
-can see which one ended it. Two taps mean it was heard and sent: "Control" comes off the
-front, and the rest goes to Control, which comes to this phone. The dictation itself is ordinary Wispr, as a tap's.
+**Voice Operator runs hands-free**, on the Mac (its `DESIGN.md`, "Hands-free",
+and `docs/hands-free-plan.md` for why it moved there). Everything that
+listens and decides happens there: the speech detector (Silero VAD), whether
+speech began with "control" (Apple's on-device model, never Wispr), the
+conversation window, when you have finished (Smart Turn, which Voice Operator
+asks at every pause, and a patience that grows with how long you have been
+talking — three seconds for a quick request, up to twenty well into a
+monologue), the transcription with your provider, and "let me turn this off".
+Spaceterm is its client (`hands-free.ts`):
 
-- **Only "Control" said first counts**, with nobody talking just before it;
-  the word anywhere else in a sentence never triggers. "Talking" is judged by
-  a voice-activity model on the phone (Silero VAD, `speech-detector.ts`,
-  1.3 MB, run in ONNX Runtime web at about 0.3 ms per 32 ms frame), so music,
-  a fan or a noisy room never count as talk and never block it; without the
-  model, loudness stands in.
-- **The conversation window.** "Control" opens it, as does turning hands-free
-  on (not the microphone reopening itself after a stall), and the microphone gets a
-  blue ring: from then on anything you say starts a dictation without
-  "Control" — your first word kept — including cutting Control off mid-reply
-  (when it speaks through echo cancellation). The Mac checks only that it was
-  words: not a cough, not filler (`ignoredWords`, server-side, defaults
-  "hmm", "uh", "um" and the like). It stays open while either of you is
-  speaking, however long, and closes with a tone (three soft steps down)
-  once neither has spoken for `conversationMs` (15 s) — Control thinking does
-  not hold it open. Inside it, speech counts however soon it follows other
-  speech — a rejected cough, or Control's voice leaking past echo
-  cancellation, does not make the words after it "mid-sentence" — and the
-  app reopening a stalled microphone does not close it (it waits
-  `conversationMs` for the microphone; turning the hold off closes it at
-  once). The blue ring drains as the quiet runs out, the icon
-  staying put. The window needs a server that knows it: an older one
-  answers the wake-word question instead, which the phone notices
-  (`hands-free-server-too-old`), closing the window with its tone and logging
-  that the server needs restarting; "Control" works as before meanwhile. Speech checks of two words or fewer are logged
-  (`[hands-free] speech check heard …`), to find what the model hears in
-  nothing at all.
-- **The pending tone: do I need "Control"?** Outside the conversation
-  window, from the first syllable of what may be speech — a cough, as
-  likely — until it is decided, a soft medium-high beep (G5) repeats four
-  times a second. It stops just before the `dictationStart` chirp — the
-  words being taken down, from their first syllable — or as soon as they
-  turn out to be nothing. When the Mac says they did not start with
-  "Control" (or, for speech watched as perhaps "let me turn this off", that
-  it was not that either), they are thrown away, and a short sad tune says
-  so (`notWakeWord`: G5 sliding down a semitone at a time, then dropping to
-  a long D5): stop, say "Control", and start again. A cough too short to
-  check just stops the beep. In the window, where any words will do,
-  neither plays; nor for speech straight after other speech, never checked.
-  Only the app plays the beep (`pending-tone`, `NativeMicrophone.swift`), on
-  Control's voice player, and only where that never reaches the microphone
-  — echo cancellation, or AirPods — so it is not in what is dictated, and
-  hands-free goes on hearing through it. Its one player being Control's
-  voice's, it does not play while Control speaks, and Control's voice
-  arriving stops it. An app too old to say `pendingTone` plays none
-  (`playPendingTone`, cues.ts; `hands-free-pending-tone` in the record).
-- **"Let me turn this off"** sends Control away at once, for when someone
-  in the room needs you — and to them it sounds like you dealing with your
-  phone. It needs no "Control" first: speech whose first second the Mac hears
-  as "let me…" is watched until it ends (half a second's quiet, four seconds
-  at most), and the whole of it is checked, as the window's speech is; only
-  the phrase and nothing else counts. "Control, let me turn this off", the
-  phrase in the window, a whole message of it sent to Control, and the older
-  "Control, shutdown" (or "shutdown" alone in the window) all do the same.
-  Nothing is
-  shut down: it is the transcript's **Away**, so Control stops speaking, and
-  what it has to tell you waits for your return. The window closes there and
-  then with a tone of its own (an octave down, held low), so nothing more is
-  taken down for Control; the hold stays on, and the next "Control" —
-  even on its own, with nothing after it — brings Control back, aloud
-  unless you had it on Silent, to tell you anything you missed. (Alone, it
-  takes Control only when no device holds it, so a misheard wake word never
-  takes it from another.) It is a fixed phrase, matched on the whole
-  of what was said by the phone and the server (`src/shared/control-shutdown.ts`) —
-  never inside a longer request — and the model is only told it happened.
-  Asking in other words ("Control, be quiet") goes to the model, which has
-  no way to send itself away: only the phrase, Away, or the Control button do.
-- **"Control." on its own, then a breath** is fine: that first pause is not
-  put to the turn model (which would call "Control." finished), and it waits
-  five seconds (`afterWakeWordMs`) for the rest.
-- **In the app** the microphone is the app's own (`NativeMicrophone.swift`,
-  `native-microphone.ts`), so no AirPods are needed: it plays through the
-  speaker, keeps listening with the screen locked, and comes back by itself
-  after Siri, a call, a relaunch, or AirPods coming and going. In a browser
-  the page holds it, and only with a headset (`held-microphone.ts`).
-- **Nothing leaves the phone** until you start talking with nobody talking
-  just before (`wake-listener.ts`). Only the first second of that goes to the Mac, where
-  Voice Operator writes it down with Apple's on-device model
-  (`POST /v1/wake-word?match=speech`) — never Wispr — and the server judges
-  whether it starts with "control" or "let me…" (`src/server/hands-free.ts`;
-  Voice Operator's own `match=start` gives no words back for a miss, so it
-  could never see the phrase), passing on no words that were neither; and when
-  that second was heard as "let me…", the rest of that one burst of speech,
-  to the same model, to tell whether it was "let me turn this off". Audio is
-  otherwise only ever in an eight-second buffer in memory.
-- **Interrupting Control.** In the app, Control's voice is played by the app
-  itself (`NativeMicrophone.swift`), through the microphone's own engine with
-  Apple's voice processing — the echo cancellation a speakerphone call uses —
-  so hands-free listens straight through it. Anyone speaking turns Control
-  down at once (the cancelled microphone hears the room, not Control), and it
-  comes back up if it was not "Control". "Control, …" cuts it off and is
-  dictated as ever; if nothing is caught after "Control", Control says it had
-  not finished and carries on. In a browser, with an app too old to play
-  speech, or when the app has had to run without echo cancellation (it gives
-  it up for the rest of its run if turning it on keeps reconfiguring the
-  audio: `voice-processing-abandoned`), the page plays it and hands-free stops
-  listening while it does.
-- It does not listen while the page plays anything — a cue, or speech in a
-  browser — or for a moment after, so it never hears itself; nor during a
-  dictation it did not start.
-- **The turn model** is fetched once (8 MB, pinned and hash-checked) into
-  `~/.spaceterm/models`, loaded when the first hands-free dictation starts, and
-  kept: about 130 MB of the server's memory, about 45 ms a check. Without it,
-  pauses end dictations on silence alone.
-- **Thresholds** are in `~/.spaceterm/hands-free.json` on the Mac, read again
-  whenever it changes — any of `noSpeechBeforeMs` (700), `onsetWindowMs`
-  (1000), `wordMinMs` (250), `pauseCheckMs` (800), `turnThreshold` (0.85, a
-  probability), `wakeWordOnlyMs` (1500), `afterWakeWordMs` (5000),
-  `endSilenceMinMs` (3000), `endSilenceMaxMs` (20000), `endSilenceRampMs`
-  (300000), `maxUtteranceMs` (600000), `playbackTailMs` (400),
-  `conversationMs` (15000), and `ignoredWords` (a list of words or phrases).
-- **Why it did or did not trigger** is in `~/.spaceterm/mobile-events.jsonl`:
-  a `hands-free-speech` event for every burst of speech the listener noticed —
-  how long, how long without speech before it, how loud, and its verdict
-  (`checked`, `after-speech`, `too-short`) — then `wake-word` with the Mac's
-  answer; `hands-free-levels` every 30 s with the room's level and how much of
-  it was speech; `hands-free-detector` with which speech detector is in use;
-  `hands-free-pause` for the pause after the wake word alone; and
-  `hands-free-echo` after each reply Control spoke through the app — how much
-  of the microphone the speech detector still heard as speech while it
-  played (`speechPercent`, `longestSpeechMs`), the microphone's level, the
-  voice's own level (`outputDb`), and whether echo cancellation was on — which
-  says whether interrupting can work. Never what was said. The server log's `[turn]` lines give each pause's verdict.
+- **In the app**, Voice Operator's iOS SDK owns the microphone and Control's
+  voice (`NativeMicrophone.swift` is now a thin bridge to it) and streams the
+  microphone to Voice Operator; the page carries its lines to the server
+  (`hands-free-stream-*`), which passes them through unread
+  (`src/server/voice-operator-hands-free.ts`). A dropped connection resumes
+  where it left off: the SDK keeps a minute of audio until Voice Operator has
+  it. The hold (`held-microphone.ts`) is the switch, as before; the stream
+  follows it. In a browser there is no SDK, so the hold is only a held
+  microphone for AirPods.
+- **What it shows** comes from Voice Operator's messages, animated here: the
+  phase (the microphone button's orange), the conversation window (the blue
+  ring, draining as its quiet runs out), and while a dictation runs, the
+  hands-free button's two halves — **left, green**, Smart Turn's latest
+  answer, with a **red line** at the threshold while it is being asked;
+  **right, magenta**, the quiet since you last spoke, ending it at the top.
+  Both hold while what you said is sent, so you can see which ended it.
+- **Its cues** are Voice Operator's to call and this device's to play: three
+  soft steps up as it is ready, two notes up as your words begin to be taken
+  down and two down as they are sent, the sad tune (`notWakeWord`) for speech
+  that did not start with "Control", three steps down as the window closes,
+  an octave down for "let me turn this off", and the soft repeating beep
+  while it decides whether you said "Control" (`pending`).
+- **The conversation window**: after "Control", and as hands-free is turned
+  on, anything you say starts a dictation without it — your first word kept,
+  a cough or filler ignored — including cutting Control off mid-reply. It
+  stays open while either of you is speaking and closes once neither has for
+  15 s.
+- **Interrupting Control.** Anyone speaking over Control's voice turns it
+  down at once; once Voice Operator says it was for Control, it is cut off
+  (`cut-in`), counted to when you began talking. If nothing is caught after
+  "Control", Control says it had not finished and carries on.
+- **"Let me turn this off"** — or "Control, shutdown" — sends Control away at
+  once, for when someone in the room needs you: Voice Operator closes the
+  window and the server takes it as Away (`src/shared/control-shutdown.ts`).
+  The hold stays on, and the next "Control" brings it back.
+- **Why it did or did not trigger** is Voice Operator's record now:
+  `~/Library/Application Support/VoiceOperator/hands-free/decisions.jsonl`
+  and its `clips/`, with what Apple's model heard and every Smart Turn answer.
+  `~/.spaceterm/mobile-events.jsonl` keeps this side's view: the phase, the
+  cues, cut-ins, and how many characters went to Control.
 
 ### On the Mac
 
-The same hands-free runs in the desktop client, switched on by the same button
-(`HandsFreeButton.tsx`, `chrome="toolbar"`) right of Control in the toolbar:
-`installHandsFreeMode(api, 'desktop')`, the one place both start it. Nothing
-about listening, the conversation window, Smart Turn or what goes to Control
-differs. What does, all of it the host:
+The same button sits right of Control in the toolbar (`chrome="toolbar"`).
+There it switches Voice Operator's hands-free on the Mac's own microphone
+(`desktop-hands-free.ts`, through the server's connection to Voice Operator);
+the page holds no microphone. What differs:
 
 - **macOS 26 or later**: below it the button is disabled, its tooltip saying
-  why (`handsFreeBlocker` in `desktop-hands-free.ts`). Voice Operator's
-  wake-word check uses SpeechTranscriber, which macOS 26 introduced. The
-  phone has no such gate, though its checks go to the same Mac.
-
-- **The microphone** (`installHeldMicrophone('desktop')`): the Mac's current
-  input, headset or not, through Chromium's getUserMedia. It comes back by
-  itself, without a click — within five seconds once it stops delivering, and
-  at once when the Mac's input moves (AirPods connecting). After a refusal it
-  waits for a device to change before asking again.
-- **Control's voice** is Voice Operator's, not the page's, so hands-free hears
-  straight through it and can cut it off by voice. That relies on a headset,
-  where nothing played reaches the microphone; on the Mac's speakers Control
-  would hear itself.
-- **No haptics, no app**: every native hook (`native-microphone.ts`) does
-  nothing outside the iPhone app, so its tones play in the page.
-- **The window is not background-throttled** while the microphone is held
-  (`ElectronHost.microphoneHeld`): a dictation streams on timers, which
-  Chromium slows to a crawl in a window behind others.
-- **The record**: the Mac's events go to `mobile-events.jsonl` too, each line's
-  `client` starting `spaceterm-electron` where the phone's is `spaceterm-mobile`.
+  why (`handsFreeBlocker`): Voice Operator's check uses SpeechTranscriber.
+- **Control's voice** is Voice Operator's, and Voice Operator does not listen
+  while it speaks on the Mac's speakers, so cutting Control off by voice
+  needs a headset.
+- **A Fn dictation** has the microphone to itself: hands-free stands aside
+  until it ends.
+- **No haptics**: the cues play in the page.
 
 ## Notifications
 

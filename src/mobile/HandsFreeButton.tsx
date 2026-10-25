@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { holdHost, holdState, onHoldStateChange, setHoldMicrophone, type HoldState } from './held-microphone'
+import { holdState, onHoldStateChange, setHoldMicrophone, type HoldState } from './held-microphone'
 import { nativeMicrophoneAvailable, onNativeSampleRate } from './native-microphone'
-import { endSilence, useHandsFree } from './hands-free'
+import { endSilence, setHandsFree, useHandsFree } from './hands-free'
 import { Spark } from './Spark'
 import './HandsFreeButton.css'
 
@@ -53,11 +53,16 @@ export function thresholdLine(at: number): { x1: number; x2: number; y: number }
  * and its tooltip gives the reason.
  */
 export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?: 'phone-bar' | 'toolbar'; unavailable?: string }) {
-  const hold = useHoldState()
+  const held = useHoldState()
+  /** On the Mac, Voice Operator holds its own microphone: the button only switches hands-free. */
+  const desktop = chrome === 'toolbar'
+  const wanted = useHandsFree((s) => s.on)
+  const listening = useHandsFree((s) => s.phase !== 'off')
+  const hold: HoldState = desktop ? (wanted ? (listening ? 'held' : 'preparing') : 'off') : held
   const on = hold !== 'off'
   const app = nativeMicrophoneAvailable()
   /** Holding is hands-free mode: in the app, and on the Mac. */
-  const handsFree = app || holdHost() === 'desktop'
+  const handsFree = app || desktop
   // While hands-free holds the app's microphone: its link's rate in kHz, 24 or 48 on AirPods. Shown only.
   const rate = useNativeSampleRate()
   const badge = app && hold === 'held' && rate ? String(Math.round(rate / 1000)) : null
@@ -90,7 +95,11 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
       aria-disabled={unavailable !== undefined}
       {...chrome === 'toolbar' ? { 'data-tooltip': label, 'data-tooltip-no-flip': true } : {}}
       // No haptic: a tap means your words are being taken down (native-microphone.ts). The press shows instead.
-      onClick={() => { if (unavailable === undefined) setHoldMicrophone(!on) }}
+      onClick={() => {
+        if (unavailable !== undefined) return
+        if (desktop) setHandsFree(!on)
+        else setHoldMicrophone(!on)
+      }}
     >
       {/* Turned on, the microphone not held yet: a spark round the rim until it is. */}
       {hold === 'preparing' && <Spark />}

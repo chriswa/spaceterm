@@ -78,40 +78,6 @@ describe('RemoteDictation', () => {
   })
 })
 
-describe('RemoteDictation, whether the speaker has finished', () => {
-  /** s16le PCM of `seconds` at a constant level. */
-  const pcm = (seconds: number, level: number) => {
-    const out = new Uint8Array(seconds * 16_000 * 2)
-    const view = new DataView(out.buffer)
-    for (let i = 0; i < out.length / 2; i++) view.setInt16(i * 2, level, true)
-    return out
-  }
-
-  it('asks the turn model about the audio received so far, at most its last eight seconds', async () => {
-    const asked: Array<{ seconds: number; last: number }> = []
-    const d = new RemoteDictation(fakeVoice(), {
-      turnProbability: async (audio) => { asked.push({ seconds: audio.length / 16_000, last: audio[audio.length - 1] }); return 0.9 },
-    })
-    await d.start('phone', 16000)
-    // As the phone sends it: a fifth of a second at a time.
-    for (let i = 0; i < 30; i++) d.audio('phone', 't1', pcm(0.2, 1000))
-    // Asked straight after the audio was sent: it is already counted.
-    expect(await d.turnComplete('phone', 't1')).toEqual({ ok: true, value: 0.9 })
-    for (let i = 0; i < 25; i++) d.audio('phone', 't1', pcm(0.2, 2000))
-    await d.turnComplete('phone', 't1')
-    expect(asked[0].seconds).toBeCloseTo(6, 5)
-    expect(asked[1].seconds).toBeGreaterThanOrEqual(8)
-    expect(asked[1].seconds).toBeLessThan(8.3)
-    expect(asked[1].last).toBeCloseTo(2000 / 32768, 6)
-  })
-
-  it('answers null without a turn model, so the client falls back on silence', async () => {
-    const d = new RemoteDictation(fakeVoice())
-    await d.start('phone', 16000)
-    expect(await d.turnComplete('phone', 't1')).toEqual({ ok: true, value: null })
-  })
-})
-
 describe('RemoteDictation, whether the user is speaking', () => {
   it('says so from start until finish is asked for, or a cancel, and only on a change', async () => {
     const heard: boolean[] = []

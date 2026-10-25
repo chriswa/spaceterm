@@ -41,9 +41,6 @@ export const useMicActivity = create<{ capturing: number; transcribing: number }
 const bump = (key: 'capturing' | 'transcribing', by: number) =>
   useMicActivity.setState((s) => ({ [key]: Math.max(0, s[key] + by) }))
 
-/** A turn check slower than this is no use to a pause: silence decides instead. */
-const TURN_CHECK_TIMEOUT_MS = 2000
-
 /** How long a granted microphone may stay silent before listening gives up on it. */
 export const NO_AUDIO_TIMEOUT_MS = 2000
 
@@ -299,26 +296,6 @@ export class Dictation {
       throw err
     } finally {
       bump('transcribing', -1)
-    }
-  }
-
-  /**
-   * At a pause: the probability, 0..1, that the speaker has finished, from the
-   * server's turn model on everything sent so far — the audio up to now is
-   * sent first. Null when it cannot say: no session yet, no model, a failure,
-   * or no answer within `TURN_CHECK_TIMEOUT_MS`.
-   */
-  async checkTurn(): Promise<number | null> {
-    if (!this.id || this.stopped) return null
-    this.flush()
-    try {
-      return await Promise.race([
-        this.api.turnCheck(this.id),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), TURN_CHECK_TIMEOUT_MS)),
-      ])
-    } catch (err) {
-      log(`turn check failed: ${err instanceof Error ? err.message : String(err)}`)
-      return null
     }
   }
 

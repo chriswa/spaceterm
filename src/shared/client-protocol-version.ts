@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 23
+export const CLIENT_PROTOCOL_VERSION = 24
 
 /**
  * Oldest client protocol this build still serves.
@@ -107,5 +107,10 @@ export const CLIENT_PROTOCOL_VERSION = 23
  * v22 has no automation cards: it cannot make or edit one (`automation-add`,
  * `-update`, `-clear-queue`), and its node store throws on the `automation`
  * node type, so it must be reloaded once a canvas holds one.
+ *
+ * v23 runs hands-free itself (`wake-word-check`, `dictation-turn-check`,
+ * `hands-free-tuning`), which Voice Operator does now: its checks are answered
+ * with a `server-error`, so its hands-free hears nothing. It loses nothing else;
+ * the page reloads onto this build's hands-free.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

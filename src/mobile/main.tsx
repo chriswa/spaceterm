@@ -144,8 +144,8 @@ if (!token) {
     installStayAwake()
     installDuckOthers()
     followHandsFree()
-    // The held microphone, listening on it for "Control", and a tone as it is ready; see hands-free-mode.ts.
-    installHandsFreeMode(window.api, 'phone')
+    // The held microphone, and in the app Voice Operator listening on it for "Control"; see hands-free-mode.ts.
+    installHandsFreeMode(window.api, 'phone', () => phoneDevice().label, (fn) => client.onLifecycle('connect', fn))
     // The sonar carries on while Control's voice is made, played by the app where it can,
     // and its turns end with a tone when it says nothing or fails — where replies are Aloud.
     thinkingCueScope.alsoSynthesizing = true

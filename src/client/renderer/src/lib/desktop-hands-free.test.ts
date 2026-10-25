@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { installFakeBridge } from '../testing/fake-bridge'
-import { holdHost, setHoldMicrophone } from '../../../../mobile/held-microphone'
+import { installFakeBridge, type FakeBridge } from '../testing/fake-bridge'
 import { recordMobileEvent } from '../../../../mobile/mobile-events'
-import { useHandsFree } from '../../../../mobile/hands-free'
+import { setHandsFree, useHandsFree } from '../../../../mobile/hands-free'
 import { handsFreeBlocker, installDesktopHandsFree } from './desktop-hands-free'
 
 function fakeClient() {
@@ -14,45 +13,38 @@ function fakeClient() {
 
 let uninstall: () => void
 let client: ReturnType<typeof fakeClient>
-const host = { microphoneHeld: vi.fn() }
+let bridge: FakeBridge
 
 beforeEach(() => {
-  installFakeBridge()
+  bridge = installFakeBridge()
   client = fakeClient()
-  host.microphoneHeld.mockClear()
-  uninstall = installDesktopHandsFree(client, host)
+  uninstall = installDesktopHandsFree(client)
 })
 
 afterEach(() => {
-  setHoldMicrophone(false)
   uninstall()
 })
 
 describe('hands-free on the Mac', () => {
-  it('runs the phone\'s hands-free mode with the Mac as the hold\'s host', () => {
-    expect(holdHost()).toBe('desktop')
-    // Not listening until it is switched on.
+  it('is Voice Operator on the Mac\'s microphone, switched through the server', () => {
     expect(useHandsFree.getState().phase).toBe('off')
+    setHandsFree(true)
+    setHandsFree(false)
+    expect(bridge.calls.filter((c) => c.method === 'handsFree.setMac').map((c) => c.args)).toEqual([[true], [false]])
   })
 
-  it('keeps the window unthrottled for exactly as long as hands-free is on', () => {
-    setHoldMicrophone(true)
-    expect(host.microphoneHeld).toHaveBeenLastCalledWith(true)
-    setHoldMicrophone(false)
-    expect(host.microphoneHeld).toHaveBeenLastCalledWith(false)
+  it('follows what Voice Operator says about the Mac', () => {
+    setHandsFree(true)
+    bridge.emit.handsFreeMacEvent({ type: 'state', phase: 'listening', conversation: true, closesAt: null, checking: false, pending: false })
+    expect(useHandsFree.getState()).toMatchObject({ on: true, phase: 'listening', conversation: true })
+    bridge.emit.handsFreeMacEvent({ type: 'transcript', text: 'Control, run the tests.', trigger: 'control', interrupted: false, reason: 'finished', shutdown: false })
+    expect(bridge.calls.filter((c) => c.method === 'handsFree.say').map((c) => c.args)).toEqual([['run the tests.', false]])
   })
 
   it('sends its audio and lifecycle record to the server, as the phone does', () => {
     recordMobileEvent('test-event', { from: 'mac' })
     const sent = client.mobileEvents.mock.calls.flatMap(([events]) => events)
     expect(sent.map((e) => e.kind)).toContain('test-event')
-  })
-
-  it('stops following the hold once uninstalled', () => {
-    uninstall()
-    setHoldMicrophone(true)
-    expect(host.microphoneHeld).not.toHaveBeenCalled()
-    uninstall = () => undefined
   })
 })
 

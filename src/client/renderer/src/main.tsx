@@ -17,8 +17,8 @@ const host = window.electronHost
 // once it has been installed.
 void installApi(electronTransport(host.pipe), host.platform, 'spaceterm-electron', { id: DESKTOP_DEVICE.deviceId, label: DESKTOP_DEVICE.label }).then(async (client) => {
   installDesktopMemoryProbe(message => window.api.log(message))
-  // The toolbar's hands-free button, beside Control: the phone's hands-free mode, on the Mac.
-  installDesktopHandsFree(client, host)
+  // The toolbar's hands-free button, beside Control: Voice Operator's hands-free, on the Mac's microphone.
+  installDesktopHandsFree(client)
   window.api.log(`[Supersample] display ratio ${realDevicePixelRatio()}, ${isSupersampleActive() ? 'on' : 'off'}`)
   const { App } = await import('./App')
   // The desktop opens on the canvas where it was left; only the phone opens on
