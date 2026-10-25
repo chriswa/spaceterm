@@ -8,17 +8,18 @@ import { asNodeId } from '../../../../shared/ids'
 import type { AutomationOverlap } from '../../../../shared/automation'
 import type { AutomationRunStats } from '../../../../shared/state'
 
+const triggerInput = () => document.querySelector('.automation-card__trigger') as HTMLInputElement
 const kindSelect = () => screen.getByLabelText('Trigger kind') as HTMLSelectElement
 const overlapSelect = () => document.querySelector('.automation-card__overlap') as HTMLSelectElement
 
 const id = asNodeId('auto-1')
 
-function renderCard(props: { trigger?: string; overlap?: AutomationOverlap; queued?: number; runStats?: AutomationRunStats } = {}) {
-  const handlers = { onTriggerChange: vi.fn(), onOverlapChange: vi.fn(), onClearQueue: vi.fn(), onFocus: vi.fn(), onMove: vi.fn() }
+function renderCard(props: { trigger?: string; prompt?: string; overlap?: AutomationOverlap; queued?: number; runStats?: AutomationRunStats } = {}) {
+  const handlers = { onTriggerChange: vi.fn(), onPromptChange: vi.fn(), onOverlapChange: vi.fn(), onClearQueue: vi.fn(), onFocus: vi.fn(), onMove: vi.fn() }
   render(
     <AutomationCard
       id={id} x={0} y={0} zIndex={1} zoom={1} focused selected={false} archivedChildren={[]}
-      trigger={props.trigger ?? ''} overlap={props.overlap ?? 'single'} queued={props.queued ?? 0} runStats={props.runStats}
+      trigger={props.trigger ?? ''} prompt={props.prompt ?? ''} overlap={props.overlap ?? 'single'} queued={props.queued ?? 0} runStats={props.runStats}
       onClose={vi.fn()} onColorChange={vi.fn()} onOpenArchiveSearch={vi.fn()}
       cameraRef={{ current: { x: 0, y: 0, z: 1 } }}
       {...handlers}
@@ -38,7 +39,7 @@ afterEach(cleanup)
 describe('AutomationCard', () => {
   it('saves the trigger on Enter, trimmed', () => {
     const { onTriggerChange } = renderCard()
-    const input = screen.getByRole('textbox')
+    const input = triggerInput()
     fireEvent.change(input, { target: { value: '  custom_linear ' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     fireEvent.blur(input)
@@ -47,13 +48,13 @@ describe('AutomationCard', () => {
 
   it('does not save when the trigger did not change', () => {
     const { onTriggerChange } = renderCard({ trigger: 'custom_x' })
-    fireEvent.blur(screen.getByRole('textbox'))
+    fireEvent.blur(triggerInput())
     expect(onTriggerChange).not.toHaveBeenCalled()
   })
 
   it('says what is wrong with an invalid cron as you type, briefly, with the parser detail in the tooltip', () => {
     renderCard()
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'every morning' } })
+    fireEvent.change(triggerInput(), { target: { value: 'every morning' } })
     const status = document.querySelector('.automation-card__status--error') as HTMLElement
     expect(status.textContent).toContain('Five fields')
     expect(status.title).toContain('every morning')
@@ -73,13 +74,13 @@ describe('AutomationCard', () => {
   it('asks for the custom_ prefix rather than reading an event id as cron', () => {
     renderCard()
     fireEvent.change(kindSelect(), { target: { value: 'event' } })
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'initial_test' } })
+    fireEvent.change(triggerInput(), { target: { value: 'initial_test' } })
     expect(document.querySelector('.automation-card__status--error')?.textContent).toContain('start with custom_')
   })
 
   it('points an event id typed as cron at the dropdown', () => {
     renderCard()
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'custom_x' } })
+    fireEvent.change(triggerInput(), { target: { value: 'custom_x' } })
     expect(document.querySelector('.automation-card__status--error')?.textContent).toContain('Custom event')
   })
 
@@ -125,5 +126,23 @@ describe('AutomationCard', () => {
     fireEvent.mouseMove(window, { clientX: 40, clientY: 30 })
     fireEvent.mouseUp(window)
     expect(onMove).toHaveBeenCalledWith(id, 40, 30, false, false)
+  })
+
+  it('saves the prompt on blur exactly as typed, newlines and all', () => {
+    const { onPromptChange } = renderCard({ prompt: 'old' })
+    const box = screen.getByLabelText('Prompt')
+    fireEvent.change(box, { target: { value: 'Check Linear.\n\n  Then report.' } })
+    fireEvent.blur(box)
+    expect(onPromptChange).toHaveBeenCalledWith(id, 'Check Linear.\n\n  Then report.')
+  })
+
+  it('throws away an unsaved prompt edit on Escape', () => {
+    const { onPromptChange } = renderCard({ prompt: 'old' })
+    const box = screen.getByLabelText('Prompt') as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'new' } })
+    fireEvent.keyDown(box, { key: 'Escape' })
+    fireEvent.blur(box)
+    expect(box.value).toBe('old')
+    expect(onPromptChange).not.toHaveBeenCalled()
   })
 })

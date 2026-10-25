@@ -116,6 +116,8 @@ const CARDS: CardCase[] = [
       <AutomationCard
         {...s}
         trigger="custom_contract"
+        prompt=""
+        onPromptChange={vi.fn()}
         overlap="single"
         queued={0}
         onTriggerChange={vi.fn()}

@@ -9,7 +9,7 @@ import { useUpdateActionsStore } from '../stores/updateActionsStore'
 import { useReceptionistStore, isThinkingWithinEarshot } from '../stores/receptionistStore'
 import { useAgentNamesStore } from '../stores/agentNamesStore'
 import { receptionistHolderOf, type NodeData, type NodeStamp } from '../../../../shared/state'
-import type { AutomationOverlap } from '../../../../shared/automation'
+import type { AutomationPatch } from '../../../../shared/automation'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import { syncUndoBuffer } from './undo-buffer'
 import { playSound } from './sounds'
@@ -393,7 +393,7 @@ export async function sendAutomationAdd(parentId: NodeId, x?: number, y?: number
   return window.api.node.automationAdd(parentId, x, y)
 }
 
-export async function sendAutomationUpdate(nodeId: NodeId, patch: { trigger?: string; overlap?: AutomationOverlap }): Promise<void> {
+export async function sendAutomationUpdate(nodeId: NodeId, patch: AutomationPatch): Promise<void> {
   await window.api.node.automationUpdate(nodeId, patch)
 }
 

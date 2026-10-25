@@ -44,6 +44,8 @@ interface AutomationCardProps {
   zIndex: number
   zoom: number
   trigger: string
+  /** What each run is told, after the markdown above the card. */
+  prompt: string
   overlap: AutomationOverlap
   queued: number
   runStats?: AutomationRunStats
@@ -56,6 +58,7 @@ interface AutomationCardProps {
   onClose: (id: NodeId) => void
   onMove: (id: NodeId, x: number, y: number, metaKey?: boolean, shiftKey?: boolean) => void
   onTriggerChange: (id: NodeId, trigger: string) => void
+  onPromptChange: (id: NodeId, prompt: string) => void
   onOverlapChange: (id: NodeId, overlap: AutomationOverlap) => void
   onClearQueue: (id: NodeId) => void
   onColorChange: (id: NodeId, color: string) => void
@@ -134,14 +137,16 @@ function formatTokens(tokens: number): string {
 }
 
 export function AutomationCard({
-  id, x, y, zIndex, zoom, trigger, overlap, queued, runStats, focused, selected, resolvedPreset, archivedChildren,
-  onFocus, onClose, onMove, onTriggerChange, onOverlapChange, onClearQueue, onColorChange,
+  id, x, y, zIndex, zoom, trigger, prompt, overlap, queued, runStats, focused, selected, resolvedPreset, archivedChildren,
+  onFocus, onClose, onMove, onTriggerChange, onPromptChange, onOverlapChange, onClearQueue, onColorChange,
   onOpenArchiveSearch, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onReparentTarget, onAddNode, cameraRef
 }: AutomationCardProps) {
   const [draft, setDraft] = useState(trigger)
   const [kind, setKind] = useState<TriggerKind>(() => triggerKindOf(trigger))
   const inputRef = useRef<HTMLInputElement>(null)
+  const [promptDraft, setPromptDraft] = useState(prompt)
+  const promptRef = useRef<HTMLTextAreaElement>(null)
   const propsRef = useRef({ x, y, zoom, id })
   propsRef.current = { x, y, zoom, id }
   const reparentingNodeId = useReparentStore(s => s.reparentingNodeId)
@@ -154,6 +159,10 @@ export function AutomationCard({
       if (trigger.trim()) setKind(triggerKindOf(trigger))
     }
   }, [trigger])
+
+  useEffect(() => {
+    if (document.activeElement !== promptRef.current) setPromptDraft(prompt)
+  }, [prompt])
 
   useEffect(() => {
     if (focused && freshlyCreated) {
@@ -172,6 +181,11 @@ export function AutomationCard({
     if (trimmed !== trigger) onTriggerChange(id, trimmed)
     setDraft(trimmed)
   }, [draft, trigger, id, onTriggerChange])
+
+  // Saved as typed, whitespace and all: a prompt's layout is the user's.
+  const commitPrompt = useCallback(() => {
+    if (promptDraft !== prompt) onPromptChange(id, promptDraft)
+  }, [promptDraft, prompt, id, onPromptChange])
 
   const scriptsSocketPath = useScriptsSocketPathStore(s => s.path)
   const status = useMemo(() => describeTrigger(kind, draft, scriptsSocketPath), [kind, draft, scriptsSocketPath])
@@ -298,6 +312,19 @@ export function AutomationCard({
         <div className={`automation-card__status ${status.error ? 'automation-card__status--error' : ''}`} title={status.detail}>
           {status.text}
         </div>
+        <textarea
+          ref={promptRef}
+          className="automation-card__control automation-card__prompt"
+          aria-label="Prompt"
+          spellCheck={false}
+          placeholder="What each run should do. Comes after any markdown above this card."
+          value={promptDraft}
+          onChange={(e) => setPromptDraft(e.target.value)}
+          onBlur={commitPrompt}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') { e.preventDefault(); setPromptDraft(prompt); promptRef.current?.blur() }
+          }}
+        />
         <div className="automation-card__stats">
           {runStats ? (
             <>

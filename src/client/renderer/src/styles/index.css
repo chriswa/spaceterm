@@ -2098,6 +2098,31 @@ html, body, #root {
   white-space: pre-line;
 }
 
+.automation-card__prompt {
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  color: inherit;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid #585b70;
+  border-radius: 6px;
+  padding: 6px 8px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+  /* Fixed: a long prompt scrolls rather than growing the card, whose size the
+     canvas places everything around. */
+  height: 160px;
+  flex: none;
+  resize: none;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.automation-card__prompt:focus {
+  border-color: #4d9eff;
+}
+
 .automation-card__stats {
   margin-top: auto;
   display: flex;

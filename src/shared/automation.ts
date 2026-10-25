@@ -68,6 +68,13 @@ export type AutomationOverlap = (typeof AUTOMATION_OVERLAPS)[number]
 
 export const DEFAULT_AUTOMATION_OVERLAP: AutomationOverlap = 'single'
 
+/** The fields of an automation card the user edits. Any subset may change at once. */
+export interface AutomationPatch {
+  trigger?: string
+  overlap?: AutomationOverlap
+  prompt?: string
+}
+
 export function isAutomationOverlap(value: unknown): value is AutomationOverlap {
   return (AUTOMATION_OVERLAPS as readonly unknown[]).includes(value)
 }

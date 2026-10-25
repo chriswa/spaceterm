@@ -216,7 +216,7 @@ export const FILE_HEIGHT = 144
 
 // Automation node dimensions. Fixed: the card is a form, not content.
 export const AUTOMATION_WIDTH = 470
-export const AUTOMATION_HEIGHT = 206
+export const AUTOMATION_HEIGHT = 374
 /**
  * The gear drawn behind an automation card: a square half again as wide as the
  * card, centred on it. Outside the card's measured box, so it never affects

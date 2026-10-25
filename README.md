@@ -151,8 +151,8 @@ a script fires:
 npm run cli -- fire custom_linear '{"ticket":"ENG-123"}'
 ```
 
-The card has no prompt. The agent gets the markdown above the card, as any
-spawned surface does, followed by one line: `Triggered by: cron at <time>`, or
+The agent's prompt is the markdown above the card, as any spawned surface
+gets, then the card's own prompt box, then one line: `Triggered by: cron at <time>`, or
 `Triggered by: custom_linear, payload:` with the JSON on the line after. If cron slots pass while
 the server is down or the Mac is asleep, the card fires once when it comes back,
 and the line says the run is late. A per-card setting decides what a firing does

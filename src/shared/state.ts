@@ -310,13 +310,19 @@ export interface TitleNodeData extends BaseNodeData {
 /**
  * A trigger that starts Claude surfaces beneath itself. See `automation.ts`.
  *
- * Holds no prompt: its agents are told what to do by the markdown above it,
- * through the same ancestor prompt every spawned surface gets.
+ * Its agents are told what to do by the card's own prompt, after the markdown
+ * above it that every spawned surface gets (`gatherAncestorPrompt`).
  */
 export interface AutomationNodeData extends BaseNodeData {
   type: 'automation'
   /** A cron expression, a `custom_` event id, or empty. Parsed by `parseTrigger`. */
   trigger: string
+  /**
+   * What each run is told to do. Comes after the markdown above the card in the
+   * run's prompt, and before the trigger line. Absent on cards made before it
+   * existed, which reads as empty.
+   */
+  prompt?: string
   overlap: AutomationOverlap
   /** Firings waiting for the card's children to be archived, oldest first. */
   queue: AutomationFiring[]

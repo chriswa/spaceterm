@@ -146,7 +146,8 @@ const MAX_CUT_IN_MS = 10_000
  */
 /**
  * Walk the ancestor chain from `startNodeId` upward, collecting context from
- * markdown nodes (non-file-backed content) and file nodes (resolved paths).
+ * markdown nodes (non-file-backed content), automation cards (their prompt) and
+ * file nodes (resolved paths).
  * Returns the accumulated pieces joined with newlines, or undefined if none found.
  */
 function gatherAncestorPrompt(nodes: Record<string, NodeData>, startNodeId: NodeId): string | undefined {
@@ -154,6 +155,10 @@ function gatherAncestorPrompt(nodes: Record<string, NodeData>, startNodeId: Node
   for (const node of ancestorsOf(lookupIn(nodes), startNodeId, { includeSelf: true })) {
     if (node.type === 'markdown' && !node.fileBacked && node.content.trim()) {
       parts.push(node.content)
+    }
+    // An automation card's own prompt, so its runs get it after the markdown above the card.
+    if (node.type === 'automation' && node.prompt?.trim()) {
+      parts.push(node.prompt)
     }
     if (node.type === 'file' && node.filePath) {
       parts.push(resolveFilePath(node.filePath, ancestorCwd(nodes, node.parentId)))
@@ -2787,7 +2792,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         send(client.link, { type: 'server-error', message: `automation-update: unknown overlap ${String(msg.overlap)}` })
         break
       }
-      stateManager.updateAutomation(msg.nodeId, { trigger: msg.trigger, overlap: msg.overlap })
+      if (msg.prompt !== undefined && typeof msg.prompt !== 'string') {
+        send(client.link, { type: 'server-error', message: 'automation-update: prompt must be a string' })
+        break
+      }
+      stateManager.updateAutomation(msg.nodeId, { trigger: msg.trigger, overlap: msg.overlap, prompt: msg.prompt })
       stateManager.recordInteraction(msg.nodeId, Date.now())
       send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break

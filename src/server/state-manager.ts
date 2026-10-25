@@ -21,7 +21,7 @@ import type {
   ReceptionistHolder
 } from '../shared/state'
 import { receptionistHolderOf } from '../shared/state'
-import { DEFAULT_AUTOMATION_OVERLAP, addRun, automationOf, type AutomationFiring, type AutomationOverlap } from '../shared/automation'
+import { DEFAULT_AUTOMATION_OVERLAP, addRun, automationOf, type AutomationFiring, type AutomationPatch } from '../shared/automation'
 import { groupNodes, groupNodesWithParent, archivesOwnedBy, ownedArchiveLists } from '../shared/archive-tree'
 import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
 import type { CacheWarmth } from './cache-warmth'
@@ -2038,12 +2038,13 @@ export class StateManager {
     return Object.values(this.state.nodes).filter((n): n is AutomationNodeData => n.type === 'automation')
   }
 
-  updateAutomation(nodeId: NodeId, patch: { trigger?: string; overlap?: AutomationOverlap }): void {
+  updateAutomation(nodeId: NodeId, patch: AutomationPatch): void {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'automation') return
     this.patchNode(node, {
       ...(patch.trigger !== undefined ? { trigger: patch.trigger } : {}),
-      ...(patch.overlap !== undefined ? { overlap: patch.overlap } : {})
+      ...(patch.overlap !== undefined ? { overlap: patch.overlap } : {}),
+      ...(patch.prompt !== undefined ? { prompt: patch.prompt } : {})
     })
   }
 

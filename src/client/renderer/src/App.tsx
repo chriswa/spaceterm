@@ -2042,6 +2042,10 @@ export function App() {
     sendTitleText(id, text)
   }, [])
 
+  const handleAutomationPromptChange = useCallback((id: NodeId, prompt: string) => {
+    void sendAutomationUpdate(id, { prompt })
+  }, [])
+
   const handleAutomationTriggerChange = useCallback((id: NodeId, trigger: string) => {
     void sendAutomationUpdate(id, { trigger })
   }, [])
@@ -2909,6 +2913,8 @@ export function App() {
             queued={a.queue.length}
             runStats={a.runStats}
             onTriggerChange={handleAutomationTriggerChange}
+            prompt={a.prompt ?? ''}
+            onPromptChange={handleAutomationPromptChange}
             onOverlapChange={handleAutomationOverlapChange}
             onClearQueue={handleAutomationClearQueue}
           />

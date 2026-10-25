@@ -14,7 +14,7 @@ import { unhandledVariant } from './exhaustive'
 import type { NodeId, PtySessionId } from './ids'
 import type { NodeStamp, ServerState } from './state'
 import type { UndoEntry } from './undo-types'
-import type { AutomationOverlap } from './automation'
+import type { AutomationPatch } from './automation'
 
 /**
  * The client half of the client socket protocol: request/reply correlation,
@@ -694,7 +694,7 @@ export class ServerClient {
     return this.added({ type: 'automation-add', parentId, x, y })
   }
 
-  automationUpdate(nodeId: NodeId, patch: { trigger?: string; overlap?: AutomationOverlap }): Promise<void> {
+  automationUpdate(nodeId: NodeId, patch: AutomationPatch): Promise<void> {
     return this.ack({ type: 'automation-update', nodeId, ...patch })
   }
 

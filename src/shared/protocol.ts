@@ -745,13 +745,11 @@ export interface AutomationAddMessage {
   y?: number
 }
 
-/** Change an automation card's trigger, its overlap mode, or both. */
-export interface AutomationUpdateMessage {
+/** Change any of an automation card's trigger, overlap mode and prompt. */
+export type AutomationUpdateMessage = AutomationPatch & {
   type: 'automation-update'
   seq: number
   nodeId: NodeId
-  trigger?: string
-  overlap?: AutomationOverlap
 }
 
 /** Throw away every firing waiting on an automation card. */
@@ -1557,7 +1555,7 @@ export interface ExitMessage {
 // --- Server → Client node state messages ---
 
 import type { ServerState, NodeData, NodeStamp, ReceptionistHolder } from './state'
-import type { AutomationOverlap } from './automation'
+import type { AutomationPatch } from './automation'
 import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 import type { UsageSnapshot } from './usage-report'
 import type { SystemStatsSnapshot } from './system-stats'
