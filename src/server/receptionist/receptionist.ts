@@ -456,6 +456,8 @@ const BACK_BURNER_NOTE = 'They are working with it directly: say nothing more of
  * feed moves a sentence at a time; only asking outright says which word.
  */
 export const VOICE_FOLLOW_MS = 150
+/** How long a cut waits for the voice to say where interim words stopped, before going by the last it heard. */
+export const INTERIM_CUT_WAIT_MS = 1500
 const TURN_FAILED_SPEECH = 'Sorry, I lost my train of thought. Could you say that again?'
 /** How many servers may ask one side question before it is given up on: see `resumeQuestions`. */
 export const MAX_QUESTION_TRIES = 3
@@ -656,7 +658,11 @@ export class Receptionist {
   /** Each interruption noted after the one before: see `noteInterruption`. */
   private interruptions: Promise<unknown> = Promise.resolve()
   /** The words the turn under way said while it looked things up, and how far the listener got: see `noteInterimCut`. */
-  private interim: { attempt: Attempt; spoken: SpokenPart[]; at?: number; text: string; heard: number; ended: boolean } | undefined
+  private interim: {
+    attempt: Attempt; spoken: SpokenPart[]; at?: number; text: string; heard: number; ended: boolean
+    /** Resolves once the voice says where these words ended — at the end, or where a cut stopped them. */
+    over: Promise<void>
+  } | undefined
   /**
    * Control was let go of by restart_server or refresh_clients and has not yet been told it is heard
    * again. Told with the first turn the user can hear, whatever starts it: a
@@ -847,7 +853,7 @@ export class Receptionist {
    * there was anything to stop. `heardUntil`: see `SpeechChannel.cancel`.
    */
   private cutOffByUser(heardUntil?: number): Promise<boolean> {
-    this.noteInterimCut()
+    void this.noteInterimCut()
     const stopping = this.channel.cancel(heardUntil)
     void this.noteInterruption('user', stopping)
     return stopping
@@ -885,10 +891,13 @@ export class Receptionist {
    * up. The model wrote those words, so it is told how much was heard; the
    * reply's own cut-off is `noteInterruption`'s.
    */
-  private noteInterimCut(): void {
+  private async noteInterimCut(): Promise<void> {
     const interim = this.interim
     this.interim = undefined
     if (!interim?.attempt.isCurrent || (interim.ended && interim.heard >= interim.text.length)) return
+    // Where the stop that follows this landed, word by word (`SpeechChannel.dropInterim`), rather than the
+    // last sentence the voice was heard to start or finish. Not long: the voice is local.
+    await Promise.race([interim.over, this.deps.sleep(INTERIM_CUT_WAIT_MS)])
     // Struck out in the transcript as a reply's cut-off is.
     if (interim.at !== undefined) {
       const lengths = heardLengths(interim.spoken, interim.heard)
@@ -3242,14 +3251,19 @@ export class Receptionist {
    * listener gets, so that talking over it can say how much they heard.
    */
   private async speakInterim(attempt: Attempt, froms: readonly string[], spoken: SpokenPart[]): Promise<boolean> {
-    const interim: NonNullable<Receptionist['interim']> = { attempt, spoken, text: joinSpeechParts(spoken), heard: 0, ended: false }
+    let over: () => void = () => {}
+    const interim: NonNullable<Receptionist['interim']> = {
+      attempt, spoken, text: joinSpeechParts(spoken), heard: 0, ended: false, over: new Promise<void>((resolve) => { over = resolve }),
+    }
     this.interim = interim
     const queued = await this.channel.deliverInterim(attempt, spoken, (progress) => {
-      if (progress.kind === 'playing') interim.heard = progress.heard
-      else {
-        interim.ended = true
-        interim.heard = progress.state === 'completed' ? interim.text.length : progress.heard ?? interim.heard
+      if (progress.kind === 'playing') {
+        if (!interim.ended) interim.heard = progress.heard
+        return
       }
+      interim.ended = true
+      interim.heard = progress.state === 'completed' ? interim.text.length : progress.heard ?? interim.heard
+      over()
     })
     if (!attempt.isCurrent) return queued
     // Written like any reply: the transcript shows every word Control says,
@@ -3262,7 +3276,30 @@ export class Receptionist {
       this.ledger.heard(interim.at, none, true)
       this.onUnread(this.ledger.unread())
     }
+    if (queued) void this.followInterim(interim)
     return queued
+  }
+
+  /**
+   * Light the transcript's words as the interim words are said, asking the
+   * voice where it is as `followVoice` does for the answer — and keep how far
+   * they got, word by word, for a cut the drop cannot place.
+   */
+  private async followInterim(interim: NonNullable<Receptionist['interim']>): Promise<void> {
+    const at = interim.at
+    if (at === undefined) return
+    this.onSpeaking({ of: at, parts: playedLengths(interim.spoken, 0) })
+    while (this.interim === interim && !interim.ended && interim.attempt.isCurrent) {
+      await this.deps.voiceTick()
+      const offset = await this.channel.interimOffset()
+      if (offset === undefined || this.interim !== interim || interim.ended) continue
+      interim.heard = offset
+      this.onSpeaking({ of: at, parts: playedLengths(interim.spoken, offset) })
+    }
+    // Said to the end: all of it lit, until the turn moves on.
+    if (interim.ended && interim.heard >= interim.text.length && interim.attempt.isCurrent) {
+      this.onSpeaking({ of: at, parts: playedLengths(interim.spoken, interim.heard) })
+    }
   }
 
   /** Actions taken whose results the model has not seen, for its next message. Returns the note, if any. */

@@ -121,6 +121,11 @@ interface LiveJob {
   backend: SpeechBackend
 }
 
+/** Words said while a turn looks things up, and who follows how far they got: see `deliverInterim`. */
+interface InterimJob extends LiveJob {
+  onProgress?: (progress: SpeechProgress) => void
+}
+
 /**
  * One run on a channel — typically a model request, the speech job it
  * produces, and the monitor that watches that job play out.
@@ -171,8 +176,8 @@ export class SpeechChannel {
   private currentPhase: SpeechPhase = 'ready'
   private attempt: Attempt | undefined
   private job: LiveJob | undefined
-  /** Jobs spoken by `deliverInterim` this attempt: not followed, but dropped by `cancel`. */
-  private interimJobs: LiveJob[] = []
+  /** Jobs spoken by `deliverInterim` this attempt: dropped by `cancel`, which tells their follower where they stopped. */
+  private interimJobs: InterimJob[] = []
   /**
    * Where the listener cut off the last spoken answer, recorded at the moment
    * the interruption was observed. Consumed by `heardPrefix`.
@@ -318,7 +323,7 @@ export class SpeechChannel {
     // A refusal is left for the answer to report: one toast, not two.
     if (!speech.job) return false
     serverLog(`${this.label} queued interim speech ${speech.job.id}: ${quoteForLog(content)}`)
-    const job = { id: speech.job.id, backend }
+    const job: InterimJob = { id: speech.job.id, backend, onProgress }
     this.interimJobs.push(job)
     this.setPhase('synthesizing')
     if (!onProgress) return false
@@ -367,7 +372,7 @@ export class SpeechChannel {
     this.job = undefined
     this.attempt = undefined
     this.interimJobs = []
-    for (const spoken of interim) void spoken.backend.drop(spoken.id, heardUntil)
+    for (const spoken of interim) this.dropInterim(spoken, heardUntil)
     // Abandoning aborts the request the attempt is parked on, which is what
     // frees a monitor sitting in a thirty-second long poll.
     attempt?.abandon()
@@ -394,7 +399,7 @@ export class SpeechChannel {
     const interim = this.interimJobs
     this.job = undefined
     this.interimJobs = []
-    for (const spoken of interim) void spoken.backend.drop(spoken.id)
+    for (const spoken of interim) this.dropInterim(spoken)
     if (job) this.supersededAt = job.backend.drop(job.id).then((response) => cutOffAt(speechStatus(response)))
   }
 
@@ -407,8 +412,36 @@ export class SpeechChannel {
   async silence(): Promise<void> {
     const interim = this.interimJobs
     this.interimJobs = []
-    for (const spoken of interim) void spoken.backend.drop(spoken.id)
+    for (const spoken of interim) this.dropInterim(spoken)
     if (this.job) await this.job.backend.drop(this.job.id)
+  }
+
+  /**
+   * Stop interim words, and tell their follower where they stopped: the
+   * drop's answer, word by word, and as of `heardUntil`. Its own monitor
+   * cannot say — it lets go silently once the attempt is abandoned — and
+   * without this a cut was counted from the last change the monitor saw,
+   * which only ever lands on a sentence boundary.
+   */
+  private dropInterim(job: InterimJob, heardUntil?: number): void {
+    void job.backend.drop(job.id, heardUntil).then((response) => {
+      const status = speechStatus(response)
+      if (!status || status.state === 'in_progress') return
+      job.onProgress?.({ kind: 'ended', state: status.state, ...(typeof status.character_offset === 'number' ? { heard: status.character_offset } : {}) })
+    })
+  }
+
+  /**
+   * Where the voice is in the interim words being spoken now, as `liveOffset`
+   * is for the answer: just past the word sounding. Undefined unless they are
+   * audibly playing.
+   */
+  async interimOffset(): Promise<number | undefined> {
+    const job = this.interimJobs.at(-1)
+    if (!job) return undefined
+    const status = speechStatus(await job.backend.status(job.id))
+    return status?.state === 'in_progress' && status.playback_state === 'speaking' && typeof status.character_offset === 'number'
+      ? status.character_offset : undefined
   }
 
   /**

@@ -344,4 +344,26 @@ describe('SpeechChannel', () => {
     expect(progress).toEqual([{ kind: 'playing', heard: 5 }, { kind: 'ended', state: 'completed', heard: 13 }])
     expect(h.channel.phase).toBe('synthesizing')
   })
+
+  it('tells an interim line\'s follower where a cut stopped it, from the stop itself', async () => {
+    const vo = fakeBackend({
+      statuses: [{ state: 'in_progress', playback_state: 'speaking', character_offset: 0, version: 2 }],
+      dropped: { character_offset: 9 },
+    })
+    const h = harness(vo.backend)
+    const progress: SpeechProgress[] = []
+    await h.channel.deliverInterim(h.channel.begin('thinking'), 'Bringing Jack back.', (p) => progress.push(p))
+    await h.channel.cancel(1234)
+    await flush()
+    expect(vo.heardUntils).toEqual([1234])
+    expect(progress.at(-1)).toEqual({ kind: 'ended', state: 'cancelled_by_client', heard: 9 })
+  })
+
+  it('says where interim words are now, word by word, while they play', async () => {
+    const vo = fakeBackend({ statuses: [{ state: 'in_progress', playback_state: 'speaking', character_offset: 9, version: 2 }] })
+    const h = harness(vo.backend)
+    expect(await h.channel.interimOffset()).toBeUndefined()
+    await h.channel.deliverInterim(h.channel.begin('thinking'), 'Bringing Jack back.')
+    expect(await h.channel.interimOffset()).toBe(9)
+  })
 })

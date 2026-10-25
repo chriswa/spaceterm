@@ -3668,6 +3668,32 @@ describe('Receptionist: the user starts talking over its words', () => {
     const interimAt = h.record.findIndex(message => message.content.includes('Let me check on Kevin'))
     expect(h.heardMarks).toEqual([{ replyAt: interimAt, parts: ['Let me '.length] }])
   })
+
+  it('counts what was heard of them from where the stop landed, not the last sentence the voice reported', async () => {
+    const speech = handPlayed()
+    const h = harness({
+      speech: speech.backend,
+      replies: [
+        reply([{ from: 'control', text: 'Let me check on Kevin for you.' }], [{ tool: 'read', agent: KEVIN }]),
+        () => new Promise<string>(() => {}),
+        (turn) => {
+          expect(turn.prompt).toContain('They heard only: "Let me check on Kevin"')
+          return reply([{ from: 'control', text: 'Okay.' }])
+        },
+      ],
+    })
+    void h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    speech.heard(0)
+    await flush()
+    // Word by word within the sentence, which the change feed never says.
+    speech.quietly('Let me check on Kevin'.length)
+    h.receptionist.userSpeaking(true)
+    void h.receptionist.hear('never mind', 'spoken')
+    h.receptionist.userSpeaking(false)
+    await flush()
+    expect(h.turns.at(-1)?.prompt).toContain('never mind')
+  })
 })
 
 describe('Receptionist actions run before the words that report them', () => {
@@ -4697,6 +4723,28 @@ describe('Receptionist muted, and what the user has taken in', () => {
     speech.end('completed')
     await flush()
     expect(h.speaking.at(-1)).toBeUndefined()
+  })
+
+  it('follows words said while looking things up word by word too', async () => {
+    const speech = handPlayed()
+    let tick = (): void => {}
+    const h = harness({
+      speech: speech.backend,
+      replies: [
+        reply([{ from: 'control', text: 'Let me check on Kevin for you.' }], [{ tool: 'read', agent: KEVIN }]),
+        () => new Promise<string>(() => {}),
+      ],
+      voiceTick: () => new Promise((resolve) => { tick = resolve }),
+    })
+    void h.receptionist.hear('how is Kevin?', 'spoken')
+    await flush()
+    const at = h.record.findIndex(message => message.content.includes('Let me check on Kevin'))
+    expect(h.speaking.at(-1)).toEqual({ of: at, parts: [0] })
+    speech.heard(0)
+    speech.quietly('Let me check on Ke'.length)
+    tick()
+    await flush()
+    expect(h.speaking.at(-1)).toEqual({ of: at, parts: ['Let me check on Kevin'.length] })
   })
 
   it('dims the words after where the listener rewinds to, and tells the model they heard only that far', async () => {
