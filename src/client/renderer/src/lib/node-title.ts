@@ -29,6 +29,7 @@ export function nodeDisplayTitle(data: NodeData): string {
   if (data.type === 'directory') return data.cwd
   if (data.type === 'title') return data.text || '[Untitled]'
   if (data.type === 'file') return data.filePath
+  if (data.type === 'automation') return data.trigger ? `Automation: ${data.trigger}` : 'Automation'
   return data.id.slice(0, 8)
 }
 

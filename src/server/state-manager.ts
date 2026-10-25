@@ -10,6 +10,7 @@ import type {
   DirectoryNodeData,
   FileNodeData,
   TitleNodeData,
+  AutomationNodeData,
   TerminalSessionEntry,
   ArchivedNode,
   ArchivedDescendant,
@@ -20,6 +21,7 @@ import type {
   ReceptionistHolder
 } from '../shared/state'
 import { receptionistHolderOf } from '../shared/state'
+import { DEFAULT_AUTOMATION_OVERLAP, type AutomationFiring, type AutomationOverlap } from '../shared/automation'
 import { groupNodes, groupNodesWithParent, archivesOwnedBy, ownedArchiveLists } from '../shared/archive-tree'
 import type { ClaudeSessionEntry, CameraBounds } from '../shared/protocol'
 import type { CacheWarmth } from './cache-warmth'
@@ -1269,8 +1271,8 @@ export class StateManager {
     return removed.map((node) => node.id)
   }
 
-  /** A node's live children, in id order so a snapshot is reproducible. */
-  private childrenOf(nodeId: NodeId): NodeData[] {
+  /** A node's live children, in id order so a snapshot is reproducible. Archived ones are not in `state.nodes`. */
+  childrenOf(nodeId: NodeId): NodeData[] {
     return Object.values(this.state.nodes)
       .filter((node) => node.parentId === nodeId)
       .sort((a, b) => a.id.localeCompare(b.id))
@@ -1969,6 +1971,56 @@ export class StateManager {
     const node = this.state.nodes[nodeId]
     if (!node || node.type !== 'title') return
     this.patchNode(node, { text })
+  }
+
+  // --- Automation operations ---
+
+  createAutomation(parentId: NodeId, x: number, y: number): AutomationNodeData {
+    const id = asNodeId(randomUUID())
+    const node: AutomationNodeData = {
+      id,
+      type: 'automation',
+      lastInteractedAt: Date.now(),
+      parentId,
+      x,
+      y,
+      zIndex: this.state.nextZIndex++,
+      trigger: '',
+      overlap: DEFAULT_AUTOMATION_OVERLAP,
+      queue: [],
+      archivedChildren: [],
+      colorPresetId: 'inherit'
+    }
+    this.state.nodes[id] = node
+    this.onNodeAdd(node)
+    this.schedulePersist()
+    return node
+  }
+
+  /** Live automation cards, for the scheduler. */
+  getAutomations(): AutomationNodeData[] {
+    return Object.values(this.state.nodes).filter((n): n is AutomationNodeData => n.type === 'automation')
+  }
+
+  updateAutomation(nodeId: NodeId, patch: { trigger?: string; overlap?: AutomationOverlap }): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'automation') return
+    this.patchNode(node, {
+      ...(patch.trigger !== undefined ? { trigger: patch.trigger } : {}),
+      ...(patch.overlap !== undefined ? { overlap: patch.overlap } : {})
+    })
+  }
+
+  setAutomationQueue(nodeId: NodeId, queue: AutomationFiring[]): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'automation') return
+    this.patchNode(node, { queue })
+  }
+
+  recordAutomationFired(nodeId: NodeId, at: number): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'automation') return
+    this.patchNode(node, { lastFiredAt: at })
   }
 
   // --- Alerts ---

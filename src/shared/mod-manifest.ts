@@ -38,6 +38,8 @@ export const MOD_CAPABILITIES = [
   'emit-mod',
   /** Receive spaceterm's event stream. */
   'subscribe-events',
+  /** Fire custom events at automation cards, which start agents. */
+  'fire-events',
 ] as const
 
 /** A capability the base defines. Bare id, fixed list, enforced on the socket. */

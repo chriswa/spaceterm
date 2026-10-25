@@ -4,6 +4,7 @@ import type { AgentType } from './agent-type'
 import type { AgentEffort } from './agent-effort'
 import type { CardType } from './card-types'
 import type { UndoEntry } from './undo-types'
+import type { AutomationFiring, AutomationOverlap } from './automation'
 
 // --- Claude state enum ---
 
@@ -294,6 +295,23 @@ export interface TitleNodeData extends BaseNodeData {
 }
 
 /**
+ * A trigger that starts Claude surfaces beneath itself. See `automation.ts`.
+ *
+ * Holds no prompt: its agents are told what to do by the markdown above it,
+ * through the same ancestor prompt every spawned surface gets.
+ */
+export interface AutomationNodeData extends BaseNodeData {
+  type: 'automation'
+  /** A cron expression, a `custom_` event id, or empty. Parsed by `parseTrigger`. */
+  trigger: string
+  overlap: AutomationOverlap
+  /** Firings waiting for the card's children to be archived, oldest first. */
+  queue: AutomationFiring[]
+  /** epoch ms an agent was last started or sent a firing. */
+  lastFiredAt?: number
+}
+
+/**
  * The header card of a generated agent-meta branch, and of the Skills group
  * nested inside it.
  *
@@ -349,6 +367,7 @@ export type NodeData =
   | DirectoryNodeData
   | FileNodeData
   | TitleNodeData
+  | AutomationNodeData
   | MetaGroupNodeData
   | MetaDocNodeData
 

@@ -33,12 +33,14 @@ import { isAgentSurface } from '../shared/node-utils'
 import { serverLog, serverLogSync, sanitizeForLog } from './server-log'
 import { MobileEventsLog } from './mobile-events'
 import { expandTilde } from './cwd'
+import { AutomationRunner, fileHeartbeat } from './automation-runner'
+import { isAutomationOverlap } from '../shared/automation'
 import { DaemonClient } from './daemon-client'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
 import { receivesSnapshots, owedOnResume } from './snapshot-delivery'
 import { agentSurfaceFootprint, computePlacement } from './node-placement'
-import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, clampBorrowedTerminalSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT } from '../shared/node-size'
+import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, clampBorrowedTerminalSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, AUTOMATION_WIDTH, AUTOMATION_HEIGHT } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
 import { shipIt } from './ship-it'
 import { RemoteDictation } from './remote-dictation'
@@ -343,6 +345,8 @@ let codexSessionFileWatcher: CodexSessionFileWatcher
 let cursorSessionFileWatcher: CursorSessionFileWatcher
 let fileContentManager: FileContentManager
 let gitStatusPoller: GitStatusPoller
+/** Undefined until startup has recovered surfaces, so nothing fires into a half-built canvas. */
+let automationRunner: AutomationRunner | undefined
 let promptedCommands: PromptedCommands
 let agentMetaManager: AgentMetaManager
 let agentMetaAvailability: AgentMetaAvailability
@@ -1094,6 +1098,25 @@ const SHIPS_DRAIN_TIMEOUT_MS = 5_000
  * Paste text into a live surface and (usually) submit it. Every way of
  * shipping — the client's `ship-it`, the scripts socket — goes through here.
  */
+/** How often cron triggers are checked. Cron's resolution is a minute; this is how late within it a run may start. */
+const AUTOMATION_TICK_MS = 15_000
+
+let automationDrainScheduled = false
+
+/**
+ * Start queued automation firings that a removal may have unblocked. Deferred
+ * and coalesced: removals arrive mid-mutation, often many at once when a
+ * subtree is archived, and a spawn must not run inside that.
+ */
+function scheduleAutomationDrain(): void {
+  if (automationDrainScheduled || !automationRunner) return
+  automationDrainScheduled = true
+  setImmediate(() => {
+    automationDrainScheduled = false
+    automationRunner?.drainQueues()
+  })
+}
+
 function shipToSession(sessionId: PtySessionId, text: string, submit: boolean): void {
   // An agent waiting on an AskUserQuestion prompt would take the text as a choice; see shipIt.
   const surface = stateManager.getNodes().find((node) => node.type === 'terminal' && node.sessionId === sessionId)
@@ -1252,6 +1275,7 @@ const scriptApi = new ScriptApi({
   // on. `payload` is not read here or anywhere else in this repo.
   emitMod: (modId, event, payload) => broadcastToAll({ type: 'mod', modId, event, payload }),
   capabilitiesFor: (modId) => modRegistry.capabilitiesFor(modId),
+  fireEvent: (eventId, payload) => automationRunner?.fireEvent(eventId, payload, Date.now()) ?? 0,
 
   shipIt: shipToSession,
 
@@ -2722,6 +2746,37 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'automation-add': {
+      try {
+        const pos = msg.x != null && msg.y != null
+          ? { x: msg.x, y: msg.y }
+          : computePlacement(stateManager.getState().nodes, msg.parentId, { width: AUTOMATION_WIDTH, height: AUTOMATION_HEIGHT })
+        const node = stateManager.createAutomation(msg.parentId, pos.x, pos.y)
+        send(client.link, { type: 'node-add-ack', seq: msg.seq, nodeId: node.id })
+      } catch (err: any) {
+        console.error(`automation-add failed: ${err.message}`)
+        send(client.link, { type: 'server-error', message: `automation-add failed: ${err.message}` })
+      }
+      break
+    }
+
+    case 'automation-update': {
+      if (msg.overlap !== undefined && !isAutomationOverlap(msg.overlap)) {
+        send(client.link, { type: 'server-error', message: `automation-update: unknown overlap ${String(msg.overlap)}` })
+        break
+      }
+      stateManager.updateAutomation(msg.nodeId, { trigger: msg.trigger, overlap: msg.overlap })
+      stateManager.recordInteraction(msg.nodeId, Date.now())
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
+    case 'automation-clear-queue': {
+      stateManager.setAutomationQueue(msg.nodeId, [])
+      send(client.link, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
     case 'title-text': {
       try {
         stateManager.updateTitleText(msg.nodeId, msg.text)
@@ -3138,6 +3193,8 @@ async function startServer(): Promise<void> {
       broadcastToAll({ type: 'node-updated', nodeId, fields })
       scriptApi.broadcast('node-updated', nodeId, { type: 'node-updated', nodeId, fields })
       if ('name' in fields || 'shellTitleHistory' in fields) autoStamper?.titleMaybeChanged(nodeId)
+      // A child moved out from under an automation frees its queue, as archiving one does.
+      if ('parentId' in fields) scheduleAutomationDrain()
     },
     onNodeAdd: (node) => {
       broadcastToAll({ type: 'node-added', node })
@@ -3146,6 +3203,7 @@ async function startServer(): Promise<void> {
     onNodeRemove: (nodeId) => {
       broadcastToAll({ type: 'node-removed', nodeId })
       scriptApi.broadcast('node-removed', nodeId, { type: 'node-removed', nodeId })
+      scheduleAutomationDrain()
     }
   })
 
@@ -3783,6 +3841,28 @@ async function startServer(): Promise<void> {
     agentMetaAvailability.start()
     agentMetaManager.restoreFromState()
   }
+
+  // --- Automations ---
+  // After recovery, so a catch-up firing spawns into a canvas whose surfaces
+  // are already adopted, and so a queued card sees its surviving children.
+  automationRunner = new AutomationRunner({
+    automations: () => stateManager.getAutomations(),
+    childrenOf: (nodeId) => stateManager.childrenOf(nodeId),
+    spawn: (automationId, line) => {
+      // The cwd the canvas would give any surface started here, as Control's spawn does.
+      const inherited = ancestorCwd(stateManager.getState().nodes, automationId)
+      spawnClaudeSurface(automationId, inherited && (expandTilde(inherited) ?? inherited), line)
+    },
+    send: (terminalId, line) => {
+      const node = stateManager.getNode(terminalId)
+      if (node?.type === 'terminal' && node.alive) shipToSession(node.sessionId, line, true)
+    },
+    setQueue: (automationId, queue) => stateManager.setAutomationQueue(automationId, queue),
+    recordFired: (automationId, at) => stateManager.recordAutomationFired(automationId, at),
+    log: (line) => serverLog(line),
+  }, fileHeartbeat(path.join(SOCKET_DIR, 'automation-heartbeat.json')))
+  automationRunner.start(Date.now())
+  setInterval(() => automationRunner?.tick(Date.now()), AUTOMATION_TICK_MS).unref()
 
   // --- Startup revival: start watchers for file-backed markdowns ---
   const allStartupNodes = stateManager.getState().nodes

@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 22
+export const CLIENT_PROTOCOL_VERSION = 23
 
 /**
  * Oldest client protocol this build still serves.
@@ -103,5 +103,9 @@ export const CLIENT_PROTOCOL_VERSION = 22
  * v21 never hears that the server has taken a restart (`server-restarting`),
  * so a restart another client or Control asked for shows on its restart
  * button only as the connection dropping; it loses nothing else.
+ *
+ * v22 has no automation cards: it cannot make or edit one (`automation-add`,
+ * `-update`, `-clear-queue`), and its node store throws on the `automation`
+ * node type, so it must be reloaded once a canvas holds one.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

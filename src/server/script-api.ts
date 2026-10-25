@@ -12,6 +12,7 @@ import { ancestorsOf } from '../shared/node-ancestry'
 import { unhandledVariant } from '../shared/exhaustive'
 import { checkProtocolVersion } from '../shared/protocol-handshake'
 import type { ModCapability } from '../shared/mod-manifest'
+import { CUSTOM_EVENT_PREFIX, MAX_EVENT_PAYLOAD_BYTES, isCustomEventId } from '../shared/automation'
 
 /** What this build serves on the scripts socket. */
 const SCRIPT_PROTOCOL_RANGE = { min: MIN_SCRIPT_PROTOCOL_VERSION, current: SCRIPT_PROTOCOL_VERSION }
@@ -110,6 +111,8 @@ export interface ScriptHost {
    * for it. `null` means unscoped — see `ConnectionIdentity`.
    */
   capabilitiesFor(modId: string): readonly ModCapability[] | null
+  /** Fire a custom event at every automation card listening for it. Returns how many were. */
+  fireEvent(eventId: string, payload: unknown): number
   log(line: string): void
 }
 
@@ -131,6 +134,7 @@ const REQUIRED_CAPABILITY: { readonly [T in ScriptMessage['type']]: ModCapabilit
   'script-ship-it': 'write-terminal',
   'script-unread': 'mark-unread',
   'script-fork-claude': 'fork-session',
+  'script-fire-event': 'fire-events',
 }
 
 interface ScriptSubscriber {
@@ -343,6 +347,20 @@ export class ScriptApi {
         // gone or was never a terminal.
         const node = this.host.getNode(msg.nodeId)
         if (node && node.type === 'terminal') this.host.markUnread(node.sessionId)
+        return
+      }
+
+      case 'script-fire-event': {
+        const fail = (error: string) => reply({ type: 'script-fire-event-result', seq: msg.seq, matched: 0, error })
+        if (typeof msg.eventId !== 'string' || !isCustomEventId(msg.eventId)) {
+          fail(`event ids look like ${CUSTOM_EVENT_PREFIX}name (letters, digits, _ . : or -), got ${JSON.stringify(msg.eventId)}`)
+          return
+        }
+        if (msg.payload !== undefined && JSON.stringify(msg.payload).length > MAX_EVENT_PAYLOAD_BYTES) {
+          fail(`payload is larger than ${MAX_EVENT_PAYLOAD_BYTES} bytes of JSON`)
+          return
+        }
+        reply({ type: 'script-fire-event-result', seq: msg.seq, matched: this.host.fireEvent(msg.eventId, msg.payload) })
         return
       }
 

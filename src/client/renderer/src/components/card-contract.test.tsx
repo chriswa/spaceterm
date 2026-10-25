@@ -6,6 +6,7 @@ import { TitleCard } from './TitleCard'
 import { FileCard } from './FileCard'
 import { DirectoryCard } from './DirectoryCard'
 import { MarkdownCard } from './MarkdownCard'
+import { AutomationCard } from './AutomationCard'
 import { useNodeStore } from '../stores/nodeStore'
 import { cardChromeScale, type CardType } from '../../../../shared/card-types'
 import { asNodeId, ROOT_NODE_ID, type NodeId } from '../../../../shared/ids'
@@ -106,6 +107,22 @@ const CARDS: CardCase[] = [
     nodeType: 'directory',
     visibleText: 'project',
     build: (s) => <DirectoryCard {...s} cwd="/work/project" onCwdChange={vi.fn()} />
+  },
+  {
+    name: 'AutomationCard',
+    nodeType: 'automation',
+    visibleText: 'Runs when a script fires custom_contract',
+    build: (s) => (
+      <AutomationCard
+        {...s}
+        trigger="custom_contract"
+        overlap="single"
+        queued={0}
+        onTriggerChange={vi.fn()}
+        onOverlapChange={vi.fn()}
+        onClearQueue={vi.fn()}
+      />
+    )
   },
   {
     name: 'MarkdownCard',

@@ -394,6 +394,10 @@ export class FakeBridge implements Api {
     titleAdd: (parentId, x, y) =>
       this.reply('node.titleAdd', { nodeId: this.responses.newNodeId }, parentId, x, y),
     titleText: (nodeId, text) => this.reply('node.titleText', undefined, nodeId, text),
+    automationAdd: (parentId, x, y) =>
+      this.reply('node.automationAdd', { nodeId: this.responses.newNodeId }, parentId, x, y),
+    automationUpdate: (nodeId, patch) => this.reply('node.automationUpdate', undefined, nodeId, patch),
+    automationClearQueue: (nodeId) => this.reply('node.automationClearQueue', undefined, nodeId),
     cacheTimerMute: (nodeId, muted) => this.reply('node.cacheTimerMute', undefined, nodeId, muted),
 
     setClaudeStatusUnread: (sessionId, unread) =>

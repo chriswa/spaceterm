@@ -140,6 +140,25 @@ did nothing happen when I clicked that?" is already on disk.
 full set of subscribable events, which is the handshake a script should perform
 before relying on anything else.
 
+### Automations
+
+An Automation card (in the add menu) starts a Claude Code surface beneath
+itself when its trigger fires. The trigger is either a cron expression
+(`0 9 * * 1-5`, server-local time) or a custom event id (`custom_linear`) that
+a script fires:
+
+```bash
+npm run cli -- fire custom_linear '{"ticket":"ENG-123"}'
+```
+
+The card has no prompt. The agent gets the markdown above the card, as any
+spawned surface does, followed by one line: `Triggered by: cron at <time>`, or
+`Triggered by: custom_linear {"ticket":"ENG-123"}`. If cron slots pass while
+the server is down or the Mac is asleep, the card fires once when it comes back,
+and the line says the run is late. A per-card setting decides what a firing does
+while children are still under the card: start another agent, skip it, queue it
+until every child is archived, or send it to the single child as a new prompt.
+
 ## Optional companions
 
 Each of these is found wherever it is installed — by PATH or by a file it

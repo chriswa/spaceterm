@@ -130,6 +130,7 @@ describe('measureCard', () => {
       directory: { type: 'directory', cwd: '~' },
       file: { type: 'file' },
       title: { type: 'title', text: '' },
+      automation: { type: 'automation' },
       'meta-group': { type: 'meta-group', label: 'Agent Meta' },
       'meta-doc': { type: 'meta-doc', width: 600, height: 96 }
     }

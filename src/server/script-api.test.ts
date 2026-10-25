@@ -96,6 +96,13 @@ class FakeHost implements ScriptHost {
     this.forks.push([sourceNodeId, parentId])
     return this.forkResult
   }
+  /** Events fired at automation cards, and how many cards each matches. */
+  readonly firedEvents: Array<{ eventId: string; payload: unknown }> = []
+  listeners = 0
+  fireEvent(eventId: string, payload: unknown): number {
+    this.firedEvents.push({ eventId, payload })
+    return this.listeners
+  }
   log(line: string): void { this.logs.push(line) }
 }
 
@@ -490,6 +497,29 @@ describe('script-unread', () => {
     h.send({ type: 'script-unread', nodeId: nid('missing') })
     expect(h.host.unread).toEqual([])
     expect(h.conn.sent).toEqual([])
+  })
+})
+
+describe('script-fire-event', () => {
+  it('fires the event and reports how many automation cards heard it', () => {
+    const h = harness((host) => { host.listeners = 2 })
+    h.send({ type: 'script-fire-event', seq: 4, eventId: 'custom_linear', payload: { ticket: 'ENG-1' } })
+    expect(h.host.firedEvents).toEqual([{ eventId: 'custom_linear', payload: { ticket: 'ENG-1' } }])
+    expect(h.conn.only).toEqual({ type: 'script-fire-event-result', seq: 4, matched: 2 })
+  })
+
+  it('refuses an id without the custom_ prefix, rather than matching nothing', () => {
+    const h = harness()
+    h.send({ type: 'script-fire-event', seq: 1, eventId: 'linear' })
+    expect(h.host.firedEvents).toEqual([])
+    expect(h.conn.only).toMatchObject({ matched: 0, error: expect.stringContaining('custom_') })
+  })
+
+  it('refuses a payload too large to put on a command line', () => {
+    const h = harness()
+    h.send({ type: 'script-fire-event', seq: 1, eventId: 'custom_x', payload: 'x'.repeat(70_000) })
+    expect(h.host.firedEvents).toEqual([])
+    expect(h.conn.only.error).toContain('payload')
   })
 })
 

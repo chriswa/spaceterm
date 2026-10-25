@@ -104,6 +104,18 @@ const items: Array<{ type: AddNodeType; label: string; hint: string; icon: JSX.E
     ),
   },
   {
+    type: 'automation',
+    label: 'Automation',
+    hint: '',
+    icon: (
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="7" cy="7.5" r="5" />
+        <path d="M7 4.5 V7.5 L9 9" />
+        <line x1="5.5" y1="1" x2="8.5" y2="1" />
+      </svg>
+    ),
+  },
+  {
     type: 'terminal',
     label: 'Terminal',
     hint: '\u2318T',

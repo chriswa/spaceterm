@@ -14,6 +14,7 @@ import { unhandledVariant } from './exhaustive'
 import type { NodeId, PtySessionId } from './ids'
 import type { NodeStamp, ServerState } from './state'
 import type { UndoEntry } from './undo-types'
+import type { AutomationOverlap } from './automation'
 
 /**
  * The client half of the client socket protocol: request/reply correlation,
@@ -687,6 +688,18 @@ export class ServerClient {
 
   titleText(nodeId: NodeId, text: string): Promise<void> {
     return this.ack({ type: 'title-text', nodeId, text })
+  }
+
+  automationAdd(parentId: NodeId, x?: number, y?: number): Promise<{ nodeId: NodeId }> {
+    return this.added({ type: 'automation-add', parentId, x, y })
+  }
+
+  automationUpdate(nodeId: NodeId, patch: { trigger?: string; overlap?: AutomationOverlap }): Promise<void> {
+    return this.ack({ type: 'automation-update', nodeId, ...patch })
+  }
+
+  automationClearQueue(nodeId: NodeId): Promise<void> {
+    return this.ack({ type: 'automation-clear-queue', nodeId })
   }
 
   cacheTimerMute(nodeId: NodeId, muted: boolean): Promise<void> {

@@ -737,6 +737,30 @@ export interface TitleTextMessage {
   text: string
 }
 
+export interface AutomationAddMessage {
+  type: 'automation-add'
+  seq: number
+  parentId: NodeId
+  x?: number
+  y?: number
+}
+
+/** Change an automation card's trigger, its overlap mode, or both. */
+export interface AutomationUpdateMessage {
+  type: 'automation-update'
+  seq: number
+  nodeId: NodeId
+  trigger?: string
+  overlap?: AutomationOverlap
+}
+
+/** Throw away every firing waiting on an automation card. */
+export interface AutomationClearQueueMessage {
+  type: 'automation-clear-queue'
+  seq: number
+  nodeId: NodeId
+}
+
 export interface CacheTimerMuteMessage {
   type: 'cache-timer-mute'
   seq: number
@@ -1342,6 +1366,9 @@ export type ClientMessage =
   | ValidateFileMessage
   | TitleAddMessage
   | TitleTextMessage
+  | AutomationAddMessage
+  | AutomationUpdateMessage
+  | AutomationClearQueueMessage
   | CacheTimerMuteMessage
   | ForkSessionMessage
   | TerminalRestartMessage
@@ -1530,6 +1557,7 @@ export interface ExitMessage {
 // --- Server → Client node state messages ---
 
 import type { ServerState, NodeData, NodeStamp, ReceptionistHolder } from './state'
+import type { AutomationOverlap } from './automation'
 import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 import type { UsageSnapshot } from './usage-report'
 import type { SystemStatsSnapshot } from './system-stats'
@@ -1998,6 +2026,18 @@ export interface ScriptUnreadMessage {
 }
 
 /**
+ * Fire a custom event at every automation card whose trigger is `eventId`.
+ * `payload` is any JSON, handed to each started agent as part of its prompt.
+ */
+export interface ScriptFireEventMessage {
+  type: 'script-fire-event'
+  seq: number
+  /** Must start with `custom_`. See `isCustomEventId`. */
+  eventId: string
+  payload?: unknown
+}
+
+/**
  * Resolve everything the fork-handoff command needs, in one round-trip: the
  * caller surface's current transcript path, whether it is a fork (its transcript
  * carries `forkedFrom` markers), and the nearest ancestor terminal surface to
@@ -2024,6 +2064,7 @@ export type ScriptMessage =
   | ScriptForkClaudeMessage
   | ScriptUnreadMessage
   | ScriptResolveHandoffMessage
+  | ScriptFireEventMessage
 
 // --- Script socket responses ---
 
@@ -2086,6 +2127,14 @@ export interface ScriptResolveHandoffResult {
   error?: string
 }
 
+export interface ScriptFireEventResult {
+  type: 'script-fire-event-result'
+  seq: number
+  /** How many automation cards were listening. Zero usually means a typo in the id. */
+  matched: number
+  error?: string
+}
+
 export type ScriptResponse =
   | ScriptModEmitResult
   | ScriptHelloResult
@@ -2095,6 +2144,7 @@ export type ScriptResponse =
   | ScriptSubscribeResult
   | ScriptForkClaudeResult
   | ScriptResolveHandoffResult
+  | ScriptFireEventResult
 
 export interface DictationStartedMessage {
   type: 'dictation-started'

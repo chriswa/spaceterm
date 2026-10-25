@@ -11,6 +11,7 @@
  *   spaceterm-cli protocol                               # version + event set, as JSON
  *   spaceterm-cli capabilities [--json]                  # what optional integrations are present
  *   spaceterm-cli show-images <path> [--caption c] ... [--summary s]  # pictures in Control's transcript
+ *   spaceterm-cli fire <custom_event-id> [json-payload]  # trigger automation cards listening for it
  *
  * Environment:
  *   SPACETERM_NODE_ID   — set automatically in PTY sessions
@@ -125,6 +126,30 @@ async function forkClaude(nodeId: string, parentId: string): Promise<void> {
   )
   if (reply.error) fatal(reply.error as string)
   process.stdout.write(JSON.stringify({ nodeId: reply.nodeId }) + '\n')
+}
+
+/**
+ * Fire a custom event at the automation cards whose trigger is `eventId`.
+ * The payload is parsed here, so a typo in the JSON fails loudly instead of
+ * reaching an agent as a string. Exits non-zero when nothing was listening,
+ * since that is almost always a misspelt id.
+ */
+async function fire(eventId: string, payloadText: string | undefined): Promise<void> {
+  let payload: unknown
+  if (payloadText !== undefined) {
+    try {
+      payload = JSON.parse(payloadText)
+    } catch (err) {
+      fatal(`payload is not JSON: ${(err as Error).message}`)
+    }
+  }
+  const reply = await oneshot(
+    { type: 'script-fire-event', seq: 1, eventId, ...(payload !== undefined ? { payload } : {}) },
+    'script-fire-event-result'
+  )
+  if (reply.error) fatal(reply.error)
+  process.stdout.write(JSON.stringify({ matched: reply.matched }) + '\n')
+  if (reply.matched === 0) fatal(`no automation card is listening for ${eventId}`)
 }
 
 /**
@@ -266,6 +291,7 @@ function printUsage(): void {
   spaceterm-cli capabilities [--json]                      Optional integrations present on this machine
   spaceterm-cli show-images <path> [--caption c] ... [--summary s]
                                                            Show the user pictures in Control's transcript
+  spaceterm-cli fire <custom_event-id> [json-payload]       Trigger automation cards listening for the event
 
 Events: ${SCRIPT_EVENTS.join(', ')}
 `)
@@ -309,6 +335,11 @@ switch (command) {
 
   case 'show-images':
     showImages(args.slice(1))
+    break
+
+  case 'fire':
+    if (!args[1]) { printUsage(); process.exit(1) }
+    fire(args[1], args[2]).catch((err) => fatal(err.message))
     break
 
   case 'subscribe': {

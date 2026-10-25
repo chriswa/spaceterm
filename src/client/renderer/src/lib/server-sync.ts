@@ -8,6 +8,7 @@ import { useUpdateActionsStore } from '../stores/updateActionsStore'
 import { useReceptionistStore, isThinkingWithinEarshot } from '../stores/receptionistStore'
 import { useAgentNamesStore } from '../stores/agentNamesStore'
 import { receptionistHolderOf, type NodeData, type NodeStamp } from '../../../../shared/state'
+import type { AutomationOverlap } from '../../../../shared/automation'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import { syncUndoBuffer } from './undo-buffer'
 import { playSound } from './sounds'
@@ -384,6 +385,18 @@ export async function sendTitleAdd(parentId: NodeId, x?: number, y?: number): Pr
 
 export async function sendTitleText(nodeId: NodeId, text: string): Promise<void> {
   await window.api.node.titleText(nodeId, text)
+}
+
+export async function sendAutomationAdd(parentId: NodeId, x?: number, y?: number): Promise<{ nodeId: NodeId }> {
+  return window.api.node.automationAdd(parentId, x, y)
+}
+
+export async function sendAutomationUpdate(nodeId: NodeId, patch: { trigger?: string; overlap?: AutomationOverlap }): Promise<void> {
+  await window.api.node.automationUpdate(nodeId, patch)
+}
+
+export async function sendAutomationClearQueue(nodeId: NodeId): Promise<void> {
+  await window.api.node.automationClearQueue(nodeId)
 }
 
 export async function sendCacheTimerMute(nodeId: NodeId, muted: boolean): Promise<void> {

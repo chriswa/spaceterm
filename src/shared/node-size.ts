@@ -214,6 +214,10 @@ export const DIR_MIN_FOLDER_WIDTH = 180 * LABEL_NODE_SCALE
 export const FILE_WIDTH = 300
 export const FILE_HEIGHT = 144
 
+// Automation node dimensions. Fixed: the card is a form, not content.
+export const AUTOMATION_WIDTH = 360
+export const AUTOMATION_HEIGHT = 168
+
 // Title node dimensions — see LABEL_NODE_SCALE above.
 export const TITLE_DEFAULT_WIDTH = 600 * LABEL_NODE_SCALE
 export const TITLE_HEIGHT = 120 * LABEL_NODE_SCALE
@@ -357,6 +361,7 @@ export type NodeLike =
   | { type: 'directory'; cwd: string; gitStatus?: GitStatus | null }
   | { type: 'file' }
   | { type: 'title'; text: string }
+  | { type: 'automation' }
   | { type: 'markdown'; width: number; height: number }
   | { type: 'meta-group'; label: string }
   | { type: 'meta-doc'; width: number; height: number }

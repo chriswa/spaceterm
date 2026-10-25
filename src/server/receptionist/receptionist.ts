@@ -380,6 +380,7 @@ const NODE_WORDS: Record<NearbyNode['type'], string> = {
   title: 'a title',
   directory: 'a directory',
   file: 'a file',
+  automation: 'an automation',
   'meta-group': 'a group',
   'meta-doc': 'a document',
 }
