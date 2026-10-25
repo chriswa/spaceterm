@@ -219,7 +219,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
           since: typeof event.quietSince === 'number' ? event.quietSince : null,
           patienceMs: typeof event.patienceMs === 'number' ? event.patienceMs : null,
         }
-        const threshold = typeof event.threshold === 'number' ? event.threshold : 0.85
+        const threshold = typeof event.threshold === 'number' ? event.threshold : 0.75
         useHandsFree.setState({
           turn: typeof event.turn === 'number' ? { p: event.turn, threshold } : null,
           sampling: event.sampling === true ? threshold : null,
