@@ -45,8 +45,10 @@
 }
 .m-hands-free__ring circle {
   fill: none;
-  /* A strong orange: pale and deep blues both read poorly against the held button's white. */
-  stroke: #fe640b;
+  /* The microphone button's orange (`--m-listening`, mobile.css): the window is the
+     microphone still listening to you, no "Control" needed. The fallback is for the
+     Mac's toolbar, where mobile.css is not loaded. */
+  stroke: var(--m-listening, #ff9f0a);
   stroke-width: 3;
   stroke-linecap: round;
   transition: stroke-dashoffset 1s linear;
