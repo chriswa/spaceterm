@@ -940,15 +940,24 @@ export interface MobileAppInstallMessage {
   seq: number
 }
 
-/** What a client playing speech reports: a sentence began, ended, or could not be played. */
-export type SpeechProgressEvent = 'started' | 'finished' | 'failed'
+/**
+ * A phone's speaker connection to Voice Operator, relayed by the server: the
+ * page is a speaker on Voice Operator's client socket (its DESIGN.md, "Speech
+ * on a device"), and plays the speech Voice Operator makes for it. Open, then
+ * lines, then close; the server reads none of them but to keep the phone's
+ * record, and to know the speaker is up (`speech-link`).
+ */
+export interface SpeechLinkOpenMessage {
+  type: 'speech-link-open'
+}
 
-/** A client's playback of a {@link SpeechAudioMessage}, sentence by sentence. */
-export interface SpeechProgressMessage {
-  type: 'speech-progress'
-  id: string
-  index: number
-  event: SpeechProgressEvent
+export interface SpeechLinkLineMessage {
+  type: 'speech-link-line'
+  line: string
+}
+
+export interface SpeechLinkCloseMessage {
+  type: 'speech-link-close'
 }
 
 /** Stop Control mid-answer, without letting go of it: a talk button pressed over it. */
@@ -1397,7 +1406,9 @@ export type ClientMessage =
   | CameraBoundsMessage
   | FocusIdRequestMessage
   | FocusClaudeSessionMessage
-  | SpeechProgressMessage
+  | SpeechLinkOpenMessage
+  | SpeechLinkLineMessage
+  | SpeechLinkCloseMessage
   | MobileAppInstallMessage
   | SpeakToggleMessage
   | SpeakStopMessage
@@ -1460,20 +1471,11 @@ export interface UsageReportResultMessage {
   snapshot: UsageSnapshot | null
 }
 
-/**
- * One sentence of a speech job for this client to play, after any before it.
- * Signed 16-bit mono PCM, base64. See `src/server/remote-speech.ts`.
- */
-export interface SpeechAudioMessage {
-  type: 'speech-audio'
-  id: string
-  index: number
-  /** Sentences in the whole job; the last is `count - 1`. */
-  count: number
-  sampleRate: number
-  pcm: string
-  /** When the server sent it, epoch ms: how late it arrived, for the phone's record. Absent from an older server. */
-  sentAt?: number
+/** A line from Voice Operator for this phone's speaker connection, or word that it closed. */
+export interface SpeechLinkMessage {
+  type: 'speech-link'
+  kind: 'line' | 'closed'
+  line?: string
 }
 
 /**
@@ -1485,12 +1487,6 @@ export interface MobileAppInstallResultMessage {
   seq: number
   ok: boolean
   message?: string
-}
-
-/** Stop playing a speech job now, and drop what is queued of it. */
-export interface SpeechStopMessage {
-  type: 'speech-stop'
-  id: string
 }
 
 /**
@@ -2267,8 +2263,7 @@ export type ServerMessage =
   | UsageReportResultMessage
   | UsageReportMessage
   | SystemStatsMessage
-  | SpeechAudioMessage
-  | SpeechStopMessage
+  | SpeechLinkMessage
   | MobileAppInstallResultMessage
   | MobileBuildChangedMessage
   | ReloadPageMessage

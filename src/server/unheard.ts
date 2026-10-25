@@ -1,8 +1,8 @@
 /**
  * What of a spoken reply the listener never heard, cut out of what is told
  * back to the model, so a reply they missed the end of is not treated as
- * delivered. Shared by Control (receptionist/reply.ts) and the phone's speech
- * (remote-speech.ts), which reports how far the voice got.
+ * delivered. Used by Control (receptionist/reply.ts), with how far the voice
+ * got as Voice Operator reports it, on the Mac or on a phone.
  */
 
 /**

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RemoteSpeechApi } from '../shared/api'
+import type { SpeechFeed } from './speech-link'
 
 /** The app's bridge, faked: what the page posts to it, and a way to answer as it does. */
 function fakeApp({ speech, voiceProcessing = speech }: { speech: boolean; voiceProcessing?: boolean }) {
@@ -18,10 +18,10 @@ function fakeApp({ speech, voiceProcessing = speech }: { speech: boolean; voiceP
 }
 
 function fakeApi() {
-  let onAudio: Parameters<RemoteSpeechApi['onAudio']>[0] = () => {}
+  let onAudio: Parameters<SpeechFeed['onAudio']>[0] = () => {}
   let onStop: (id: string) => void = () => {}
   const progress: string[] = []
-  const api: RemoteSpeechApi = {
+  const api: SpeechFeed = {
     onAudio: (cb) => { onAudio = cb; return () => {} },
     onStop: (cb) => { onStop = cb; return () => {} },
     progress: (id, index, event) => { progress.push(`${id} ${index} ${event}`) },

@@ -209,10 +209,11 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       closeStream: () => client.handsFreeStreamClose(),
       onStream: (cb) => on('hands-free-stream', (m) => cb(m.kind === 'line' && typeof m.line === 'string' ? { kind: 'line', line: m.line } : { kind: 'closed' }))
     },
-    remoteSpeech: {
-      onAudio: (cb) => on('speech-audio', ({ id, index, count, sampleRate, pcm, sentAt }) => cb({ id, index, count, sampleRate, pcm, sentAt })),
-      onStop: (cb) => on('speech-stop', (m) => cb(m.id)),
-      progress: (id, index, event) => client.speechProgress(id, index, event)
+    speechLink: {
+      open: () => client.speechLinkOpen(),
+      line: (line) => client.speechLinkLine(line),
+      close: () => client.speechLinkClose(),
+      onLink: (cb) => on('speech-link', (m) => cb(m.kind === 'line' && typeof m.line === 'string' ? { kind: 'line', line: m.line } : { kind: 'closed' }))
     },
     receptionist: {
       stop: (cutInMsAgo) => client.stopReceptionist(cutInMsAgo),

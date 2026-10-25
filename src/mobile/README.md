@@ -234,6 +234,20 @@ silence it. `native-stay-awake` and `native-awake-running` in the event record s
 coming and going, and the `native-heartbeat` while in the background says
 whether the page still answers (`pageAnsweredMs`).
 
+Control's voice reaches the phone as Voice Operator's speech on a device (its
+DESIGN.md, "Speech on a device"). The page is a speaker on Voice Operator's
+client socket, named by this phone's device id (`speech-link.ts`), over a
+connection the server relays unread (`speech-link-*`,
+`src/server/voice-operator-speech.ts`). Each reply is a Voice Operator job
+addressed to the phone holding Control: Voice Operator makes it a sentence
+at a time and sends each one here. The page plays it, through the app or
+itself as above, and says when each sentence starts and finishes. Voice
+Operator keeps the job, including how far the listener got when it was cut
+off. The server only chooses where a reply goes. A reply waits up to three
+seconds for a phone whose speaker connection is still coming up. If the
+connection drops, Voice Operator ends what was playing at the point the
+listener had heard.
+
 ### Music from other apps
 
 In the iPhone app, Spotify or any other app's audio always comes back after

@@ -1,6 +1,6 @@
 import { CLIENT_PROTOCOL_VERSION } from './client-protocol-version'
 import type { UsageSnapshot } from './usage-report'
-import type { AgentSearchMode, ClientDevice, ControlTranscriptEntry, MobileEventRecord, ReceptionistHoldAction, SpeechProgressEvent } from './protocol'
+import type { AgentSearchMode, ClientDevice, ControlTranscriptEntry, MobileEventRecord, ReceptionistHoldAction } from './protocol'
 import type {
   ClientMessage,
   CreateOptions,
@@ -71,7 +71,7 @@ export type ServerEventType =
   | 'peer-connected' | 'peer-disconnected' | 'peer-camera-bounds'
   | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'restart-required' | 'usage-report'
   | 'system-stats'
-  | 'speech-audio' | 'speech-stop' | 'mobile-build-changed' | 'reload-page' | 'server-restarting'
+  | 'speech-link' | 'mobile-build-changed' | 'reload-page' | 'server-restarting'
   | 'agent-meta-availability' | 'server-error'
   | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
   | 'receptionist-transcript-appended' | 'receptionist-unread' | 'receptionist-backlog' | 'receptionist-replaying' | 'receptionist-speaking'
@@ -286,8 +286,7 @@ export class ServerClient {
       case 'restart-required':
       case 'usage-report':
       case 'system-stats':
-      case 'speech-audio':
-      case 'speech-stop':
+      case 'speech-link':
       case 'mobile-build-changed':
       case 'reload-page':
       case 'server-restarting':
@@ -868,8 +867,16 @@ export class ServerClient {
     return { ok: resp.ok, message: resp.message }
   }
 
-  speechProgress(id: string, index: number, event: SpeechProgressEvent): void {
-    this.fireAndForget({ type: 'speech-progress', id, index, event })
+  speechLinkOpen(): void {
+    this.fireAndForget({ type: 'speech-link-open' })
+  }
+
+  speechLinkLine(line: string): void {
+    this.fireAndForget({ type: 'speech-link-line', line })
+  }
+
+  speechLinkClose(): void {
+    this.fireAndForget({ type: 'speech-link-close' })
   }
 
   // ─── speech ───────────────────────────────────────────────────────────────

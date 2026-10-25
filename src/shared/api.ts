@@ -28,7 +28,7 @@ import type {
   SessionInfo,
   SnapshotMessage,
   SpeakOutcome,
-  ReceptionistPhase, SpeechProgressEvent, ControlTranscriptEntry, ReceptionistHoldAction
+  ReceptionistPhase, ControlTranscriptEntry, ReceptionistHoldAction
 } from './protocol'
 import type { LaunchPrefs } from './launch-prefs'
 import type { AutomationPatch } from './automation'
@@ -317,14 +317,16 @@ export interface HandsFreeApi {
 }
 
 /**
- * Speech played on this client — the phone — rather than by Voice Operator on
- * the Mac: audio arrives a sentence at a time, and the client reports what it
- * has played. See `src/server/remote-speech.ts`.
+ * This phone's speaker connection to Voice Operator, relayed by the server:
+ * the page is a speaker of Voice Operator's (its DESIGN.md, "Speech on a
+ * device"), which makes Control's replies and sends them here a sentence at a
+ * time. See `src/mobile/speech-link.ts`.
  */
-export interface RemoteSpeechApi {
-  onAudio(callback: (audio: { id: string; index: number; count: number; sampleRate: number; pcm: string; sentAt?: number }) => void): () => void
-  onStop(callback: (id: string) => void): () => void
-  progress(id: string, index: number, event: SpeechProgressEvent): void
+export interface SpeechLinkApi {
+  open(): void
+  line(line: string): void
+  close(): void
+  onLink(callback: (message: { kind: 'line'; line: string } | { kind: 'closed' }) => void): () => void
 }
 
 /** A page of Control's record; `more` when it goes back further. */
@@ -501,7 +503,7 @@ export interface Api {
   tts: TtsApi
   dictation: DictationApi
   handsFree: HandsFreeApi
-  remoteSpeech: RemoteSpeechApi
+  speechLink: SpeechLinkApi
   receptionist: ReceptionistApi
   perf: PerfApi
   window: WindowApi

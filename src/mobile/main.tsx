@@ -14,6 +14,7 @@ import { not } from './gate'
 import { installDiagnostics } from './diagnostics'
 import { installMemoryProbe } from './memory-probe'
 import { startSpeechPlayer } from './speech-player'
+import { speechLink } from './speech-link'
 import { initAudioSession } from './audio-session'
 import { installStayAwake } from './stay-awake'
 import { followHandsFree, installDuckOthers } from './duck-others'
@@ -153,7 +154,11 @@ if (!token) {
       now: () => performance.now(),
     })
     // Control speaks here, not on the Mac, while this phone holds it.
-    startSpeechPlayer(window.api.remoteSpeech, (message) => window.api.log(message))
+    const log = (message: string) => window.api.log(message)
+    startSpeechPlayer(speechLink(window.api.speechLink, () => phoneDevice().id, {
+      isConnected: () => client.isConnected(),
+      onConnect: (fn) => client.onLifecycle('connect', fn),
+    }, log), log)
     const { MobileApp } = await import('./MobileApp')
     root.render(
       <StrictMode>

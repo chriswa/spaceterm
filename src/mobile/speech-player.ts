@@ -1,20 +1,20 @@
-import type { RemoteSpeechApi } from '../shared/api'
+import type { SpeechFeed, SpeechSentence } from './speech-link'
 import { audioContext, noteSilenced, noteSounding } from './cues'
 import { describeAudioSession } from './audio-session'
 import { recordMobileEvent } from './mobile-events'
 import { nativeSpeech } from './native-microphone'
 
 /**
- * Plays speech sent to this phone (src/server/remote-speech.ts): Control's
- * replies while this phone holds it, synthesized by Voice Operator on the Mac
- * and sent here a sentence at a time.
+ * Plays speech sent to this phone (speech-link.ts): Control's replies while
+ * this phone holds it, made by Voice Operator on the Mac and sent here a
+ * sentence at a time.
  *
  * Sentences are scheduled back to back on the audio clock as they arrive, so
  * a fast synthesizer plays without gaps and a slow one simply pauses between
  * sentences. Jobs queue the same way, one after another — "let me check" and
  * the answer behind it used to be scheduled each from now, and played over
- * each other. Each sentence's start and end are reported, and the server turns
- * them into how far the listener got — what an interruption needs.
+ * each other. Each sentence's start and end are reported, and Voice Operator
+ * turns them into how far the listener got — what an interruption needs.
  *
  * iOS lets a page start audio only from a tap, and an answer arrives seconds
  * after the tap that asked for it. So every tap anywhere wakes the shared
@@ -24,7 +24,7 @@ import { nativeSpeech } from './native-microphone'
  * instead (native-microphone.ts `nativeSpeech`): through the microphone's own
  * engine, with echo cancellation, so hands-free can hear the user say
  * "Control" over it. The app reports each sentence's start and end, which go
- * to the server just the same. A job stays wherever its first sentence went —
+ * to Voice Operator just the same. A job stays wherever its first sentence went —
  * unless the app says nothing of it at all (`NATIVE_SILENT_MS`), and then the
  * page takes it back and plays it itself.
  */
@@ -58,7 +58,7 @@ export const nativePlayback = {
   outputDb: (): number | undefined => lastOutputDb,
 }
 
-type Sentence = Parameters<Parameters<RemoteSpeechApi['onAudio']>[0]>[0]
+type Sentence = SpeechSentence
 
 interface Playing {
   sources: AudioBufferSourceNode[]
@@ -77,7 +77,7 @@ function toBuffer(ctx: AudioContext, pcmBase64: string, sampleRate: number): Aud
   return buffer
 }
 
-export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) => void): () => void {
+export function startSpeechPlayer(api: SpeechFeed, log: (message: string) => void): () => void {
   const jobs = new Map<string, Playing>()
   /** Audio-clock time everything scheduled so far ends, across every job. */
   const queueEnd = () => Math.max(0, ...[...jobs.values()].map((job) => job.endsAt))
@@ -99,7 +99,7 @@ export function startSpeechPlayer(api: RemoteSpeechApi, log: (message: string) =
     }
     const job = jobs.get(id)
     if (!job) return
-    // Cut off by the server: interrupted, or superseded.
+    // Cut off by Voice Operator: interrupted, or superseded.
     recordMobileEvent('speech-stopped', { id: id.slice(0, 11) })
     jobs.delete(id)
     for (const timer of job.timers) clearTimeout(timer)

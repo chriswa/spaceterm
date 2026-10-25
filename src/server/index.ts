@@ -48,7 +48,7 @@ import { DictationPresence } from './dictation-presence'
 import { HandsFreePresence, REAL_CONNECT, VoiceOperatorHandsFree, type LineConnection } from './voice-operator-hands-free'
 import { UsageTracker } from './usage-tracker'
 import { SystemStatsWatcher } from './system-stats'
-import { RemoteSpeech } from './remote-speech'
+import { SpeechLinks } from './voice-operator-speech'
 import { MobileAppInstaller, realMobileInstallDeps } from './mobile-install'
 import { readAgentMemoryBytes } from './agent-memory'
 import type { ClientLink } from './client-link'
@@ -426,7 +426,7 @@ const clientLabel = (client: { name?: string; id: string }) => `${client.name ??
 /** The phone's "App update" badge builds and installs the iPhone app from here. */
 const mobileAppInstaller = new MobileAppInstaller(realMobileInstallDeps(path.resolve(__dirname, '..', '..')))
 
-/** Speech on the phone, synthesized by Voice Operator — dictation in reverse. See remote-speech.ts. */
+/** Voice Operator's local API: speech on the Mac and on the phone, and the rest. */
 const speechVoiceOperator = new VoiceOperator()
 
 /**
@@ -446,14 +446,13 @@ const voiceOperatorSubscription = new VoiceOperatorSubscription(
   },
 )
 const findClient = (id: string) => [...clients].find((c) => c.id === id)
-const remoteSpeech = new RemoteSpeech({
-  synthesize: (text, voice, signal) => speechVoiceOperator.synthesize(text, voice, signal),
+/** Phones' speaker connections to Voice Operator, which plays Control's voice on them. See voice-operator-speech.ts. */
+const speechLinks = new SpeechLinks({
+  connect: (onLine, onClose) => voiceOperatorHandsFree.openStream(onLine, onClose),
   send: (clientId, msg) => {
     const client = findClient(clientId)
     if (client) send(client.link, msg)
-    return client !== undefined
   },
-  isConnected: (clientId) => findClient(clientId) !== undefined,
   buffered: (clientId) => findClient(clientId)?.link.buffered?.(),
   record: (clientId, kind, detail) => {
     const client = findClient(clientId)
@@ -700,12 +699,17 @@ function updateReceptionistListener(): void {
   receptionist.setListener(!holder || !client ? undefined
     // The Mac's voice is Voice Operator, which plays it itself, whichever window is open.
     : holder.deviceId === DESKTOP_DEVICE.deviceId ? { id: holder.deviceId, speech: speechVoiceOperator, reading }
-    : { id: client.id, speech: remoteSpeech.forClient(client.id, NO_LISTENER), reading })
+    : { id: client.id, speech: phoneSpeech(client), reading })
 }
 
 /** Where a client hears Control's words, as `updateReceptionistListener` would send them there: for a replay. */
 function speechFor(client: ClientConnection): SpeechBackend {
-  return client.device?.id === DESKTOP_DEVICE.deviceId || !client.device ? speechVoiceOperator : remoteSpeech.forClient(client.id, NO_LISTENER)
+  return client.device?.id === DESKTOP_DEVICE.deviceId || !client.device ? speechVoiceOperator : phoneSpeech(client)
+}
+
+/** Control's voice on a phone: Voice Operator plays it there while its speaker is up, and otherwise nobody hears it. */
+function phoneSpeech(client: ClientConnection): SpeechBackend {
+  return speechLinks.backend(client.id, client.device?.id ?? client.id, speechVoiceOperator, NO_LISTENER)
 }
 
 /** Who holds Control and who muted it, as every client is told it. */
@@ -1192,7 +1196,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
       remoteDictation.disconnected(dictationOwner(client))
       // Voice Operator keeps the session a while for the phone to come back and resume it.
       handsFreeStreams.get(client.id)?.close()
-      remoteSpeech.clientGone(client.id)
+      speechLinks.close(client.id)
       updateReceptionistListener()
       for (const [nodeId, owner] of terminalBorrowers) {
         if (owner === client.id) returnBorrowedSize(nodeId, 'borrower disconnected')
@@ -1921,11 +1925,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
-    case 'speech-progress': {
-      remoteSpeech.progress(client.id, msg.id, msg.index, msg.event)
-      break
-    }
-
     case 'speak-toggle': {
       void directSpeech.toggle(msg.text).then((outcome) => {
         // To the client that pressed the key: the toast it may raise belongs to
@@ -2063,6 +2062,21 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'hands-free-mac': {
       voiceOperatorHandsFree.setMac(msg.on)
+      break
+    }
+
+    case 'speech-link-open': {
+      speechLinks.open(client.id)
+      break
+    }
+
+    case 'speech-link-line': {
+      speechLinks.line(client.id, msg.line)
+      break
+    }
+
+    case 'speech-link-close': {
+      speechLinks.close(client.id)
       break
     }
 

@@ -108,15 +108,24 @@ export function speechPartStarts(parts: readonly SpeechPart[]): number[] {
  * unchanged, so services that predate parts keep working for everything that
  * does not use them.
  */
-export function speechRequestBody(content: SpeechContent, voice?: string): Record<string, unknown> {
-  if (typeof content === 'string') return { text: content, ...(voice ? { voice } : {}) }
+export function speechRequestBody(content: SpeechContent, voice?: string, device?: SpeechDevice): Record<string, unknown> {
+  const target = device ? { client: device.client, device: device.device } : {}
+  if (typeof content === 'string') return { text: content, ...(voice ? { voice } : {}), ...target }
   return {
     parts: content.map(part => {
       const partVoice = part.voice ?? voice
       return { text: part.text, ...(partVoice ? { voice: partVoice } : {}) }
     }),
+    ...target,
   }
 }
+
+/**
+ * A device that plays Voice Operator's speech itself — a phone's page, a
+ * speaker on Voice Operator's client socket (voice-operator-speech.ts) — by
+ * the client name and device name it said hello with.
+ */
+export interface SpeechDevice { client: string; device: string }
 
 /** The speech job in a reply, if the reply carries one at all. */
 export function speechStatus(response: SpeechResponse): SpeechStatus | undefined {
@@ -125,9 +134,9 @@ export function speechStatus(response: SpeechResponse): SpeechStatus | undefined
 }
 
 /**
- * Somewhere speech jobs can be run: Voice Operator itself, which plays on the
- * Mac, or `RemoteSpeech`, which plays on a phone. Both answer in Voice
- * Operator's job format, so Control follows either the same way.
+ * Somewhere speech jobs can be run: Voice Operator, playing on the Mac or on
+ * a phone (`SpeechLinks.backend`), or nobody (`NO_LISTENER`). All answer in
+ * Voice Operator's job format, so Control follows any of them the same way.
  */
 export type SpeechBackend = Pick<VoiceOperator, 'speak' | 'status' | 'drop'>
 
@@ -169,11 +178,13 @@ export class VoiceOperator {
 
   /**
    * Queue speech. A string is one voice, exactly as it always was; parts each
-   * name their own voice, falling back to `voice`. See `SpeechContent`.
+   * name their own voice, falling back to `voice`. See `SpeechContent`. With
+   * `device`, it plays there instead of on the Mac: `404 unknown_device` when
+   * that device is not connected.
    */
-  speak(content: SpeechContent, voice?: string, init?: RequestInit): Promise<SpeechResponse> {
+  speak(content: SpeechContent, voice?: string, init?: RequestInit, device?: SpeechDevice): Promise<SpeechResponse> {
     return this.request('/v1/speech', {
-      ...init, method: 'POST', body: JSON.stringify(speechRequestBody(content, voice)),
+      ...init, method: 'POST', body: JSON.stringify(speechRequestBody(content, voice, device)),
     })
   }
 
@@ -182,9 +193,9 @@ export class VoiceOperator {
    * listener got. `heardUntil` (epoch ms): they stopped hearing it then, not
    * now — they began talking over it, and the cut was only decided later. What
    * was heard is counted up to then: by Voice Operator (`heard_until`, on the
-   * Mac's clock, which it shares with this server), or by `RemoteSpeech` for
-   * a phone. A Voice Operator from before October 15 2026 ignores it, and
-   * counts up to the drop.
+   * Mac's clock, which it shares with this server), on the Mac or a phone. A
+   * Voice Operator from before October 15 2026 ignores it, and counts up to
+   * the drop.
    */
   drop(speechId: string, heardUntil?: number): Promise<SpeechResponse> {
     const query = heardUntil === undefined ? '' : `?heard_until=${Math.round(heardUntil)}`
@@ -198,33 +209,6 @@ export class VoiceOperator {
     const wait = opts.wait ?? 0
     const since = opts.since === undefined ? '' : `&since=${opts.since}`
     return this.request(`/v1/speech/${encodeURIComponent(speechId)}?wait=${wait}${since}`, init, timeoutMs)
-  }
-
-  /**
-   * The audio for one piece of text, handed back rather than played: signed
-   * 16-bit mono PCM and its rate, and where each word falls in it. Undefined
-   * when Voice Operator could not be reached or could not synthesize. See
-   * RemoteSpeech.
-   */
-  async synthesize(text: string, voice?: string, signal?: AbortSignal): Promise<SynthesizedSpeech | undefined> {
-    const port = this.port()
-    if (port === undefined) return undefined
-    try {
-      const response = await this.deps.fetch(`http://127.0.0.1:${port}/v1/synthesize`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text, ...(voice ? { voice } : {}), word_timings: true }),
-        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
-      })
-      if (response.status !== 200) return undefined
-      // An older Voice Operator ignores `word_timings` and answers with the bare WAV.
-      if (!response.headers.get('content-type')?.includes('json')) {
-        return parseWav(new Uint8Array(await response.arrayBuffer()))
-      }
-      return parseTimedSynthesis(await response.json())
-    } catch {
-      return undefined
-    }
   }
 
   // ─── remote transcription ───────────────────────────────────────────────
@@ -289,63 +273,4 @@ export class VoiceOperator {
     const port = discovery.port
     return typeof port === 'number' && port > 0 && port < 65536 ? port : undefined
   }
-}
-
-/** One word of synthesized speech: when it sounds, and where it ends in the text. */
-export interface TimedWord {
-  /** Seconds from the start of the audio. */
-  start: number
-  /** UTF-16 offset in the synthesized text just past the word. */
-  characterEnd: number
-}
-
-export interface SynthesizedSpeech {
-  pcm: Uint8Array
-  sampleRate: number
-  /** Absent when Voice Operator could not time the words, or is too old to. */
-  words?: TimedWord[]
-}
-
-/**
- * A timed `/v1/synthesize` answer: the WAV as base64 `audio`, and `words` with
- * `start` seconds and `character_end`. Malformed words are dropped as a set —
- * a partial list would misplace every word after the gap.
- */
-export function parseTimedSynthesis(body: unknown): SynthesizedSpeech | undefined {
-  if (!body || typeof body !== 'object') return undefined
-  const { audio, words } = body as { audio?: unknown; words?: unknown }
-  if (typeof audio !== 'string') return undefined
-  const wav = parseWav(new Uint8Array(Buffer.from(audio, 'base64')))
-  if (!wav) return undefined
-  if (!Array.isArray(words)) return wav
-  const timed = words.map((word: { start?: unknown; character_end?: unknown }) =>
-    typeof word?.start === 'number' && typeof word.character_end === 'number'
-      ? { start: word.start, characterEnd: word.character_end }
-      : undefined)
-  return timed.every((word) => word !== undefined) ? { ...wav, words: timed as TimedWord[] } : wav
-}
-
-/**
- * The samples and rate of a PCM WAV — 16-bit mono, which is what Voice
- * Operator's synthesizer returns. Walks the chunks rather than assuming a
- * 44-byte header.
- */
-export function parseWav(bytes: Uint8Array): { pcm: Uint8Array; sampleRate: number } | undefined {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  const tag = (at: number) => String.fromCharCode(bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3])
-  if (bytes.length < 12 || tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return undefined
-  let sampleRate = 0
-  for (let at = 12; at + 8 <= bytes.length;) {
-    const size = view.getUint32(at + 4, true)
-    if (tag(at) === 'fmt ') {
-      if (view.getUint16(at + 8 + 2, true) !== 1 || view.getUint16(at + 8 + 14, true) !== 16) return undefined
-      sampleRate = view.getUint32(at + 8 + 4, true)
-    } else if (tag(at) === 'data') {
-      if (!sampleRate) return undefined
-      const end = Math.min(bytes.length, at + 8 + size)
-      return { pcm: bytes.slice(at + 8, end - ((end - at - 8) % 2)), sampleRate }
-    }
-    at += 8 + size + (size % 2)
-  }
-  return undefined
 }

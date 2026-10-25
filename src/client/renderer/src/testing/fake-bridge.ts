@@ -1,7 +1,7 @@
 import type {
   AgentSearchResponse, CommandOutcome,
   Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
-  SessionInfo, SystemApi, TtsApi, WindowApi, DictationApi, RemoteSpeechApi,
+  SessionInfo, SystemApi, TtsApi, WindowApi, DictationApi, SpeechLinkApi,
   ReceptionistApi, ReceptionistStatus, HandsFreeApi, ControlTranscriptPage
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
@@ -461,12 +461,12 @@ export class FakeBridge implements Api {
     onStream: (cb) => subscribe(this.handsFreeStream, cb)
   }
 
-  private readonly speechAudio = new Set<Parameters<RemoteSpeechApi['onAudio']>[0]>()
-  private readonly speechStop = new Set<(id: string) => void>()
-  readonly remoteSpeech: RemoteSpeechApi = {
-    onAudio: (cb) => subscribe(this.speechAudio, cb),
-    onStop: (cb) => subscribe(this.speechStop, cb),
-    progress: (id, index, event) => this.record('remoteSpeech.progress', id, index, event)
+  private readonly speechLinkListeners = new Set<Parameters<SpeechLinkApi['onLink']>[0]>()
+  readonly speechLink: SpeechLinkApi = {
+    open: () => this.record('speechLink.open'),
+    line: (line) => this.record('speechLink.line', line),
+    close: () => this.record('speechLink.close'),
+    onLink: (cb) => subscribe(this.speechLinkListeners, cb)
   }
 
   /**
