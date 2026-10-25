@@ -12,11 +12,30 @@ import {
   type AutomationOverlap
 } from '../../../../shared/automation'
 import { CardShell } from './CardShell'
+import { formatDurationShort } from '../../../../shared/elapsed-label'
+import { GEAR_MASK } from './icons/GearGlyph'
 import { useNodeStore } from '../stores/nodeStore'
 import { useReparentStore } from '../stores/reparentStore'
+import { useScriptsSocketPathStore } from '../stores/scriptsSocketPathStore'
 import { type NodeId } from '../../../../shared/ids'
 
 const DRAG_THRESHOLD = 5
+
+/**
+ * The gear behind the card, half again as wide as the card and centred on it, so
+ * its teeth and ring show around the opaque body. Placed from the card's own
+ * constants rather than the shell's box, and out of flow, so it never changes
+ * the size the card is measured or placed at.
+ */
+const GEAR_BACKDROP_SIZE = AUTOMATION_WIDTH * 1.5
+const GEAR_BACKDROP_STYLE: React.CSSProperties = {
+  left: AUTOMATION_WIDTH / 2 - GEAR_BACKDROP_SIZE / 2,
+  top: AUTOMATION_HEIGHT / 2 - GEAR_BACKDROP_SIZE / 2,
+  width: GEAR_BACKDROP_SIZE,
+  height: GEAR_BACKDROP_SIZE,
+  maskImage: GEAR_MASK,
+  WebkitMaskImage: GEAR_MASK,
+}
 
 interface AutomationCardProps {
   id: NodeId
@@ -64,7 +83,7 @@ function triggerKindOf(trigger: string): TriggerKind {
  * quotes the input back, so a bad cron gets a short one with croner's in the
  * tooltip.
  */
-function describeTrigger(kind: TriggerKind, trigger: string): { text: string; detail?: string; error: boolean } {
+function describeTrigger(kind: TriggerKind, trigger: string, scriptsSocketPath: string | undefined): { text: string; detail?: string; error: boolean } {
   const trimmed = trigger.trim()
   if (kind === 'event') {
     if (!trimmed) return { text: 'Type an event id that starts with custom_', error: false }
@@ -82,7 +101,7 @@ function describeTrigger(kind: TriggerKind, trigger: string): { text: string; de
         ? { text: 'Not a cron expression. Five fields: minute hour day month weekday, e.g. 0 9 * * 1-5', detail: parsed.error, error: true }
         : { text: parsed.error, error: true }
     case 'event':
-      return { text: `Runs when a script fires ${parsed.eventId}`, error: false }
+      return { text: `Runs when ${scriptsSocketPath ?? 'the scripts socket'} receives ${parsed.eventId}`, error: false }
     case 'cron': {
       const next = new Cron(parsed.expression, { paused: true }).nextRun()
       return { text: next ? `Next run ${next.toLocaleString()}` : 'Never runs again', error: false }
@@ -92,6 +111,18 @@ function describeTrigger(kind: TriggerKind, trigger: string): { text: string; de
 
 function formatUsd(usd: number): string {
   return usd < 0.01 && usd > 0 ? '<$0.01' : `$${usd.toFixed(2)}`
+}
+
+/** `Oct 24, 18:02 → 18:03 · 59s`: the end gets a date only when it is a different day. */
+function formatRunSpan(run: AutomationRunStats['last']): string {
+  const dateTime: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
+  const time: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit' }
+  const end = new Date(run.endedAt)
+  if (run.startedAt === undefined) return `Ended ${end.toLocaleString([], dateTime)}`
+  const start = new Date(run.startedAt)
+  const sameDay = start.toDateString() === end.toDateString()
+  return `${start.toLocaleString([], dateTime)} → ${end.toLocaleString([], sameDay ? time : dateTime)}` +
+    ` · ${formatDurationShort(run.endedAt - run.startedAt)}`
 }
 
 function formatTokens(tokens: number): string {
@@ -138,7 +169,9 @@ export function AutomationCard({
     setDraft(trimmed)
   }, [draft, trigger, id, onTriggerChange])
 
-  const status = useMemo(() => describeTrigger(kind, draft), [kind, draft])
+  const scriptsSocketPath = useScriptsSocketPathStore(s => s.path)
+  const status = useMemo(() => describeTrigger(kind, draft, scriptsSocketPath), [kind, draft, scriptsSocketPath])
+  const fg = resolvedPreset?.titleBarBg ?? '#f0a94a'
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('.node-titlebar__actions, .node-titlebar__color-picker, .archive-body')) return
@@ -199,10 +232,13 @@ export function AutomationCard({
         // than `cardSurfaceColor`'s half: the edge to the card's children runs
         // underneath, and showing through a form it reads as part of it.
         backgroundColor: resolvedPreset?.terminalBg ?? DEFAULT_PRESET.terminalBg,
-        '--automation-fg': resolvedPreset?.titleBarBg ?? '#f0a94a',
+        '--automation-fg': fg,
       } as React.CSSProperties}
       onMouseEnter={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(id) }}
       onMouseLeave={() => { if (reparentingNodeId) useReparentStore.getState().setHoveredNode(null) }}
+      // A sibling of the card element, so it is given the colour directly: the
+      // card's custom property does not reach it.
+      behindContent={<div className="automation-gear-backdrop" style={{ ...GEAR_BACKDROP_STYLE, backgroundColor: fg }} aria-hidden="true" />}
     >
       <div className="automation-card__body">
         <div className="automation-card__head">
@@ -266,6 +302,7 @@ export function AutomationCard({
           {runStats ? (
             <>
               <span>Last run {formatUsd(runStats.last.costUsd)} · {formatTokens(runStats.last.tokens)} tokens</span>
+              <span>{formatRunSpan(runStats.last)}</span>
               <span>Total {formatUsd(runStats.totalCostUsd)} · {runStats.runs} {runStats.runs === 1 ? 'run' : 'runs'}</span>
             </>
           ) : (

@@ -2,6 +2,7 @@ import { useNodeStore } from '../stores/nodeStore'
 import { bellRingsNow } from '../stores/notificationSoundStore'
 import { useRootCwdStore } from '../stores/rootCwdStore'
 import { useAutoStampsEnabledStore } from '../stores/autoStampsEnabledStore'
+import { useScriptsSocketPathStore } from '../stores/scriptsSocketPathStore'
 import { useSavedViewportStore } from '../stores/savedViewportStore'
 import { useRestartRequiredStore } from '../stores/restartRequiredStore'
 import { useUpdateActionsStore } from '../stores/updateActionsStore'
@@ -236,6 +237,7 @@ export async function initServerSync(): Promise<void> {
     useSavedViewportStore.getState().setAll(serverState.savedViewports ?? {})
     useRootCwdStore.getState().set(serverState.rootCwd)
     useAutoStampsEnabledStore.getState().set(serverState.autoStampsEnabled !== false)
+    useScriptsSocketPathStore.getState().set(serverState.scriptsSocketPath)
     useReceptionistStore.getState().setHolder(receptionistHolderOf(serverState), window.api.receptionist.deviceId, serverState.receptionistMuted ?? [])
 
     // Authoritative on reload: the PUSH above only fires when the flag changes

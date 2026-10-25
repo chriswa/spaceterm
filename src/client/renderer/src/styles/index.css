@@ -2015,6 +2015,17 @@ html, body, #root {
   cursor: grabbing;
 }
 
+/* The gear behind the card, in the card's bright colour (see GEAR_BACKDROP_STYLE).
+   Out of flow and click-through, so the card is grabbed and measured as before. */
+.automation-gear-backdrop {
+  position: absolute;
+  pointer-events: none;
+  mask-size: 100% 100%;
+  -webkit-mask-size: 100% 100%;
+  mask-repeat: no-repeat;
+  -webkit-mask-repeat: no-repeat;
+}
+
 .automation-card:not(.automation-card--focused) .automation-card__control {
   pointer-events: none;
 }
@@ -2100,12 +2111,14 @@ html, body, #root {
   -webkit-box-orient: vertical;
   overflow: hidden;
   min-height: calc(11px * 1.35 * 2);
+  /* A socket path has no spaces to break at. */
+  overflow-wrap: anywhere;
 }
 
 .automation-card__stats {
   display: flex;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  gap: 2px;
   font-size: 11px;
   opacity: 0.75;
   font-variant-numeric: tabular-nums;

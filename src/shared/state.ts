@@ -583,6 +583,13 @@ export interface ServerState {
   /** Whether surfaces get auto-stamp icons drawn for them. Absent means on. See `auto-stamp.ts`. */
   autoStampsEnabled?: boolean
   /**
+   * Where this server listens for scripts (`spaceterm-cli fire` and the like),
+   * so an automation card can name the socket its event arrives on. Never
+   * persisted: the server fills it in on each `sync-state` it sends, because
+   * the renderer cannot compute it (it depends on the server's home).
+   */
+  scriptsSocketPath?: string
+  /**
    * The device Control speaks to, kept while that device is away; null when
    * nobody holds it. Absent means the Mac, as before devices could hold it.
    */

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, cleanup, fireEvent, screen } from '@testing-library/react'
+import { useScriptsSocketPathStore } from '../stores/scriptsSocketPathStore'
 import { installFakeBridge } from '../testing/fake-bridge'
 import { AutomationCard } from './AutomationCard'
 import { useNodeStore } from '../stores/nodeStore'
@@ -29,6 +30,7 @@ function renderCard(props: { trigger?: string; overlap?: AutomationOverlap; queu
 beforeEach(() => {
   installFakeBridge(globalThis as never)
   useNodeStore.setState({ nodes: {} })
+  useScriptsSocketPathStore.getState().set(undefined)
 })
 
 afterEach(cleanup)
@@ -62,6 +64,12 @@ describe('AutomationCard', () => {
     expect(kindSelect().value).toBe('event')
   })
 
+  it('names the socket an event arrives on, as the server reports it', () => {
+    useScriptsSocketPathStore.getState().set('/srv/home/scripts.sock')
+    renderCard({ trigger: 'custom_x' })
+    expect(document.querySelector('.automation-card__status')?.textContent).toBe('Runs when /srv/home/scripts.sock receives custom_x')
+  })
+
   it('asks for the custom_ prefix rather than reading an event id as cron', () => {
     renderCard()
     fireEvent.change(kindSelect(), { target: { value: 'event' } })
@@ -76,8 +84,10 @@ describe('AutomationCard', () => {
   })
 
   it('shows the last run and the totals', () => {
-    renderCard({ runStats: { runs: 12, totalCostUsd: 3.1, last: { costUsd: 0.42, tokens: 18_400, endedAt: 0 } } })
+    const startedAt = new Date(2026, 9, 24, 18, 2, 0).getTime()
+    renderCard({ runStats: { runs: 12, totalCostUsd: 3.1, last: { costUsd: 0.42, tokens: 18_400, startedAt, endedAt: startedAt + 59_000 } } })
     expect(screen.getByText('Last run $0.42 · 18k tokens')).toBeTruthy()
+    expect(screen.getByText(/→ .* · 59s$/)).toBeTruthy()
     expect(screen.getByText('Total $3.10 · 12 runs')).toBeTruthy()
   })
 

@@ -111,7 +111,7 @@ const CARDS: CardCase[] = [
   {
     name: 'AutomationCard',
     nodeType: 'automation',
-    visibleText: 'Runs when a script fires custom_contract',
+    visibleText: 'Runs when the scripts socket receives custom_contract',
     build: (s) => (
       <AutomationCard
         {...s}

@@ -2202,7 +2202,8 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     // --- Node state mutation messages ---
 
     case 'node-sync-request': {
-      send(client.link, { type: 'sync-state', seq: msg.seq, state: stateManager.getState() })
+      // The scripts socket rides along on a copy, so it is never persisted: see `ServerState.scriptsSocketPath`.
+      send(client.link, { type: 'sync-state', seq: msg.seq, state: { ...stateManager.getState(), scriptsSocketPath: SCRIPTS_SOCKET_PATH } })
       // Send file content for all watched file-backed markdowns
       for (const nodeId of fileContentManager.getWatchedNodeIds()) {
         const fileContent = fileContentManager.getContent(nodeId)
