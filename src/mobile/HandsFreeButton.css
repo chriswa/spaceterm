@@ -5,14 +5,13 @@
    classes so they win over the host's button (.m-bar__button, .toolbar__btn)
    whichever stylesheet loads first. */
 .m-hands-free { position: relative; }
-/* While hands-free takes a dictation: what may end it, a third of the button
-   each (Smart Turn, turn-1-mini, the quiet), filled from the bottom (clip-path set in HandsFreeButton.tsx). Left,
-   green: Smart Turn's latest answer, 0 to 1, snapping to each — no
-   transition, so one answer is not mistaken for many — with a red line at the
-   threshold that ends it, while it is being asked. Right, magenta: the quiet
-   against the patience, ending it at the top. Light enough for the dark icon
-   over them, strong enough to see on the white, and apart from the
-   microphone's orange. */
+/* While hands-free takes a dictation: what may end it, half the button each
+   (turn-1-mini, the quiet), filled from the bottom (clip-path set in
+   HandsFreeButton.tsx). Left, yellow: turn-1-mini's latest answer, 0 to 1,
+   with a red line at the threshold that ends it and a dark tick at its peak.
+   Right, magenta: the quiet against the patience, ending it at the top. Light
+   enough for the dark icon over them, strong enough to see on the white, and
+   apart from the microphone's orange. */
 .m-hands-free__gauge {
   position: absolute;
   inset: 0;
@@ -20,7 +19,6 @@
   height: 100%;
   pointer-events: none;
 }
-.m-hands-free__gauge--turn circle { fill: #4ade80; }
 .m-hands-free__gauge--mini circle { fill: #facc15; }
 .m-hands-free__gauge--quiet circle { fill: #f472d0; }
 .m-hands-free__lines .m-hands-free__threshold { stroke: #e11d48; stroke-width: 2; }

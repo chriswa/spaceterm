@@ -22,7 +22,7 @@ afterEach(() => {
   cleanup()
   setHoldMicrophone(false)
   useDictationSession.setState({ mic: { kind: 'idle' } })
-  useHandsFree.setState({ phase: 'off', turn: null, sampling: null })
+  useHandsFree.setState({ phase: 'off', mini: null })
 })
 
 const mic = () => screen.getByRole('button', { name: /Talk to|Cut .* off|dictating/ })
@@ -160,40 +160,25 @@ describe('a tap, from press to sound', () => {
 })
 
 describe('what may end a hands-free dictation', () => {
-  const gauge = (container: HTMLElement, which: 'turn' | 'mini' | 'quiet') =>
+  const gauge = (container: HTMLElement, which: 'mini' | 'quiet') =>
     container.querySelector<SVGElement>(`.m-hands-free__gauge--${which}`)
 
-  it('shows Smart Turn\'s answer on the left of the hands-free button, not on the microphone', () => {
-    useHandsFree.setState({ phase: 'hearing', turn: null })
+  it('shows turn-1-mini on the left half of the hands-free button, not on the microphone, and the quiet on the right', () => {
+    useHandsFree.setState({ phase: 'hearing', mini: null })
     const { container } = render(<><MicButton /><HandsFreeButton /></>)
     expect(container.querySelector('.m-mic__turn')).toBeNull()
-    expect(gauge(container, 'turn')?.style.clipPath).toBe('inset(100.0% 0 0 0)')
-
+    expect(gauge(container, 'mini')?.style.clipPath).toBe('inset(100.0% 0 0 0)')
+    expect(gauge(container, 'mini')?.querySelector('rect')?.getAttribute('width')).toBe('21')
+    expect(gauge(container, 'quiet')?.querySelector('rect')?.getAttribute('x')).toBe('21')
     // From 0 to 1, the answer itself, not its share of the threshold.
-    act(() => useHandsFree.setState({ turn: { p: 0.15, threshold: 0.6 } }))
-    expect(gauge(container, 'turn')?.style.clipPath).toBe('inset(85.0% 0 0 0)')
-    act(() => useHandsFree.setState({ turn: { p: 0.6, threshold: 0.6 } }))
-    expect(gauge(container, 'turn')?.style.clipPath).toBe('inset(40.0% 0 0 0)')
-    expect(gauge(container, 'quiet')).not.toBeNull()
+    act(() => useHandsFree.setState({ mini: { p: 0.6, peak: 0.6, threshold: 0.5 } }))
+    expect(gauge(container, 'mini')?.style.clipPath).toBe('inset(40.0% 0 0 0)')
+    expect(container.querySelector('.m-hands-free__gauge--turn')).toBeNull()
   })
 
-  it('marks Smart Turn\'s threshold across the left third while it is asked, and beside its answer after', () => {
-    useHandsFree.setState({ phase: 'hearing', turn: null, sampling: null, mini: null })
-    const { container } = render(<HandsFreeButton />)
-    expect(container.querySelector('.m-hands-free__threshold')).toBeNull()
-    act(() => useHandsFree.setState({ sampling: 0.85 }))
-    const line = container.querySelector('.m-hands-free__threshold')
-    expect(Number(line?.getAttribute('y1'))).toBeCloseTo(42 * 0.15)
-    expect(Number(line?.getAttribute('x2'))).toBeCloseTo(14)
-    act(() => useHandsFree.setState({ sampling: null, turn: { p: 0.3, threshold: 0.85 } }))
-    expect(container.querySelectorAll('.m-hands-free__threshold')).toHaveLength(1)
-    act(() => useHandsFree.setState({ turn: null }))
-    expect(container.querySelector('.m-hands-free__threshold')).toBeNull()
-  })
-
-  it('shows turn-1-mini in the middle third: its latest answer, its threshold, and its peak since the pause began', () => {
-    // While they talk: nothing, as the other bars.
-    useHandsFree.setState({ phase: 'hearing', turn: null, sampling: null, mini: { p: 0.1, peak: null, threshold: 0.17 } })
+  it('shows turn-1-mini on the left half: its latest answer, its threshold, and its peak since the pause began', () => {
+    // While they talk: nothing, as the quiet.
+    useHandsFree.setState({ phase: 'hearing', mini: { p: 0.1, peak: null, threshold: 0.17 } })
     const { container } = render(<HandsFreeButton />)
     expect(gauge(container, 'mini')?.style.clipPath).toBe('inset(100.0% 0 0 0)')
     expect(container.querySelector('.m-hands-free__threshold')).toBeNull()
@@ -202,8 +187,8 @@ describe('what may end a hands-free dictation', () => {
     act(() => useHandsFree.setState({ mini: { p: 0.1, peak: 0.4, threshold: 0.17 } }))
     expect(gauge(container, 'mini')?.style.clipPath).toBe('inset(90.0% 0 0 0)')
     const [threshold] = container.querySelectorAll('.m-hands-free__threshold')
-    expect(Number(threshold.getAttribute('x1'))).toBeCloseTo(14)
-    expect(Number(threshold.getAttribute('x2'))).toBeCloseTo(28)
+    expect(Number(threshold.getAttribute('x2'))).toBeCloseTo(21)
+    expect(Number(threshold.getAttribute('y1'))).toBeCloseTo(42 * 0.83)
     expect(Number(container.querySelector('.m-hands-free__peak')?.getAttribute('y1'))).toBeCloseTo(42 * 0.6)
     // They carry on: all of it clears.
     act(() => useHandsFree.setState({ mini: { p: 0.02, peak: null, threshold: 0.17 } }))
@@ -212,11 +197,12 @@ describe('what may end a hands-free dictation', () => {
   })
 
   it('keeps both up while what was said is sent, and drops them once it is listening again', () => {
-    useHandsFree.setState({ phase: 'sending', turn: { p: 0.6, threshold: 0.6 } })
+    useHandsFree.setState({ phase: 'sending', mini: { p: 0.6, peak: 0.6, threshold: 0.5 } })
     const { container } = render(<HandsFreeButton />)
-    expect(gauge(container, 'turn')).not.toBeNull()
-    act(() => useHandsFree.setState({ phase: 'listening', turn: null }))
-    expect(gauge(container, 'turn')).toBeNull()
+    expect(gauge(container, 'mini')).not.toBeNull()
+    expect(gauge(container, 'quiet')).not.toBeNull()
+    act(() => useHandsFree.setState({ phase: 'listening', mini: null }))
+    expect(gauge(container, 'mini')).toBeNull()
     expect(gauge(container, 'quiet')).toBeNull()
   })
 })

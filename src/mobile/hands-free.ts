@@ -12,8 +12,8 @@ import { recordMobileEvent } from './mobile-events'
  * Voice Operator runs it (its DESIGN.md, "Hands-free"). Everything that
  * listens and decides happens there, on the Mac: the speech detector, whether
  * speech began with "control", the conversation window after it, when the
- * speaker has finished (Smart Turn, and a patience that grows with how long
- * they have been talking), the transcription, and "let me turn this off". On
+ * speaker has finished (turn-1-mini, and a silence timeout that grows a little
+ * with how long they have been talking), the transcription, and "let me turn this off". On
  * the Mac it listens to the Mac's microphone; on the phone, Voice Operator's
  * SDK in the iPhone app streams the app's microphone to it, the page carrying
  * its lines through the server. What is left here is being its client:
@@ -44,24 +44,20 @@ export type HandsFreePhase = 'off' | 'listening' | 'hearing' | 'sending'
  * "Control" in which anything said starts a dictation without it.
  * `secondsLeft`: how long it has left, whole seconds, rounded up — full while
  * anyone is speaking, since that holds it. `checking`: speech was heard and is
- * being checked. `turn`: the turn model's latest answer at a pause in this
- * dictation, with the threshold it was held to; kept while what was said is
- * sent, so what ended it can be seen. `sampling`: the threshold, while the
- * turn model is being asked about a pause; null otherwise.
+ * being checked. `mini`: the turn model's latest answer in this dictation;
+ * kept while what was said is sent, so what ended it can be seen.
  */
-export const useHandsFree = create<{ on: boolean; phase: HandsFreePhase; conversation: boolean; secondsLeft: number | null; checking: boolean; turn: TurnAnswer | null; sampling: number | null; mini: MiniAnswer | null }>(
-  () => ({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, turn: null, sampling: null, mini: null }),
+export const useHandsFree = create<{ on: boolean; phase: HandsFreePhase; conversation: boolean; secondsLeft: number | null; checking: boolean; mini: MiniAnswer | null }>(
+  () => ({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, mini: null }),
 )
 
 /**
- * turn-1-mini, which decides when a dictation ends (Smart Turn only watches): its latest
- * answer `p`, its highest since this pause began (`peak`, null while they
- * talk), and its model card's operating point, for the button's middle bar.
+ * turn-1-mini, which decides when a dictation ends: its latest answer `p`,
+ * 0..1, that the speaker has finished, its highest since this pause began
+ * (`peak`, null while they talk), and the `threshold` that ends the
+ * dictation, for the button's left half.
  */
 export interface MiniAnswer { p: number; peak: number | null; threshold: number }
-
-/** One answer from the turn model: `p`, 0..1, that the speaker has finished; at or above `threshold`, the dictation ends. */
-export interface TurnAnswer { p: number; threshold: number }
 
 /** The quiet gauge's data points, from Voice Operator's `gauge`. */
 let quiet: { since: number | null; patienceMs: number | null } = { since: null, patienceMs: null }
@@ -188,7 +184,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
         setPending(false)
         quiet = { since: null, patienceMs: null }
         closesAt = null
-        useHandsFree.setState({ phase: 'off', conversation: false, secondsLeft: null, checking: false, turn: null, sampling: null, mini: null })
+        useHandsFree.setState({ phase: 'off', conversation: false, secondsLeft: null, checking: false, mini: null })
         // Voice Operator restarting, or its connection gone: still on, waiting
         // ("getting ready") — it is started again as soon as Voice Operator is back.
         if (why === 'restarting' || why === 'disconnected') break
@@ -215,7 +211,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
           phase,
           conversation: event.conversation === true,
           checking: event.checking === true,
-          ...(phase === 'listening' || phase === 'off' || fresh ? { turn: null, sampling: null, mini: null } : {}),
+          ...(phase === 'listening' || phase === 'off' || fresh ? { mini: null } : {}),
         })
         tickSeconds()
         setPending(event.pending === true)
@@ -226,10 +222,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
           since: typeof event.quietSince === 'number' ? event.quietSince : null,
           patienceMs: typeof event.patienceMs === 'number' ? event.patienceMs : null,
         }
-        const threshold = typeof event.threshold === 'number' ? event.threshold : 0.75
         useHandsFree.setState({
-          turn: typeof event.turn === 'number' ? { p: event.turn, threshold } : null,
-          sampling: event.sampling === true ? threshold : null,
           mini: typeof event.mini === 'number' ? {
             p: event.mini,
             peak: typeof event.miniPeak === 'number' ? event.miniPeak : null,
@@ -283,7 +276,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
     setPending(false)
     setOn = () => {}
     if (useHandsFree.getState().on) deps.link.stop()
-    useHandsFree.setState({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, turn: null, sampling: null, mini: null })
+    useHandsFree.setState({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, mini: null })
   }
 }
 

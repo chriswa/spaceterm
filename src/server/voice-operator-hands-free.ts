@@ -4,7 +4,7 @@ import * as net from 'net'
  * Hands-free mode, as Voice Operator now provides it: Spaceterm is a client
  * that registers its trigger word, "control", and turns hands-free on and off.
  * Everything that listens and decides — the speech detector, the trigger-word
- * check, the conversation window, Smart Turn, the transcription — runs in
+ * check, the conversation window, the end-of-turn model, the transcription — runs in
  * Voice Operator (its DESIGN.md, "Hands-free"). This is the server's half of
  * being its client:
  *

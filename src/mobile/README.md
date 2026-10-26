@@ -499,10 +499,11 @@ off the front, and the rest goes to Control, which comes to this phone.
 and `docs/hands-free-plan.md` for why it moved there). Everything that
 listens and decides happens there: the speech detector (Silero VAD), whether
 speech began with "control" (Apple's on-device model, never Wispr), the
-conversation window, when you have finished (Smart Turn, which Voice Operator
-asks at every pause, and a patience that grows with how long you have been
-talking — three seconds for a quick request, up to twenty well into a
-monologue), the transcription with your provider, and "let me turn this off".
+conversation window, when you have finished (turn-1-mini, a streaming
+end-of-turn model: half a second after its score first reaches its threshold
+in a pause, unless you speak again; failing that, a silence timeout of three
+seconds, growing to four at most in a long dictation), the transcription with
+your provider, and "let me turn this off".
 Spaceterm is its client (`hands-free.ts`):
 
 - **In the app**, Voice Operator's iOS SDK owns the microphone and Control's
@@ -519,11 +520,9 @@ Spaceterm is its client (`hands-free.ts`):
   (the microphone button only turns orange while your words are taken
   down): a thick dark ring while speech is checked for "Control"; the
   conversation window as an orange ring, draining as its quiet runs out; and
-  while a dictation runs, the button's three thirds — **left, green**, Smart
-  Turn's one answer about the pause (asked once, 0.5 s in), with a **red
-  line** at its threshold, watched for comparison and deciding nothing;
-  **middle, yellow**, turn-1-mini, which ends the dictation: its latest
-  answer, a red line at its threshold (0.5 for now; Voice Operator sends it), and a dark tick at its highest
+  while a dictation runs, the button's two halves — **left, yellow**,
+  turn-1-mini, which ends the dictation: its latest
+  answer, a **red line** at its threshold (0.5 for now; Voice Operator sends it), and a dark tick at its highest
   since the pause began — half a second after it first reaches the line the
   dictation ends, unless you speak first; **right, magenta**, the quiet since you last
   spoke, ending it at the top (3 s, growing to 4 s at most in a long dictation).
@@ -559,7 +558,8 @@ Spaceterm is its client (`hands-free.ts`):
   more than Voice Operator's 10 s to come back to starts afresh, unnoticed.
 - **Why it did or did not trigger** is Voice Operator's record now:
   `~/Library/Application Support/VoiceOperator/hands-free/decisions.jsonl`
-  and its `clips/`, with what Apple's model heard and every Smart Turn answer.
+  and its `clips/`, with what Apple's model heard and what turn-1-mini made of
+  every pause.
   `~/.spaceterm/mobile-events.jsonl` keeps this side's view: the phase, the
   cues, cut-ins, and how many characters went to Control.
 
@@ -691,27 +691,26 @@ it overlaps (`overlapping`), and whether it had to wait for a stopped audio
 context (`waiting`). A cue that waited is played when the context runs again
 only if it is fresh; otherwise, or when a newer cue replaces it, a
 `cue-dropped` line says so (`cues.ts`, `CueTracker`) — iOS used to save them
-all up and play them together, loudly. Each Smart Turn verdict on the phone
-is a `hands-free-turn` line (p, threshold, which sample of its pause, whether it ended the dictation).
+all up and play them together, loudly.
 
 **Seeing the turn model.** The left half of the hands-free button is
-Smart Turn's latest answer at a pause (`samplePause` in `hands-free.ts`), the
-right half the quiet against the patience (`UtteranceEndpointer.silence`);
-see "Hands-free" above. Those answers are the `hands-free-turn` lines above.
+turn-1-mini's latest answer in a pause, with its threshold and peak (Voice
+Operator's `gauge`), the right half the quiet against the patience
+(`endSilence` in `hands-free.ts`); see "Hands-free" above. Voice Operator's
+record has a `pause` line for each pause, and a `mini-ending` line each time
+turn-1-mini crossed its threshold.
 
     jq -c 'select(.kind | test("interruption|route|hold|native-mic"))' ~/.spaceterm/mobile-events.jsonl
     jq -c 'select(.kind | test("^cue"))' ~/.spaceterm/mobile-events.jsonl
 
-**What was said, kept on purpose.** The Mac keeps the other half in
-`~/.spaceterm/voice-decisions.jsonl` (`src/server/voice-record.ts`): each
-wake-word and speech check with what Apple's model `heard` and whether it
-counted, each Smart Turn verdict with its probability and the pause it heard
-after the last word (`trailingQuietMs`), and each phone dictation's
-transcript — every line timed, with its audio in `~/.spaceterm/voice-clips/`
-(16 kHz WAV, the newest 400 kept). So a "Control" heard as "patrol", or a
-finished sentence Smart Turn called unfinished, can be found and listened to.
+**What was said, kept on purpose.** Voice Operator keeps the other half in
+its `hands-free/decisions.jsonl` (see "Hands-free" above): each trigger-word
+and speech check with what Apple's model `heard` and whether it counted, and
+each pause and dictation — every line timed, checks with their audio in its
+`clips/` (16 kHz WAV, the newest 400 kept). So a "Control" heard as "patrol"
+can be found and listened to.
 
-    jq -c 'select(.kind == "wake-word-check" and .match == false)' ~/.spaceterm/voice-decisions.jsonl
+    jq -c 'select(.kind == "check" and .match == false)' ~/Library/Application\ Support/VoiceOperator/hands-free/decisions.jsonl
 
 While a dictation is sending your voice to be transcribed, an orange **MIC**
 sits above the Dynamic Island (`MicIndicator.tsx`); it pulses while the words
