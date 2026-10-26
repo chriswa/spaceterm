@@ -65,6 +65,22 @@ describe('hands-free, following Voice Operator', () => {
     expect(useHandsFree.getState().phase).toBe('hearing')
   })
 
+  it('knows when Voice Operator is not listening, and why, until it listens again or ends', () => {
+    h = harness()
+    h.state('listening', { standingAside: 'speech' })
+    expect(useHandsFree.getState().standingAside).toBe('speech')
+    h.state('listening', { standingAside: 'dictation' })
+    expect(useHandsFree.getState().standingAside).toBe('dictation')
+    h.state('listening', { standingAside: 'something-new' })
+    expect(useHandsFree.getState().standingAside).toBeNull()
+    h.state('listening', { standingAside: 'speech' })
+    h.state('listening')
+    expect(useHandsFree.getState().standingAside).toBeNull()
+    h.state('listening', { standingAside: 'speech' })
+    h.vo({ type: 'session-ended', why: 'restarting' })
+    expect(useHandsFree.getState().standingAside).toBeNull()
+  })
+
   it('counts the window down from when Voice Operator says it closes', () => {
     h = harness()
     h.state('listening', { conversation: true, closesAt: h.now() + 9_500 })

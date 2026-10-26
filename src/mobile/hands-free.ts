@@ -22,8 +22,9 @@ import { recordMobileEvent } from './mobile-events'
  *   the phone's with its hold (hands-free-mode.ts);
  * - showing what it is doing: the phase (the microphone button's orange), the
  *   conversation window and its countdown, the turn model's answers and the
- *   quiet that may end a dictation (HandsFreeButton.tsx), all from Voice
- *   Operator's messages, animated here between its data points;
+ *   quiet that may end a dictation, and when it is not listening because our
+ *   own voice is playing (HandsFreeButton.tsx), all from Voice Operator's
+ *   messages, animated here between its data points;
  * - its cues and haptics, as this device plays them, and the "deciding" beep
  *   while it says speech is undecided;
  * - and Control: the words it hands back, the wake word taken off, go to
@@ -40,16 +41,27 @@ export const WAKE_WORD = 'control'
 export type HandsFreePhase = 'off' | 'listening' | 'hearing' | 'sending'
 
 /**
+ * Why Voice Operator is not listening to the microphone just now, though
+ * hands-free is listening: `speech`, our own voice playing where the
+ * microphone would hear it (Control on the phone's speaker, Voice Operator on
+ * the Mac's); `sound`, a cue of ours; `dictation`, a Fn dictation on the Mac.
+ */
+export type StandingAside = 'speech' | 'sound' | 'dictation'
+
+/**
  * `on`: hands-free is wanted on this device. `conversation`: the window after
  * "Control" in which anything said starts a dictation without it.
  * `secondsLeft`: how long it has left, whole seconds, rounded up — full while
  * anyone is speaking, since that holds it. `checking`: speech was heard and is
  * being checked. `mini`: the turn model's latest answer in this dictation;
  * kept while what was said is sent, so what ended it can be seen.
+ * `standingAside`: not listening to the microphone, and why; null while it is.
  */
-export const useHandsFree = create<{ on: boolean; phase: HandsFreePhase; conversation: boolean; secondsLeft: number | null; checking: boolean; mini: MiniAnswer | null }>(
-  () => ({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, mini: null }),
+export const useHandsFree = create<{ on: boolean; phase: HandsFreePhase; conversation: boolean; secondsLeft: number | null; checking: boolean; mini: MiniAnswer | null; standingAside: StandingAside | null }>(
+  () => ({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, mini: null, standingAside: null }),
 )
+
+const STANDING_ASIDE: readonly StandingAside[] = ['speech', 'sound', 'dictation']
 
 /**
  * turn-1-mini, which decides when a dictation ends: its latest answer `p`,
@@ -184,7 +196,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
         setPending(false)
         quiet = { since: null, patienceMs: null }
         closesAt = null
-        useHandsFree.setState({ phase: 'off', conversation: false, secondsLeft: null, checking: false, mini: null })
+        useHandsFree.setState({ phase: 'off', conversation: false, secondsLeft: null, checking: false, mini: null, standingAside: null })
         // Voice Operator restarting, or its connection gone: still on, waiting
         // ("getting ready") — it is started again as soon as Voice Operator is back.
         if (why === 'restarting' || why === 'disconnected') break
@@ -211,6 +223,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
           phase,
           conversation: event.conversation === true,
           checking: event.checking === true,
+          standingAside: STANDING_ASIDE.find((why) => why === event.standingAside) ?? null,
           ...(phase === 'listening' || phase === 'off' || fresh ? { mini: null } : {}),
         })
         tickSeconds()
@@ -276,7 +289,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
     setPending(false)
     setOn = () => {}
     if (useHandsFree.getState().on) deps.link.stop()
-    useHandsFree.setState({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, mini: null })
+    useHandsFree.setState({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, mini: null, standingAside: null })
   }
 }
 

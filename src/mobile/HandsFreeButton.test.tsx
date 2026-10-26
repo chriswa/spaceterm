@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { render, cleanup, fireEvent, screen } from '@testing-library/react'
+import { render, cleanup, fireEvent, screen, act } from '@testing-library/react'
 import { installFakeBridge, type FakeBridge } from '@/testing/fake-bridge'
 import { installHandsFree, macHandsFreeLink, realHandsFreeDeps, setHandsFree, useHandsFree } from './hands-free'
 import { HandsFreeButton } from './HandsFreeButton'
@@ -43,6 +43,27 @@ describe('the hands-free button on the Mac', () => {
     expect(useHandsFree.getState().on).toBe(false)
     expect(button.getAttribute('aria-pressed')).toBe('false')
     expect(bridge.calls.filter((c) => c.method === 'handsFree.setMac').map((c) => c.args)).toEqual([[true], [false]])
+  })
+
+  it('strikes the ear through while our own voice plays out loud, and says so', () => {
+    render(<HandsFreeButton chrome="toolbar" />)
+    const button = screen.getByRole('button', { name: /always listen/ })
+    fireEvent.click(button)
+    const state = (extra: Record<string, unknown>) => act(() => bridge.emit.handsFreeMacEvent(
+      { type: 'state', phase: 'listening', conversation: false, closesAt: null, checking: false, pending: false, ...extra }))
+    state({ standingAside: 'speech' })
+    expect(button.classList).toContain('m-hands-free--deaf')
+    expect(button.querySelector('.m-hands-free__strike')).not.toBeNull()
+    expect(button.getAttribute('aria-label')).toMatch(/^Hands-free: not listening while our voice plays out loud/)
+    expect(button.getAttribute('data-tooltip')).toBe(button.getAttribute('aria-label'))
+    // A Fn dictation shows elsewhere; and once it listens again the ear is whole.
+    state({ standingAside: 'dictation' })
+    expect(button.classList).not.toContain('m-hands-free--deaf')
+    state({ standingAside: 'speech' })
+    state({ standingAside: null })
+    expect(button.classList).not.toContain('m-hands-free--deaf')
+    expect(button.querySelector('.m-hands-free__strike')).toBeNull()
+    expect(button.getAttribute('aria-label')).toMatch(/always listening for "Control"/)
   })
 
   it('does nothing when hands-free cannot run on this Mac, and says why', () => {

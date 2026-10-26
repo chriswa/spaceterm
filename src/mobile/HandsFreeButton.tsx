@@ -49,6 +49,13 @@ export function thresholdLine(at: number, [x0, x1]: readonly [number, number] = 
  * patience that ends it regardless. Both stay up while what you said is sent,
  * so you can see which one ended it.
  *
+ * While our own voice plays where the microphone would hear it — Control on
+ * the phone's speaker, Voice Operator on the Mac's — hands-free does not
+ * listen, so it does not take that voice for you: the ear is struck through
+ * and greyed until it is listening again (`standingAside`, from Voice
+ * Operator). Its other reasons, a cue or a Fn dictation, are too brief or
+ * show elsewhere.
+ *
  * The same button on the Mac, in the toolbar beside Control (`chrome:
  * 'toolbar'`): there it holds the Mac's input, and holding it is hands-free.
  * `unavailable` says why it cannot run there; the button then does nothing
@@ -69,6 +76,7 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
   const conversation = useHandsFree((s) => s.conversation)
   const secondsLeft = useHandsFree((s) => s.secondsLeft)
   const checking = useHandsFree((s) => s.checking)
+  const deaf = useHandsFree((s) => s.phase === 'listening' && s.standingAside === 'speech')
   // turn-1-mini answers all the time; its bar shows only in a pause (its peak is held from the
   // pause's start) and while what was said is sent, and clears as the speaker carries on, as the quiet does.
   const mini = useHandsFree((s) => (s.mini?.peak != null ? s.mini : null))
@@ -81,6 +89,7 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
   if (!conversation) fullest.current = 0
   else if (secondsLeft !== null) fullest.current = Math.max(fullest.current, secondsLeft)
   const windowOpen = on && conversation && !ending
+  const notListening = on && deaf
 
   // The quiet gauge, moved once a frame from the endpointer — not through React.
   const quietRef = useRef<SVGSVGElement>(null)
@@ -95,13 +104,14 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
 
   const label = unavailable ?? (on
     ? `${hold === 'preparing' ? 'Getting the microphone ready'
+      : notListening ? 'Hands-free: not listening while our voice plays out loud, so it does not hear itself'
       : checking && !ending ? 'Hands-free: heard something — checking whether it was for Control'
       : windowOpen ? `Hands-free, in conversation with Control: just talk, no need to say "Control"${secondsLeft !== null ? ` — ${secondsLeft} seconds of quiet left` : ''}`
       : handsFree ? 'Hands-free: always listening for "Control"' : 'Microphone held open'} — ${chrome === 'toolbar' ? 'click' : 'tap'} to stop`
     : handsFree ? 'Hands-free: always listen for "Control"' : 'Hold the microphone open with AirPods')
   return (
     <button
-      className={`${chrome === 'toolbar' ? 'toolbar__btn toolbar__hands-free' : 'm-bar__button'} m-hands-free m-hands-free--${hold}${checking && on && !ending ? ' m-hands-free--checking' : ''}`}
+      className={`${chrome === 'toolbar' ? 'toolbar__btn toolbar__hands-free' : 'm-bar__button'} m-hands-free m-hands-free--${hold}${checking && on && !ending ? ' m-hands-free--checking' : ''}${notListening ? ' m-hands-free--deaf' : ''}`}
       aria-label={label}
       aria-pressed={on}
       // aria-disabled rather than disabled, so the tooltip giving the reason still shows on hover.
@@ -143,19 +153,29 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
           </svg>
         </>
       )}
-      <HandsFreeIcon />
+      <HandsFreeIcon struck={notListening} />
     </button>
   )
 }
 
-/** An ear, with the sound of a voice arriving at it: always listening, nothing to hold. */
-function HandsFreeIcon() {
+/**
+ * An ear, with the sound of a voice arriving at it: always listening, nothing
+ * to hold. `struck`: crossed out, as a muted microphone is — not listening.
+ */
+function HandsFreeIcon({ struck = false }: { struck?: boolean }) {
   return (
     <svg className="m-hands-free__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M10 9.5a5.5 5.5 0 0 1 11 0c0 3.2-3.2 4.2-3.2 7.3a3.3 3.3 0 0 1-6 1.9" />
       <path d="M13.3 9.5a2.2 2.2 0 0 1 4.4 0c0 1.3-1.3 1.7-1.7 2.8" />
       <path d="M6 8a5.7 5.7 0 0 1 0 8" />
       <path d="M2.5 5a10.5 10.5 0 0 1 0 14" />
+      {struck && (
+        <>
+          {/* A gap in the button's colour either side of the stroke, so it reads over the ear. */}
+          <path className="m-hands-free__strike-gap" d="M3 3l18 18" />
+          <path className="m-hands-free__strike" d="M3 3l18 18" />
+        </>
+      )}
     </svg>
   )
 }

@@ -527,6 +527,11 @@ Spaceterm is its client (`hands-free.ts`):
   dictation ends, unless you speak first; **right, magenta**, the quiet since you last
   spoke, ending it at the top (3 s, growing to 4 s at most in a long dictation).
   Both hold while what you said is sent, so you can see which ended it.
+  While our own voice plays out loud — Control on the phone's speaker, Voice
+  Operator on the Mac's — hands-free does not listen (it would take that voice
+  for you), and the ear is **greyed and struck through**, as a muted
+  microphone is, until it listens again; its tooltip and label say so.
+  AirPods or a headset never cause it (Voice Operator's `standingAside`).
 - **Its cues** are Voice Operator's to call and this device's to play: three
   soft steps up as it is ready, two notes up as your words begin to be taken
   down and two down as they are sent, the sad tune (`notWakeWord`) for speech
