@@ -23,7 +23,7 @@ export function installHandsFreeMode(
   const offHold = installHeldMicrophone(host)
   if (!nativeMicrophoneAvailable()) return offHold
   const link = phoneHandsFreeLink(api.handsFree, device, onConnect)
-  const offHandsFree = installHandsFree(realHandsFreeDeps(api, link))
+  const offHandsFree = installHandsFree(realHandsFreeDeps(link))
   const offFollow = onHoldStateChange((state) => {
     // A microphone reopening after a stall flips through `preparing`: the stream rides it out.
     if (state === 'held') setHandsFree(true)

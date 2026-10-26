@@ -853,12 +853,6 @@ export class ServerClient {
     this.fireAndForget({ type: 'hands-free-stream-close' })
   }
 
-  /** Words said hands-free, for Control; `interrupted` when they cut its reply off. */
-  receptionistHandsFree(text: string, interrupted = false): void {
-    this.log(`[hands-free] ${text.length} chars to Control${interrupted ? ', having cut it off' : ''}`)
-    this.fireAndForget({ type: 'receptionist-hands-free', text, ...(interrupted ? { interrupted } : {}) })
-  }
-
   /** Build and install the iPhone app from the Mac. Resolves when it fails, or — rarely seen — succeeds. */
   async installMobileApp(): Promise<{ ok: boolean; message?: string }> {
     this.log('[mobile-install] asking the Mac to build and install the app')

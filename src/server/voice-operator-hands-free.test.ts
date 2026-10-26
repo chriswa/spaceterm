@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { HandsFreePresence, VoiceOperatorHandsFree, type VoiceOperatorHandsFreeDeps } from './voice-operator-hands-free'
+import { HandsFreePresence, VoiceOperatorHandsFree, handsFreeAction, type VoiceOperatorHandsFreeDeps } from './voice-operator-hands-free'
 
 /** Voice Operator's hands-free socket, as connections opened to it and what they wrote. */
 function fakeVoiceOperator(pid: number | null = 42) {
@@ -25,7 +25,7 @@ describe('VoiceOperatorHandsFree', () => {
   it('registers "control" on a held connection, once per Voice Operator process', () => {
     const vo = fakeVoiceOperator()
     const link = new VoiceOperatorHandsFree(vo.deps, () => {}, true)
-    link.check()
+    link.setClientsPresent(true)
     link.check()
     expect(vo.connections).toHaveLength(1)
     expect(vo.connections[0].written).toEqual([{ type: 'hello', protocol: 1, client: 'spaceterm', trigger: 'control' }])
@@ -41,7 +41,7 @@ describe('VoiceOperatorHandsFree', () => {
     const vo = fakeVoiceOperator()
     const events: unknown[] = []
     const link = new VoiceOperatorHandsFree(vo.deps, (e) => events.push(e), false)
-    link.check()
+    link.setClientsPresent(true)
     expect(vo.connections).toEqual([])
     link.setMac(true)
     expect(events).toEqual([{ type: 'session-ended', why: 'not-operator-home' }])
@@ -51,7 +51,7 @@ describe('VoiceOperatorHandsFree', () => {
     const vo = fakeVoiceOperator()
     const events: Array<Record<string, unknown>> = []
     const link = new VoiceOperatorHandsFree(vo.deps, (e) => events.push(e), true)
-    link.check()
+    link.setClientsPresent(true)
     vo.connections[0].say({ type: 'welcome', protocol: 1 })
     link.setMac(true)
     expect(vo.connections[0].written.at(-1)).toEqual({ type: 'start', source: 'mac' })
@@ -71,7 +71,7 @@ describe('VoiceOperatorHandsFree', () => {
   it('starts the Mac again when Voice Operator comes back from a restart, but not after the user turned it off', () => {
     const vo = fakeVoiceOperator()
     const link = new VoiceOperatorHandsFree(vo.deps, () => {}, true)
-    link.check()
+    link.setClientsPresent(true)
     vo.connections[0].say({ type: 'welcome', protocol: 1 })
     link.setMac(true)
     vo.connections[0].say({ type: 'session-ended', why: 'restarting' })
@@ -89,6 +89,37 @@ describe('VoiceOperatorHandsFree', () => {
     expect(vo.connections[2].written).toEqual([{ type: 'hello', protocol: 1, client: 'spaceterm', trigger: 'control' }])
   })
 
+  it('registers only while a client is connected, and turns the Mac on again when one is back', () => {
+    const vo = fakeVoiceOperator()
+    const link = new VoiceOperatorHandsFree(vo.deps, () => {}, true)
+    link.check()
+    expect(vo.connections).toEqual([])
+    link.setClientsPresent(true)
+    vo.connections[0].say({ type: 'welcome', protocol: 1 })
+    link.setMac(true)
+    link.setClientsPresent(false)
+    expect(vo.connections[0].closed).toBe(true)
+    expect(link.ready).toBe(false)
+    link.check()
+    expect(vo.connections).toHaveLength(1)
+    link.setClientsPresent(true)
+    vo.connections[1].say({ type: 'welcome', protocol: 1 })
+    expect(vo.connections[1].written.at(-1)).toEqual({ type: 'start', source: 'mac' })
+  })
+
+  it('hands on each of Voice Operator\'s messages once, however many clients are connected', () => {
+    const vo = fakeVoiceOperator()
+    const events: Array<Record<string, unknown>> = []
+    const link = new VoiceOperatorHandsFree(vo.deps, (e) => events.push(e), true)
+    link.setClientsPresent(true)
+    link.setClientsPresent(true)
+    expect(vo.connections).toHaveLength(1)
+    vo.connections[0].say({ type: 'welcome', protocol: 1 })
+    link.setMac(true)
+    vo.connections[0].say({ type: 'transcript', text: 'Control, yeah, next.' })
+    expect(events).toEqual([{ type: 'transcript', text: 'Control, yeah, next.' }])
+  })
+
   it('opens a phone\'s stream as a connection of its own', () => {
     const vo = fakeVoiceOperator()
     const link = new VoiceOperatorHandsFree(vo.deps, () => {}, true)
@@ -102,35 +133,37 @@ describe('VoiceOperatorHandsFree', () => {
   })
 })
 
-describe('HandsFreePresence', () => {
-  function presence() {
-    const changes: boolean[] = []
-    const timers: Array<() => void> = []
-    const p = new HandsFreePresence((s) => changes.push(s), (_ms, fn) => { timers.push(fn); return () => {} })
-    return { p, changes, expire: () => timers.splice(0).forEach((fn) => fn()) }
-  }
+describe('handsFreeAction', () => {
+  it('gives Control the words, the wake word off, and stops it on a cut-in', () => {
+    expect(handsFreeAction({ type: 'transcript', text: 'Control, run the tests.', trigger: 'control', interrupted: false }))
+      .toEqual({ kind: 'words', text: 'run the tests.', interrupted: false })
+    expect(handsFreeAction({ type: 'transcript', text: 'Control.', trigger: 'control', interrupted: true }))
+      .toEqual({ kind: 'words', text: '', interrupted: true })
+    expect(handsFreeAction({ type: 'cut-in', msAgo: 312.4 })).toEqual({ kind: 'cut-in', msAgo: 312 })
+    expect(handsFreeAction({ type: 'state', phase: 'listening' })).toBeUndefined()
+  })
+})
 
+describe('HandsFreePresence', () => {
   it('holds Control from the first syllable until the words are handed over', () => {
-    const { p, changes } = presence()
+    const changes: boolean[] = []
+    const p = new HandsFreePresence((s) => changes.push(s))
     p.see('mac', { type: 'state', phase: 'hearing' })
     p.see('mac', { type: 'state', phase: 'sending' })
+    expect(changes).toEqual([true])
     p.see('mac', { type: 'transcript', text: 'Control, go.' })
     p.see('mac', { type: 'state', phase: 'listening' })
-    expect(changes).toEqual([true])
-    p.delivered()
     expect(changes).toEqual([true, false])
   })
 
-  it('lets go at once when nothing was caught, and at the limit if the words never come', () => {
-    const a = presence()
-    a.p.see('mac', { type: 'state', phase: 'hearing' })
-    a.p.see('mac', { type: 'state', phase: 'listening' })
-    expect(a.changes).toEqual([true, false])
-    const b = presence()
-    b.p.see('stream:1', { type: 'state', phase: 'hearing' })
-    b.p.see('stream:1', { type: 'transcript', text: 'words' })
-    b.p.see('stream:1', { type: 'state', phase: 'listening' })
-    b.expire()
-    expect(b.changes).toEqual([true, false])
+  it('lets go when nothing was caught, and holds while any session is talking', () => {
+    const changes: boolean[] = []
+    const p = new HandsFreePresence((s) => changes.push(s))
+    p.see('mac', { type: 'state', phase: 'hearing' })
+    p.see('stream:1', { type: 'state', phase: 'hearing' })
+    p.see('mac', { type: 'state', phase: 'listening' })
+    expect(changes).toEqual([true])
+    p.see('stream:1', { type: 'session-ended', why: 'lost' })
+    expect(changes).toEqual([true, false])
   })
 })

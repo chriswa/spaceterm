@@ -508,12 +508,19 @@ Spaceterm is its client (`hands-free.ts`):
 - **In the app**, Voice Operator's iOS SDK owns the microphone and Control's
   voice (`NativeMicrophone.swift` is now a thin bridge to it) and streams the
   microphone to Voice Operator; the page carries its lines to the server
-  (`hands-free-stream-*`), which passes them through unread
+  (`hands-free-stream-*`), which passes them through
   (`src/server/voice-operator-hands-free.ts`). A dropped connection resumes
   where it left off: the SDK keeps a minute of audio until Voice Operator has
   it. The hold (`held-microphone.ts`) is the switch, as before; the stream
   follows it. In a browser there is no SDK, so the hold is only a held
   microphone for AirPods.
+- **Control hears it from the server**, which reads every message from Voice
+  Operator before any page does, the phone's and the Mac's alike: it gives
+  Control your words, "Control" taken off, moving Control to the device you
+  said them on, and stops Control when you cut it off. Pages only show
+  hands-free and play its sounds, so your words reach Control once however
+  many windows are open. The server registers "control" with Voice Operator
+  only while a phone or desktop client is connected.
 - **What it shows** comes from Voice Operator's messages, animated here, and
   all of it on the hands-free button, the same on the phone and the Mac
   (the microphone button only turns orange while your words are taken
@@ -577,6 +584,9 @@ the page holds no microphone. What differs:
   needs a headset.
 - **A Fn dictation** has the microphone to itself: hands-free stands aside
   until it ends.
+- **Every window shows it, one plays it**: with a second client open, both
+  hands-free buttons follow Voice Operator, but only one window plays its
+  cues and the deciding beep.
 - **No haptics**: the cues play in the page.
 
 ## Notifications

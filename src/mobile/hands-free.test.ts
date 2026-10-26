@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { cleanHandsFreeText, endSilence, installHandsFree, phoneHandsFreeLink, setHandsFree, useHandsFree, type HandsFreeDeps } from './hands-free'
+import { endSilence, installHandsFree, phoneHandsFreeLink, setHandsFree, useHandsFree, type HandsFreeDeps } from './hands-free'
 import type { NativeHandsFreeMessage } from './native-microphone'
 
 /**
@@ -7,18 +7,16 @@ import type { NativeHandsFreeMessage } from './native-microphone'
  * plays Voice Operator's side as its messages (its DESIGN.md, "Hands-free").
  */
 function harness() {
-  const listeners = new Set<(event: Record<string, unknown>) => void>()
+  const listeners = new Set<(event: Record<string, unknown>, audio: boolean) => void>()
   const calls: string[] = []
-  const said: Array<{ text: string; interrupted?: boolean }> = []
   const tones: string[] = []
   const cues: string[] = []
   const haptics: string[] = []
   const pending: boolean[] = []
-  const cutIns: number[] = []
+  let cutIns = 0
   let now = 1_000_000
   const tickers = new Set<() => void>()
   const deps: HandsFreeDeps = {
-    api: { handsFree: { say: (text, interrupted) => { said.push({ text, interrupted }) } } },
     link: {
       start: () => calls.push('start'),
       stop: () => calls.push('stop'),
@@ -29,17 +27,17 @@ function harness() {
     playCue: (cue) => { cues.push(cue) },
     pendingTone: (on) => { pending.push(on) },
     haptic: (pattern) => { haptics.push(pattern) },
-    interruptControl: (ms) => { cutIns.push(ms) },
+    noteCutIn: () => { cutIns++ },
     record: () => {},
     now: () => now,
     every: (_ms, fn) => { tickers.add(fn); return () => tickers.delete(fn) },
   }
   const uninstall = installHandsFree(deps)
-  const vo = (event: Record<string, unknown>) => { for (const fn of listeners) fn(event) }
+  const vo = (event: Record<string, unknown>, audio = true) => { for (const fn of listeners) fn(event, audio) }
   const state = (phase: string, extra: Record<string, unknown> = {}) =>
     vo({ type: 'state', phase, conversation: false, closesAt: null, checking: false, pending: false, ...extra })
   return {
-    uninstall, vo, state, calls, said, tones, cues, haptics, pending, cutIns,
+    uninstall, vo, state, calls, tones, cues, haptics, pending, cutIns: () => cutIns,
     elapse: (ms: number) => { now += ms; for (const fn of tickers) fn() },
     now: () => now,
   }
@@ -112,28 +110,32 @@ describe('hands-free, following Voice Operator', () => {
     expect(endSilence()).toBeNull()
   })
 
-  it('hands Control the words, the wake word taken off', () => {
+  it('leaves Control to the server: its words are not handed on here, and a cut-in only explains its silence', () => {
     h = harness()
     h.vo({ type: 'transcript', text: 'Control, what is Kevin doing?', trigger: 'control', interrupted: false, reason: 'finished', shutdown: false })
-    h.vo({ type: 'transcript', text: 'Yes, and tell Evan.', trigger: null, interrupted: true, reason: 'silence', shutdown: false })
-    h.vo({ type: 'transcript', text: '', trigger: 'control', interrupted: true, reason: 'lost', shutdown: false })
-    expect(h.said).toEqual([
-      { text: 'what is Kevin doing?', interrupted: false },
-      { text: 'Yes, and tell Evan.', interrupted: true },
-      { text: '', interrupted: true },
-    ])
-  })
-
-  it('passes "Control, shutdown" on as words, which the server sends Control away on', () => {
-    h = harness()
-    h.vo({ type: 'transcript', text: 'Control, shut down.', trigger: 'control', interrupted: false, reason: 'finished', shutdown: true })
-    expect(h.said).toEqual([{ text: 'shut down.', interrupted: false }])
-  })
-
-  it('stops Control as of when the user began, when Voice Operator says they cut it off', () => {
-    h = harness()
     h.vo({ type: 'cut-in', msAgo: 2950, at: 0 })
-    expect(h.cutIns).toEqual([2950])
+    expect(h.cutIns()).toBe(1)
+    expect(h.calls).toEqual([])
+  })
+
+  it('shows everything but plays nothing in a window that is not the one playing its sounds', () => {
+    h = harness()
+    h.vo({ type: 'session', source: 'mac' }, false)
+    h.vo({ type: 'state', phase: 'listening', conversation: true, closesAt: null, checking: false, pending: true }, false)
+    h.vo({ type: 'cue', name: 'dictationStart', haptic: 'tap' }, false)
+    h.vo({ type: 'session-ended', why: 'incognito' }, false)
+    expect(h.pending).toEqual([])
+    expect(h.tones).toEqual([])
+    expect(h.haptics).toEqual([])
+    expect(h.cues).toEqual([])
+    expect(useHandsFree.getState().on).toBe(false)
+  })
+
+  it('shows hands-free on when it was turned on in another window', () => {
+    h = harness()
+    h.vo({ type: 'session', source: 'mac' }, false)
+    h.state('listening')
+    expect(useHandsFree.getState()).toMatchObject({ on: true, phase: 'listening' })
   })
 
   it('goes off when the session ends, and says so unless it was turned off', () => {
@@ -176,20 +178,6 @@ describe('hands-free, following Voice Operator', () => {
     expect(useHandsFree.getState().on).toBe(false)
     expect(h.calls).toEqual(['start', 'stop'])
     expect(h.cues).toEqual([])
-  })
-})
-
-describe('cleanHandsFreeText', () => {
-  it('takes the wake word off the front', () => {
-    expect(cleanHandsFreeText('Control, what is Kevin doing?')).toBe('what is Kevin doing?')
-    expect(cleanHandsFreeText('control what is Kevin doing')).toBe('what is Kevin doing')
-    expect(cleanHandsFreeText('Control. Tell Evan to stop.')).toBe('Tell Evan to stop.')
-    expect(cleanHandsFreeText('Computer, lights.', 'computer')).toBe('lights.')
-  })
-
-  it('leaves "control" alone anywhere but first, and is empty when nothing else was said', () => {
-    expect(cleanHandsFreeText('Take control of the build.')).toBe('Take control of the build.')
-    expect(cleanHandsFreeText('Control.')).toBe('')
   })
 })
 

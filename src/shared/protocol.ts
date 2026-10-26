@@ -414,7 +414,7 @@ export interface DictationStartMessage {
   /**
    * The words go to Control. The server then holds Control from the start
    * until the client hands it the words, or says there were none, with a
-   * `receptionist-say` or `receptionist-hands-free`.
+   * `receptionist-say`.
    */
   forControl?: boolean
 }
@@ -485,21 +485,6 @@ export interface HandsFreeStreamLineMessage {
 
 export interface HandsFreeStreamCloseMessage {
   type: 'hands-free-stream-close'
-}
-
-/**
- * Words dictated hands-free, after the wake word: for Control. Takes Control to this device, as speaking to it does. Sent
- * with no `text` when nothing was caught for Control, so that it stops
- * waiting for words and carries on with whatever the dictation stopped.
- */
-export interface ReceptionistHandsFreeMessage {
-  type: 'receptionist-hands-free'
-  text: string
-  /**
-   * The wake word cut off Control's reply. With no `text`, Control says it had
-   * not finished and carries on, rather than falling silent mid-answer.
-   */
-  interrupted?: boolean
 }
 
 /**
@@ -1337,7 +1322,6 @@ export type ClientMessage =
   | HandsFreeStreamOpenMessage
   | HandsFreeStreamLineMessage
   | HandsFreeStreamCloseMessage
-  | ReceptionistHandsFreeMessage
   | AgentSearchMessage
   | AgentMetaAvailabilityQueryMessage
   | AgentMetaToggleMessage
@@ -2183,13 +2167,16 @@ export interface DictationResultMessage {
 /**
  * What Voice Operator said about hands-free on the Mac's microphone (its
  * DESIGN.md, "Hands-free"): `state`, `gauge`, `cue`, `cut-in`, `transcript`,
- * `session`, `session-ended`, as it sent them. Broadcast; the desktop's
- * hands-free button follows it.
+ * `session`, `session-ended`, as it sent them. Broadcast to the desktop
+ * clients, whose hands-free buttons follow it. The server has already acted
+ * on it: the words went to Control, and a cut-in stopped Control.
  */
 export interface HandsFreeEventMessage {
   type: 'hands-free-event'
   source: 'mac'
   event: Record<string, unknown>
+  /** This client plays its sounds — cues and the deciding beep. Exactly one desktop client is sent `true`. */
+  audio: boolean
 }
 
 /** A line from Voice Operator for this phone's stream, or word that the stream closed. */

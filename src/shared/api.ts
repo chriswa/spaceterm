@@ -299,16 +299,13 @@ export interface DictationApi {
  * relayed by the server. See `src/mobile/hands-free.ts`.
  */
 export interface HandsFreeApi {
-  /**
-   * Words said after the wake word: to Control, which comes to this device.
-   * `interrupted`: the wake word cut Control's reply off — with no words, it
-   * then says it had not finished and carries on.
-   */
-  say(text: string, interrupted?: boolean): void
   /** Hands-free on the Mac's microphone, on or off. */
   setMac(on: boolean): void
-  /** What Voice Operator says about hands-free on the Mac, as it said it. */
-  onMacEvent(callback: (event: Record<string, unknown>) => void): () => void
+  /**
+   * What Voice Operator says about hands-free on the Mac, as it said it, and
+   * whether this client plays its sounds (`audio`).
+   */
+  onMacEvent(callback: (event: Record<string, unknown>, audio: boolean) => void): () => void
   /** This phone's stream to Voice Operator: open, lines out, close; lines back through `onStream`. */
   openStream(): void
   streamLine(line: string): void

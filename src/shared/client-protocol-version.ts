@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 25
+export const CLIENT_PROTOCOL_VERSION = 26
 
 /**
  * Oldest client protocol this build still serves.
@@ -117,5 +117,10 @@ export const CLIENT_PROTOCOL_VERSION = 25
  * dictation (`dictation-resume`), so a dictation its dropped connection
  * interrupted is lost, as before — now ~30 s after the drop rather than at
  * once. It loses nothing else.
+ *
+ * v25 hands hands-free's words to Control itself (`receptionist-hands-free`),
+ * which this build ignores, as the server does that now; and on the Mac every
+ * window plays hands-free's sounds, as it is never told which one should. It
+ * loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

@@ -201,9 +201,8 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       onConnect: (listener) => client.onLifecycle('connect', listener)
     },
     handsFree: {
-      say: (text, interrupted) => client.receptionistHandsFree(text, interrupted),
       setMac: (on) => client.handsFreeMac(on),
-      onMacEvent: (cb) => on('hands-free-event', (m) => cb(m.event)),
+      onMacEvent: (cb) => on('hands-free-event', (m) => cb(m.event, m.audio)),
       openStream: () => client.handsFreeStreamOpen(),
       streamLine: (line) => client.handsFreeStreamLine(line),
       closeStream: () => client.handsFreeStreamClose(),

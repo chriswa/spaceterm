@@ -25,17 +25,18 @@ import { recordMobileEvent } from './mobile-events'
  *   quiet that may end a dictation (HandsFreeButton.tsx), all from Voice
  *   Operator's messages, animated here between its data points;
  * - its cues and haptics, as this device plays them, and the "deciding" beep
- *   while it says speech is undecided;
- * - and Control: the words it hands back, the wake word taken off, go to
- *   Control (`say`), and when it says the user cut Control off, Control is
- *   stopped as of when they began.
+ *   while it says speech is undecided — on the Mac, in the one window the
+ *   server says plays them.
+ *
+ * Control is not this module's: the server reads Voice Operator's messages
+ * before they get here, gives Control the words it hands back, and stops
+ * Control when it says the user cut it off — once, however many windows are
+ * open (src/server/voice-operator-hands-free.ts).
  *
  * The record of what was heard and decided is Voice Operator's now
  * (`hands-free/decisions.jsonl` in its Application Support), as are the
  * models and the tuning.
  */
-
-export const WAKE_WORD = 'control'
 
 export type HandsFreePhase = 'off' | 'listening' | 'hearing' | 'sending'
 
@@ -78,52 +79,38 @@ export function endSilence(now = Date.now()): number | null {
   return Math.max(0, Math.min(1, (now - quiet.since) / quiet.patienceMs))
 }
 
-/**
- * What was dictated, as Control should get it: the wake word off the front,
- * punctuation and case around it ignored. Empty when nothing else was said.
- */
-export function cleanHandsFreeText(text: string, trigger: string = WAKE_WORD): string {
-  const escaped = trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return text.trim().replace(new RegExp(`^${escaped}\\b[\\s,.!?:;…—–-]*`, 'i'), '').trim()
-}
-
 /** Where Voice Operator's hands-free is switched on and off, and where what it says comes from. */
 export interface HandsFreeLink {
   start(): void
   stop(): void
-  /** Each of Voice Operator's messages about this device's session, as it sent it. */
-  onEvent(fn: (event: Record<string, unknown>) => void): () => void
+  /** Each of Voice Operator's messages about this device's session, as it sent it, and whether this client plays its sounds. */
+  onEvent(fn: (event: Record<string, unknown>, audio: boolean) => void): () => void
 }
 
 /** Everything outside this module it touches, so a test can supply its own. */
 export interface HandsFreeDeps {
-  api: { handsFree: Pick<HandsFreeApi, 'say'> }
   link: HandsFreeLink
   log(message: string): void
   handsFreeCue(cue: HandsFreeCue): void
   playCue(cue: Cue): void
   pendingTone(on: boolean): void
   haptic(pattern: HapticPattern): void
-  /** Stop Control mid-reply: the user cut in, `cutInMsAgo` ago. */
-  interruptControl(cutInMsAgo: number): void
+  /** The user cut Control off (the server has stopped it): its going quiet is no failure. */
+  noteCutIn(): void
   record(kind: string, detail?: Record<string, unknown>): void
   now(): number
   /** Run `fn` every `ms` until the returned function is called. */
   every(ms: number, fn: () => void): () => void
 }
 
-export const realHandsFreeDeps = (api: HandsFreeDeps['api'], link: HandsFreeLink): HandsFreeDeps => ({
-  api,
+export const realHandsFreeDeps = (link: HandsFreeLink): HandsFreeDeps => ({
   link,
   log: (message) => window.api?.log(`[hands-free] ${message}`),
   handsFreeCue: playHandsFreeCue,
   playCue,
   pendingTone: playPendingTone,
   haptic: nativeHaptic,
-  interruptControl: (cutInMsAgo) => {
-    noteUserInterrupted()
-    window.api.receptionist.stop(cutInMsAgo)
-  },
+  noteCutIn: () => noteUserInterrupted(),
   record: (kind, detail) => recordMobileEvent(kind, detail),
   now: () => Date.now(),
   every: (ms, fn) => {
@@ -175,11 +162,13 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
   }
   const stopTicking = deps.every(250, tickSeconds)
 
-  const offEvents = deps.link.onEvent((event) => {
+  const offEvents = deps.link.onEvent((event, audio) => {
     switch (event.type) {
       case 'session':
         log(`on (${String(event.source ?? 'mac')})`)
         record('hands-free-session', { on: true, source: event.source ?? null })
+        // On the Mac, turned on from another window: this one shows it too.
+        if (!useHandsFree.getState().on) useHandsFree.setState({ on: true })
         break
       case 'session-ended': {
         const why = String(event.why ?? 'off')
@@ -199,7 +188,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
           useHandsFree.setState({ on: false })
           deps.link.stop()
           // Said by voice, it has its own cue already; on another device is the user's doing.
-          if (why !== 'shutdown' && why !== 'replaced') deps.playCue('error')
+          if (audio && why !== 'shutdown' && why !== 'replaced') deps.playCue('error')
         }
         break
       }
@@ -218,7 +207,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
           ...(phase === 'listening' || phase === 'off' || fresh ? { turn: null, sampling: null, mini: null } : {}),
         })
         tickSeconds()
-        setPending(event.pending === true)
+        if (audio) setPending(event.pending === true)
         break
       }
       case 'gauge': {
@@ -239,6 +228,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
         break
       }
       case 'cue': {
+        if (!audio) break
         const name = String(event.name)
         // Decided: the deciding beep ends before the cue, as the cue says what was decided.
         if (name !== 'ready') setPending(false)
@@ -251,17 +241,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
         const msAgo = typeof event.msAgo === 'number' ? Math.round(event.msAgo) : 0
         log(`cut Control off as of ${msAgo}ms ago, when they began`)
         record('hands-free-interrupt', { cutInMsAgo: msAgo })
-        deps.interruptControl(msAgo)
-        break
-      }
-      case 'transcript': {
-        const trigger = typeof event.trigger === 'string' ? event.trigger : WAKE_WORD
-        const text = cleanHandsFreeText(String(event.text ?? ''), trigger)
-        const interrupted = event.interrupted === true
-        log(`${text.length} chars to Control (ended on ${String(event.reason)}${interrupted ? ', having cut it off' : ''}${event.shutdown === true ? ', sending it away' : ''})`)
-        record('hands-free-transcript', { chars: text.length, interrupted, reason: event.reason ?? null, shutdown: event.shutdown === true })
-        // Control waits for this dictation's words, so even none are handed over.
-        deps.api.handsFree.say(text, interrupted)
+        deps.noteCutIn()
         break
       }
       default:
@@ -314,7 +294,7 @@ export function phoneHandsFreeLink(
 ): HandsFreeLink & { dispose(): void } {
   let on = false
   let open = false
-  const listeners = new Set<(event: Record<string, unknown>) => void>()
+  const listeners = new Set<(event: Record<string, unknown>, audio: boolean) => void>()
   const openTransport = () => {
     if (!on) return
     open = true
@@ -325,7 +305,7 @@ export function phoneHandsFreeLink(
     if (message.kind === 'line') {
       if (open) api.streamLine(message.line)
     } else {
-      for (const fn of listeners) fn(message.event)
+      for (const fn of listeners) fn(message.event, true)
     }
   })
   let retry: ReturnType<typeof setTimeout> | undefined

@@ -7,10 +7,10 @@ import { mobileEvents } from '../../../../mobile/mobile-events'
  * Hands-free on the Mac: Voice Operator listening on the Mac's own microphone
  * for "Control", switched on and off from the toolbar's hands-free button,
  * beside Control. Voice Operator does the listening and deciding; the server
- * holds Spaceterm's connection to it (src/server/voice-operator-hands-free.ts)
- * and relays what it says, and this follows it as the phone does
- * (src/mobile/hands-free.ts) — the button's gauges, the cues, and the words
- * for Control.
+ * holds Spaceterm's connection to it (src/server/voice-operator-hands-free.ts),
+ * gives Control the words, and relays what it says to every window, which
+ * follows it as the phone does (src/mobile/hands-free.ts): the button's
+ * gauges, and the cues in the one window the server picks to play them.
  *
  * The record of what it heard is Voice Operator's; what is recorded here goes
  * to `~/.spaceterm/mobile-events.jsonl` beside the phone's, under the client's
@@ -34,7 +34,7 @@ export function handsFreeBlocker(macOSVersion: string | null): string | null {
 export function installDesktopHandsFree(client: Pick<ServerClient, 'mobileEvents' | 'onLifecycle'>): () => void {
   mobileEvents.setSender((events) => client.mobileEvents(events))
   const offConnect = client.onLifecycle('connect', () => mobileEvents.flush())
-  const offHandsFree = installHandsFree(realHandsFreeDeps(window.api, macHandsFreeLink(window.api.handsFree)))
+  const offHandsFree = installHandsFree(realHandsFreeDeps(macHandsFreeLink(window.api.handsFree)))
   // On across a server restart (which reloads this page) and the client relaunching.
   const offRemember = useHandsFree.subscribe((state, prev) => {
     if (state.on !== prev.on) rememberHandsFree(state.on, 'desktop')

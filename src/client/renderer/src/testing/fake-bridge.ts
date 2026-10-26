@@ -186,7 +186,7 @@ export class FakeBridge implements Api {
   private readonly receptionistReplaying = new Set<(playing: { of: number; part: number } | null, refused?: string) => void>()
   private readonly receptionistSpeaking = new Set<(speaking: { of: number; parts: number[] } | null) => void>()
   private readonly transcriptAppended = new Set<(entries: ControlTranscriptEntry[]) => void>()
-  private readonly handsFreeMac = new Set<(event: Record<string, unknown>) => void>()
+  private readonly handsFreeMac = new Set<(event: Record<string, unknown>, audio: boolean) => void>()
   private readonly handsFreeStream = new Set<(message: { kind: 'line'; line: string } | { kind: 'closed' }) => void>()
   private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
   /** Mod envelope listeners, keyed by the modId they asked for. */
@@ -296,7 +296,7 @@ export class FakeBridge implements Api {
       for (const fn of this.receptionistReplaying) fn(playing, refused)
     },
     transcriptAppended: (entries: ControlTranscriptEntry[]): void => { for (const fn of this.transcriptAppended) fn(entries) },
-    handsFreeMacEvent: (event: Record<string, unknown>): void => { for (const fn of this.handsFreeMac) fn(event) },
+    handsFreeMacEvent: (event: Record<string, unknown>, audio = true): void => { for (const fn of this.handsFreeMac) fn(event, audio) },
     handsFreeStream: (message: { kind: 'line'; line: string } | { kind: 'closed' }): void => { for (const fn of this.handsFreeStream) fn(message) },
     systemMetrics: (sample: SystemMetricsSample): void => {
       for (const fn of this.systemMetrics) fn(sample)
@@ -452,7 +452,6 @@ export class FakeBridge implements Api {
   }
 
   readonly handsFree: HandsFreeApi = {
-    say: (text, interrupted) => this.record('handsFree.say', text, interrupted),
     setMac: (on) => this.record('handsFree.setMac', on),
     onMacEvent: (cb) => subscribe(this.handsFreeMac, cb),
     openStream: () => this.record('handsFree.openStream'),
