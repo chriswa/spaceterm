@@ -516,7 +516,8 @@ const RESUME_TRACES = {
   'read-to': 'Carried on: the reading aloud is over',
 } as const
 /** Told with the next message when an answer was aborted part-way, its message kept in the session. */
-const ABORTED_MID_ANSWER = 'You were stopped part-way through your last answer, because the user started talking: none of it was said, and none of its actions were done.'
+const ABORTED_MID_ANSWER = 'You were stopped part-way through answering the message just before this one, because the user started talking: none of that answer was said, and none of its actions were done. ' +
+  'What you said before that message is not affected.'
 
 /**
  * The question an agent is actually given. Unframed, an agent answering a bare

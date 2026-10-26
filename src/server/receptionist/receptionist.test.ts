@@ -1201,7 +1201,7 @@ describe('Receptionist', () => {
       replies: [
         () => new Promise<string>(() => {}),
         (turn) => {
-          expect(turn.prompt).toContain('You were stopped part-way through your last answer')
+          expect(turn.prompt).toContain('You were stopped part-way through answering the message just before this one')
           expect(turn.prompt).toContain('nothing they said was for you. Carry on from where you stopped.')
           // Its words are in the session already, with the aborted answer: not said again.
           expect(turn.prompt).not.toContain('THE USER SAYS')
@@ -1225,7 +1225,7 @@ describe('Receptionist', () => {
       replies: [
         () => new Promise<string>(() => {}),
         (turn) => {
-          expect(turn.prompt).toContain('You were stopped part-way through your last answer')
+          expect(turn.prompt).toContain('You were stopped part-way through answering the message just before this one')
           expect(turn.prompt).not.toContain('Carry on from where you stopped')
           expect(turn.prompt).toContain('THE USER SAYS: no, Sally')
           return reply([{ from: 'control', text: 'Sally is on the login page.' }])
