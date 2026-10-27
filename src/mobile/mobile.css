@@ -921,7 +921,7 @@ textarea, input, [contenteditable="true"], .cm-content {
 .control-transcript--screen .control-transcript__input { font-size: 16px; }
 :root[data-keyboard="up"] .control-transcript--screen { height: var(--m-vv-height, 100dvh); }
 .control-transcript--screen .control-transcript__composer { padding: 8px 12px; }
-.control-transcript--screen .control-transcript__controls { padding: 6px 12px 8px; }
+.control-transcript--screen .control-transcript__controls { padding: 6px 12px 8px; gap: 8px; }
 
 /* ─── Notifications, on the rocket (RocketButton.tsx) ─── */
 

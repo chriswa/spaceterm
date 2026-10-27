@@ -10,6 +10,9 @@
  * how much they matter. When the user asks about something in particular,
  * Control describes it instead, and Jev finds every item about it, if any is.
  *
+ * Held (the transcript's Hold backlog), nothing comes up on its own at a
+ * pause; items still go on, and the user can still ask for them.
+ *
  * Kept on disk rather than in Control's session, which is compacted and
  * replaced: what Control set aside has to outlast what Control remembers.
  */
@@ -36,6 +39,12 @@ export interface BacklogItem {
   agents?: NodeId[]
 }
 
+/** What clients are told of the backlog, for the transcript's badge and its Hold backlog toggle. */
+export interface BacklogState {
+  count: number
+  held: boolean
+}
+
 export class Backlog {
   private items: BacklogItem[] = []
   /**
@@ -44,20 +53,36 @@ export class Backlog {
    * them: they are off the backlog only once a reply brings them up.
    */
   private out: BacklogItem[] = []
+  private isHeld = false
   private readonly store: NameRegistryStore
-  /** Told the number of items whenever it changes, for the badge in Control's transcript. */
-  private readonly onSize: (size: number) => void
-  private lastSize = 0
+  /** Told the number of items and whether the backlog is held whenever either changes. */
+  private readonly onChange: (state: BacklogState) => void
+  private last: BacklogState
 
-  constructor(deps: { store?: NameRegistryStore; onSize?: (size: number) => void } = {}) {
+  constructor(deps: { store?: NameRegistryStore; onChange?: (state: BacklogState) => void } = {}) {
     this.store = deps.store ?? fileStore(BACKLOG_FILE)
-    this.onSize = deps.onSize ?? (() => undefined)
+    this.onChange = deps.onChange ?? (() => undefined)
     this.load()
-    this.lastSize = this.items.length
+    this.last = this.state
   }
 
   get size(): number {
     return this.items.length
+  }
+
+  /** Whether items are kept from coming up on their own: see the top of this file. */
+  get held(): boolean {
+    return this.isHeld
+  }
+
+  get state(): BacklogState {
+    return { count: this.items.length, held: this.isHeld }
+  }
+
+  hold(held: boolean): void {
+    if (held === this.isHeld) return
+    this.isHeld = held
+    this.save()
   }
 
   /** Every item, oldest first. */
@@ -103,7 +128,8 @@ export class Backlog {
     const raw = this.store.load()
     if (!raw) return
     try {
-      const parsed = JSON.parse(raw) as { items?: unknown; out?: unknown }
+      const parsed = JSON.parse(raw) as { items?: unknown; out?: unknown; held?: unknown }
+      this.isHeld = parsed.held === true
       const valid = (list: unknown): BacklogItem[] => (Array.isArray(list) ? list : []).filter((item): item is BacklogItem =>
         typeof item?.text === 'string' && typeof item?.addedAt === 'number' &&
         (item.agents === undefined || (Array.isArray(item.agents) && item.agents.every((id: unknown) => typeof id === 'string'))))
@@ -116,12 +142,13 @@ export class Backlog {
     }
   }
 
-  /** Every change goes through here, so it is also where a change in size is announced. */
+  /** Every change goes through here, so it is also where a change in size or holding is announced. */
   private save(): void {
-    this.store.save(JSON.stringify({ items: this.items, ...(this.out.length ? { out: this.out } : {}) }))
-    if (this.items.length === this.lastSize) return
-    this.lastSize = this.items.length
-    this.onSize(this.lastSize)
+    this.store.save(JSON.stringify({ items: this.items, ...(this.out.length ? { out: this.out } : {}), ...(this.isHeld ? { held: true } : {}) }))
+    const state = this.state
+    if (state.count === this.last.count && state.held === this.last.held) return
+    this.last = state
+    this.onChange(state)
   }
 }
 

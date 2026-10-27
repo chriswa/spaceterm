@@ -18,12 +18,12 @@ describe('backlogBadgeText', () => {
 
 describe('ControlBacklogBadge', () => {
   it('follows the count as the server sends it', () => {
-    act(() => useReceptionistStore.getState().setBacklog(0))
+    act(() => useReceptionistStore.getState().setBacklog({ count: 0, held: false }))
     render(<ControlBacklogBadge />)
     expect(screen.queryByRole('status')).toBeNull()
-    act(() => useReceptionistStore.getState().setBacklog(2))
+    act(() => useReceptionistStore.getState().setBacklog({ count: 2, held: false }))
     expect(screen.getByRole('status').textContent).toBe('2 backlog items')
-    act(() => useReceptionistStore.getState().setBacklog(0))
+    act(() => useReceptionistStore.getState().setBacklog({ count: 0, held: false }))
     expect(screen.queryByRole('status')).toBeNull()
   })
 })

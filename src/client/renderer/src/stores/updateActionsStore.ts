@@ -14,7 +14,7 @@ export type UpdateKind = 'restart' | 'install' | 'reload'
 
 /**
  * Each of them takes this client away until it comes back by itself, and the
- * page is blocked meanwhile (UpdateBlocker.tsx). Control goes Away first, so
+ * page is blocked meanwhile (UpdateBlocker.tsx). Control goes Off first, so
  * nothing is said to a device that has stopped listening. A no-op on the
  * server when this device does not hold it.
  */

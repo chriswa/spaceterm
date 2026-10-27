@@ -30,9 +30,11 @@ export interface ReceptionistState {
   unread: { count: number; first?: number }
   /** How many items are on Control's backlog. */
   backlog: number
+  /** Control's backlog is held: nothing on it comes up on its own (Hold backlog). */
+  backlogHeld: boolean
   setStatus: (status: ReceptionistStatus) => void
   setUnread: (unread: { count: number; first?: number }) => void
-  setBacklog: (backlog: number) => void
+  setBacklog: (backlog: { count: number; held: boolean }) => void
   /**
    * `deviceId` is this client's own; `muted`, the devices that muted Control,
    * absent from a server too old to say — then only the holder's mute is known.
@@ -53,9 +55,10 @@ export const useReceptionistStore = create<ReceptionistState>((set) => ({
   speaker: null,
   unread: { count: 0 },
   backlog: 0,
+  backlogHeld: false,
   setStatus: ({ phase, message, speaker }) => set({ phase, error: message ?? null, speaker: speaker ?? null }),
   setUnread: (unread) => set({ unread }),
-  setBacklog: (backlog) => set({ backlog }),
+  setBacklog: ({ count, held }) => set({ backlog: count, backlogHeld: held }),
   setHolder: (holder, deviceId, muted) => set({
     holder: holder && { label: holder.label, mine: holder.deviceId === deviceId, muted: holder.muted === true },
     mutedHere: muted ? muted.includes(deviceId) : holder?.deviceId === deviceId && holder.muted === true,

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { asNodeId } from '../../shared/ids'
 import {
   ageWords, Backlog, cacheNote, COLD_SOON_MS, RELEVANT_THRESHOLD, jevBacklogJudge, jevBacklogRequest, MAX_BACKLOG, MAX_ITEM_CHARS, pickNext, readBacklogJudgement,
-  type BacklogContext,
+  type BacklogContext, type BacklogState,
 } from './backlog'
 
 function memoryStore(initial?: string) {
@@ -34,13 +34,26 @@ describe('Backlog', () => {
     const store = memoryStore()
     new Backlog({ store }).add('already there', 1)
     const sizes: number[] = []
-    const backlog = new Backlog({ store, onSize: (size) => sizes.push(size) })
+    const backlog = new Backlog({ store, onChange: ({ count }) => sizes.push(count) })
     backlog.add('second', 2)
     const taken = backlog.take([0, 1])
     backlog.settle(taken.slice(0, 1))
     backlog.restore(taken.slice(1))
     backlog.take([0])
     expect(sizes).toEqual([2, 0, 1, 0])
+  })
+
+  it('announces being held or let go, and remembers it across a restart', () => {
+    const store = memoryStore()
+    const states: BacklogState[] = []
+    const backlog = new Backlog({ store, onChange: (state) => states.push(state) })
+    backlog.hold(true)
+    backlog.hold(true)
+    backlog.add('Leon finished', 1)
+    expect(new Backlog({ store }).held).toBe(true)
+    backlog.hold(false)
+    expect(states).toEqual([{ count: 0, held: true }, { count: 1, held: true }, { count: 1, held: false }])
+    expect(new Backlog({ store }).held).toBe(false)
   })
 
   it('survives a restart', () => {

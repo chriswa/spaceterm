@@ -4236,18 +4236,7 @@ html, body, #root {
 }
 .control-transcript__button:hover { border-color: var(--ct-accent); }
 
-/* A segmented button, one option chosen (ChoiceGroup.tsx), with its caption if it has one. */
-/* The caption reads as a label, not a fourth option: uppercase, unboxed, set apart from the buttons by more room than they have between them. */
-.choice-field { display: inline-flex; align-items: center; gap: 8px; }
-.choice-field__caption {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ct-dim);
-  user-select: none;
-  -webkit-user-select: none;
-}
+/* A segmented button, one option chosen (ChoiceGroup.tsx). */
 .choice-group {
   display: inline-flex;
   border: 1px solid var(--ct-border);
@@ -4268,6 +4257,21 @@ html, body, #root {
 .choice-group__option:hover { background: color-mix(in srgb, var(--ct-text) 25%, transparent); }
 .choice-group__option--chosen { background: var(--ct-accent); color: #fff; cursor: default; }
 .choice-group__option--chosen:hover { background: var(--ct-accent); color: #fff; }
+
+/* A setting's on/off button (ToggleButton.tsx), drawn as a one-option ChoiceGroup: grey off, the accent on. */
+.toggle-button {
+  padding: 5px 10px;
+  border: 1px solid var(--ct-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ct-text) 15%, transparent);
+  color: var(--ct-text);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.toggle-button:hover { background: color-mix(in srgb, var(--ct-text) 25%, transparent); }
+.toggle-button--on, .toggle-button--on:hover { background: var(--ct-accent); color: #fff; }
 
 .control-transcript__meta { font-size: 11px; color: var(--ct-dim); padding: 0 4px; }
 .control-transcript__silent { font-size: 12px; font-style: italic; color: var(--ct-dim); }

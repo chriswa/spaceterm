@@ -150,7 +150,7 @@ export interface ReceptionistDeps {
    */
   judgeInterruption(ctx: InterruptionContext): Promise<number>
   /** Things Control set aside to bring up with the user later: see backlog.ts. */
-  backlog: Pick<Backlog, 'size' | 'all' | 'add' | 'take' | 'restore' | 'settle'>
+  backlog: Pick<Backlog, 'size' | 'all' | 'add' | 'take' | 'restore' | 'settle' | 'held' | 'hold'>
   /** The agents being watched for their next stop, kept across server restarts: see watches.ts. */
   watches: Watches
   /** Agents mark_read asked for, waiting on the user's answer, kept across server restarts: see deferred-reads.ts. */
@@ -503,7 +503,7 @@ const STOPPED_FOR_NOTHING = 'The user started talking while you were working on 
 const READ_TO_MID_TURN = 'The user had their unread replies read aloud to them while you were working on your reply, so you stopped. Carry on from where you stopped.'
 /** Told with the next message after "let me turn this off" or "Control, shutdown": see `sentAway`. */
 const SENT_AWAY = 'The user said a fixed phrase that sends you away ("let me turn this off" or "Control, shutdown"), handled without you: someone near them needs their attention, ' +
-  'so they sent you away, as choosing Away does, until they next say "Control". It was not a request for you to act on.'
+  'so they sent you away, as choosing Off does, until they next say "Control". It was not a request for you to act on.'
 /** Told instead when the phrase stopped a turn: see `resumeIfStopped`. */
 const SENT_AWAY_MID_TURN = `${SENT_AWAY} It stopped you; carry on from where you stopped, away.`
 /** What a turn stopped for the user is told as it carries on, by what stopped: see `resumeIfStopped`. */
@@ -1025,6 +1025,22 @@ export class Receptionist {
   /** Replies with words waiting for the user. */
   unread(): { count: number; first?: number } {
     return this.ledger.unread()
+  }
+
+  /**
+   * The transcript's Hold backlog: held, nothing comes up from the backlog on
+   * its own (`maybePull`), though items still go on and the user can still
+   * ask for them. Let go, the quiet Control is in counts as a pause, as it
+   * would after a reply.
+   */
+  holdBacklog(held: boolean): void {
+    if (held === this.deps.backlog.held) return
+    this.deps.backlog.hold(held)
+    this.deps.log({ event: 'backlog-hold', held })
+    this.trace('backlog-wait', held
+      ? 'Backlog held: nothing on it comes up until you let it go.'
+      : 'Backlog let go: what is on it comes up at the next pause.')
+    if (!held) void this.maybePull()
   }
 
   /**
@@ -2398,7 +2414,7 @@ export class Receptionist {
    */
   private async maybePull(): Promise<void> {
     const pause = this.pauses
-    if (!this.deps.backlog.size || !this.quietSince(pause) || this.pauseJudged === pause) return
+    if (this.deps.backlog.held || !this.deps.backlog.size || !this.quietSince(pause) || this.pauseJudged === pause) return
     this.pauseJudged = pause
     const verdict = await decidePause(pauseDialogue(this.deps.record.recent(RECAP_MESSAGES)), (c) => this.deps.judgePause(c))
     serverLog(`[receptionist] backlog pause: ${verdict.reason}` +
@@ -2412,12 +2428,12 @@ export class Receptionist {
     const wait = Math.max(PAUSE_WAIT_MS[verdict.when], INTERRUPTION_QUIET_MS - sinceInterruption)
     this.tracePause(verdict, wait)
     if (wait > 0) await this.deps.sleep(wait)
-    if (!this.quietSince(pause)) return
+    if (!this.quietSince(pause) || this.deps.backlog.held) return
     const pulled = await this.takeFromBacklog(undefined)
     if (!pulled.items.length) return
     // Choosing the item took a moment too.
-    if (!this.quietSince(pause)) {
-      this.putBack(pulled.items, 'the quiet was broken while it was being chosen')
+    if (!this.quietSince(pause) || this.deps.backlog.held) {
+      this.putBack(pulled.items, this.deps.backlog.held ? 'the backlog was held while it was being chosen' : 'the quiet was broken while it was being chosen')
       return
     }
     await this.runTurn(undefined, pulled)

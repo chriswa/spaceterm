@@ -6,7 +6,7 @@ export const LET_ME_TURN_THIS_OFF = ['let', 'me', 'turn', 'this', 'off']
  * when someone in the room needs the user: "let me turn this off", which a
  * bystander hears as the user dealing with their phone, and the older
  * "Control, shutdown". Nothing is shut down. Control lets go of the device, as
- * the Away choice does: it stops speaking, and its replies wait as unread
+ * the Off choice does: it stops speaking, and its replies wait as unread
  * text. The phone closes the conversation window there and then, so nothing
  * more is taken down for Control until the user says "Control" again, which
  * brings it back as speaking to it always does.

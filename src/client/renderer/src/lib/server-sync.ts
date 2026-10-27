@@ -218,7 +218,7 @@ export async function initServerSync(): Promise<void> {
 
   cleanupFns.push(window.api.receptionist.onNotice((text) => showToast(text)))
   cleanupFns.push(window.api.receptionist.onUnread((unread) => useReceptionistStore.getState().setUnread(unread)))
-  cleanupFns.push(window.api.receptionist.onBacklog((count) => useReceptionistStore.getState().setBacklog(count)))
+  cleanupFns.push(window.api.receptionist.onBacklog((backlog) => useReceptionistStore.getState().setBacklog(backlog)))
 
   cleanupFns.push(
     window.api.receptionist.onAgentNames((names) => {

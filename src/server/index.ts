@@ -361,7 +361,7 @@ let forkTitler: ForkTitler
 let receptionist: Receptionist | undefined
 /** Pictures agents show the user in Control's transcript. */
 const controlImages = new ControlImages()
-/** Control's backlog, built with it: its size goes to every client for the transcript's badge. */
+/** Control's backlog, built with it: its size and whether it is held go to every client, for the transcript's badge and toggle. */
 let receptionistBacklog: Backlog | undefined
 /** Who Control's speech is being heard as, while it speaks: see `ReceptionistStatusMessage.speaker`. */
 let receptionistSpeaker: string | undefined
@@ -1253,7 +1253,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
   send(link, receptionistStatus())
   send(link, receptionistHolderMessage())
   send(link, { type: 'receptionist-unread', ...receptionist?.unread() ?? { count: 0 } })
-  send(link, { type: 'receptionist-backlog', count: receptionistBacklog?.size ?? 0 })
+  send(link, { type: 'receptionist-backlog', ...receptionistBacklog?.state ?? { count: 0, held: false } })
   send(link, { type: 'agent-names', names: agentNameMap() })
 
   // Availability is pushed on change, which a client that connected after the
@@ -1944,6 +1944,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       }
       break
     }
+
+    case 'receptionist-hold-backlog':
+      receptionist?.holdBacklog(msg.held)
+      break
 
     case 'receptionist-read':
       // A v14 client's: on screen a second, which is not reading.
@@ -3643,7 +3647,7 @@ async function startServer(): Promise<void> {
     isLive: (nodeId) => stateManager.getNode(nodeId) !== undefined,
     store: fileStore(NAMES_FILE),
   })
-  receptionistBacklog = new Backlog({ onSize: (count) => broadcastToAll({ type: 'receptionist-backlog', count }) })
+  receptionistBacklog = new Backlog({ onChange: (state) => broadcastToAll({ type: 'receptionist-backlog', ...state }) })
   receptionist = new Receptionist({
     askModel: askReceptionistModel,
     agents: receptionistAgents,

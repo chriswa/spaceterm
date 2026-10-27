@@ -899,6 +899,12 @@ export class ServerClient {
     this.fireAndForget({ type: 'receptionist-hold', action })
   }
 
+  /** Whether Control's backlog is held: see `ReceptionistHoldBacklogMessage`. */
+  holdReceptionistBacklog(held: boolean): void {
+    this.log(`[receptionist] backlog ${held ? 'held' : 'let go'} from this client`)
+    this.fireAndForget({ type: 'receptionist-hold-backlog', held })
+  }
+
   /** Where the user stopped taking Control in, clicked in the transcript view: see `ReceptionistMarkMessage`. */
   markReceptionistReply(of: number, part: number, char: number): void {
     this.fireAndForget({ type: 'receptionist-mark', of, part, char })

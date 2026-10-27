@@ -182,7 +182,7 @@ export class FakeBridge implements Api {
   private readonly cameraFollow = new Set<(nodeId: NodeId) => void>()
   private readonly receptionistNotice = new Set<(text: string) => void>()
   private readonly receptionistUnread = new Set<(unread: { count: number; first?: number }) => void>()
-  private readonly receptionistBacklog = new Set<(count: number) => void>()
+  private readonly receptionistBacklog = new Set<(backlog: { count: number; held: boolean }) => void>()
   private readonly receptionistReplaying = new Set<(playing: { of: number; part: number } | null, refused?: string) => void>()
   private readonly receptionistSpeaking = new Set<(speaking: { of: number; parts: number[] } | null) => void>()
   private readonly transcriptAppended = new Set<(entries: ControlTranscriptEntry[]) => void>()
@@ -288,7 +288,7 @@ export class FakeBridge implements Api {
     cameraFollow: (nodeId: NodeId): void => { for (const fn of this.cameraFollow) fn(nodeId) },
     receptionistNotice: (text: string): void => { for (const fn of this.receptionistNotice) fn(text) },
     receptionistUnread: (unread: { count: number; first?: number }): void => { for (const fn of this.receptionistUnread) fn(unread) },
-    receptionistBacklog: (count: number): void => { for (const fn of this.receptionistBacklog) fn(count) },
+    receptionistBacklog: (count: number, held = false): void => { for (const fn of this.receptionistBacklog) fn({ count, held }) },
     receptionistSpeaking: (speaking: { of: number; parts: number[] } | null): void => {
       for (const fn of this.receptionistSpeaking) fn(speaking)
     },
@@ -475,6 +475,7 @@ export class FakeBridge implements Api {
   readonly receptionist: ReceptionistApi = {
     stop: () => this.record('receptionist.stop'),
     hold: (action) => this.record('receptionist.hold', action),
+    holdBacklog: (held) => this.record('receptionist.holdBacklog', held),
     say: (text, how) => this.record('receptionist.say', text, ...(how ? [how] : [])),
     mark: (of, part, char) => this.record('receptionist.mark', of, part, char),
     readAll: () => this.record('receptionist.readAll'),

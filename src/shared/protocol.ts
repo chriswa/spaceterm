@@ -978,6 +978,16 @@ export interface ReceptionistHoldMessage {
 export type ReceptionistHoldAction = 'take' | 'release' | 'mute' | 'unmute' | 'speak-here'
 
 /**
+ * Whether Control's backlog is held: held, nothing on it comes up on its own
+ * at a pause, though the user can still ask for it. Control's, not this
+ * device's. Answered by `receptionist-backlog`.
+ */
+export interface ReceptionistHoldBacklogMessage {
+  type: 'receptionist-hold-backlog'
+  held: boolean
+}
+
+/**
  * Sent by v14 clients when a part had been on screen a second. Ignored: being
  * on screen is not reading, so nothing counts as read without the user saying.
  */
@@ -1404,6 +1414,7 @@ export type ClientMessage =
   | ControlImageMessage
   | ReceptionistStopMessage
   | ReceptionistHoldMessage
+  | ReceptionistHoldBacklogMessage
   | ReceptionistReadMessage
   | ReceptionistMarkMessage
   | ReceptionistReadAllMessage
@@ -1735,11 +1746,14 @@ export interface ReceptionistUnreadMessage {
 
 /**
  * How many items are on Control's backlog (see `backlog.ts`), for the badge
- * at the foot of its transcript. Sent on connect and broadcast on every change.
+ * at the foot of its transcript, and whether it is held (Hold backlog). Sent
+ * on connect and broadcast on every change.
  */
 export interface ReceptionistBacklogMessage {
   type: 'receptionist-backlog'
   count: number
+  /** Absent from a server too old to hold its backlog. */
+  held?: boolean
 }
 
 /**

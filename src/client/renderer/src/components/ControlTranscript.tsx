@@ -3,6 +3,7 @@ import type { ControlTranscriptEntry, ReceptionistHoldAction } from '../../../..
 import { useControlTranscriptStore } from '../stores/controlTranscriptStore'
 import { controlMode, useReceptionistStore, type ControlMode } from '../stores/receptionistStore'
 import { ChoiceGroup } from './ChoiceGroup'
+import { ToggleButton } from './ToggleButton'
 import { ControlHolderBadge } from './ControlHolderBadge'
 import { ControlBacklogBadge } from './ControlBacklogBadge'
 import { ControlImages } from './ControlImages'
@@ -463,44 +464,45 @@ export function holdActions(from: ControlMode, to: ControlMode): ReceptionistHol
   }
 }
 
-/** Named for what the user gets of Control's replies here. */
+/** Named for what the user gets of Control's replies here: none, to read, or to hear. */
 const MODES = [
-  { value: 'released', label: 'Away' },
-  { value: 'text', label: 'Silent' },
-  { value: 'speak', label: 'Aloud' },
-] as const
-
-/** Concise: only the conversation. Detailed: Control's activity between its words too. */
-const SHOWN = [
-  { value: 'chat', label: 'Concise' },
-  { value: 'all', label: 'Detailed' },
+  { value: 'released', label: 'Off' },
+  { value: 'text', label: 'Read' },
+  { value: 'speak', label: 'Hear' },
 ] as const
 
 /**
- * The foot of the transcript, under the box to type in: first the choice of
- * whether Control is here, and if so whether it speaks or writes; then
- * whether Control's activity is shown — news as it arrives, what goes on and
- * off its backlog, which agents it watches, and replies never spoken — or
- * only the conversation. Only the first is captioned; the second reads
- * without one.
+ * The foot of the transcript, under the box to type in, kept short enough
+ * for one row on a phone: whether Control is here, and if so whether it
+ * writes or speaks; Verbose, whether Control's activity is shown — news as it
+ * arrives, what goes on and off its backlog, which agents it watches, and
+ * replies never spoken — or only the conversation, for this device; and Hold
+ * backlog, whether Control keeps its backlog to itself until asked, for
+ * Control everywhere.
  */
 function ControlFooter() {
   const mode = useReceptionistStore(controlMode)
+  const held = useReceptionistStore((s) => s.backlogHeld)
   const activity = useControlTranscriptStore((s) => s.activity)
   return (
     <div className="control-transcript__controls">
       <ChoiceGroup
         label="Control on this device"
-        caption="Replies"
         options={MODES}
         value={mode}
         onChoose={(to) => { for (const action of holdActions(mode, to)) window.api.receptionist.hold(action) }}
       />
-      <ChoiceGroup
-        label="Show in the transcript"
-        options={SHOWN}
-        value={activity ? 'all' : 'chat'}
-        onChoose={(shown) => useControlTranscriptStore.getState().setActivity(shown === 'all')}
+      <ToggleButton
+        label="Verbose"
+        title="Show Control's activity between its words"
+        on={activity}
+        onToggle={(on) => useControlTranscriptStore.getState().setActivity(on)}
+      />
+      <ToggleButton
+        label="Hold backlog"
+        title="Nothing on Control's backlog comes up on its own; you can still ask for it"
+        on={held}
+        onToggle={(on) => window.api.receptionist.holdBacklog(on)}
       />
     </div>
   )

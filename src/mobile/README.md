@@ -59,7 +59,7 @@ the server), **Install the app** (the Mac builds and installs it:
 `src/server/mobile-install.ts`, the same `install.sh`) and **Reload client**
 (`updateActionsStore.ts`).
 Pressing any of the three, here or on the Mac, lets go of Control first
-(Away) and then puts up a screen that cannot be dismissed
+(Off) and then puts up a screen that cannot be dismissed
 (`UpdateBlocker.tsx`) until the page goes: for a restart, until the new server
 answers and the page reloads; for an install, until iOS closes and relaunches
 the app. Only a failure takes it down, with a toast.
@@ -116,15 +116,15 @@ of the transcript's presses as said outright (`receptionist-hold`: `mute`,
 Being muted is the device's own, separate from holding Control, and outlasts
 handing Control away and back (`receptionistMuted` in the server state). The
 transcript shows the two as one choice of what you get of Control's replies
-here — **Away**, **Silent** (held, muted) or **Aloud** (held, unmuted) — since a mute matters only while Control is
-here; Silent mutes before it takes, so Control never arrives speaking. A muted phone is still Control's
+here — **Off**, **Read** (held, muted) or **Hear** (held, unmuted) — since a mute matters only while Control is
+here; Read mutes before it takes, so Control never arrives speaking. A muted phone is still Control's
 listener when it is not connected, so it can sleep (`stay-awake.ts` lets it):
 everything is waiting in the transcript when it wakes. Letting go of Control
 altogether — nobody hears it, and it tells you what you missed when you are
-back — is the transcript's **Away**.
+back — is the transcript's **Off**.
 
 Holding Control survives a reload, a server restart and a relaunch: while the
-phone is disconnected Control does not speak to it (as Away), and as it
+phone is disconnected Control does not speak to it (as Off), and as it
 reconnects it holds Control again, muted or not as before. Hands-free comes
 back on likewise (`hands-free-memory.ts`), except after the app is replaced.
 
@@ -138,9 +138,13 @@ It reads Control's full record
 compaction never shortens it: it opens at the newest — or at the first reply
 with words waiting for you, under a red Unread line — and loads older pages
 as you scroll up.
-Under the box to type in, centred: the Away / Silent / Aloud choice, captioned
-Replies, and a Concise / Detailed choice of whether Control's activity shows
-between its words. Above the box, while
+Under the box to type in, centred: the Off / Read / Hear choice, then two
+toggles, purple when on: **Verbose**, whether Control's activity shows between
+its words, kept per device; and **Hold backlog**, which keeps anything on
+Control's backlog from coming up on its own at a pause (`backlog-pause.ts`)
+until it is turned off. It is Control's own, the same on every device and
+kept across restarts (`receptionist-hold-backlog`); items still go on the
+backlog, and asking Control what is next still brings one up. Above the box, while
 replies wait unread: **Read aloud**, which reads them out on this device in
 the voices they were written in — nothing goes to Control, and they count as
 read at once, the transcript lighting each word as it is said and scrolling to
@@ -457,8 +461,8 @@ That needs the app built since this was added (`haptics: 2` in its state);
 an older one taps on screen only. Every haptic is a `haptic` line in the
 record, and a `native-haptic` line says how the app played it.
 
-Sounds are few, and only where replies are **Aloud** — this phone holds
-Control, unmuted; on Silent or Released the phone makes no sound of its own
+Sounds are few, and only where replies are **Hear** — this phone holds
+Control, unmuted; on Read or Off the phone makes no sound of its own
 (`cuesAudible`, `cues.ts`):
 
 | Sound | Means |
@@ -467,7 +471,7 @@ Control, unmuted; on Silent or Released the phone makes no sound of its own
 | "beep boop", soft, stepping down | Control finished and chose to say nothing — not a failure (`control-tones.ts`) |
 | two low notes | something failed: the microphone, a transcription, or Control |
 
-Hands-free's own tones play whatever Replies is set to, and the app plays
+Hands-free's own tones play whatever Off / Read / Hear is set to, and the app plays
 them, so the Ring/Silent switch does not silence them (`playHandsFreeCue`):
 
 | Sound | Means |
@@ -556,7 +560,7 @@ Spaceterm is its client (`hands-free.ts`):
 - **"Let me turn this off"** — or "Control, shutdown" — turns hands-free off
   by voice, for when someone in the room needs you: Voice Operator ends the
   session (the button goes off, and on the phone the hold with it) and the
-  server takes the words as Away (`src/shared/control-shutdown.ts`).
+  server takes the words as Off (`src/shared/control-shutdown.ts`).
 - **Voice Operator restarting** leaves hands-free on, getting ready (the
   spark), and it starts again by itself once Voice Operator is back.
 - **So does a Spaceterm restart**: whether hands-free was on is remembered

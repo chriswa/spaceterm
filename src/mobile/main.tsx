@@ -96,7 +96,7 @@ if (!token) {
     // to it meanwhile (`updateReceptionistListener`), and it is back as the
     // phone reconnects. A launch used to let go of it; that went unnoticed only
     // while a race kept the release from reaching the server (fixed October 25),
-    // and then every reload set replies to Away.
+    // and then every reload set replies to Off.
     mobileEvents.setSender((events) => client.mobileEvents(events))
     // Whether this app needs installing again, for Control to say: on every
     // connect, since a restarted server has forgotten, and on every change.
@@ -144,7 +144,7 @@ if (!token) {
     // The held microphone, and in the app Voice Operator listening on it for "Control"; see hands-free-mode.ts.
     installHandsFreeMode(window.api, 'phone', () => phoneDevice().label, (fn) => client.onLifecycle('connect', fn))
     // The sonar carries on while Control's voice is made, played by the app where it can,
-    // and its turns end with a tone when it says nothing or fails — where replies are Aloud.
+    // and its turns end with a tone when it says nothing or fails — where replies are Hear.
     thinkingCueScope.alsoSynthesizing = true
     thinkingCueScope.playTone = playThinkingSonar
     installControlTones({

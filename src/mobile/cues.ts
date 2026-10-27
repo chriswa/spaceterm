@@ -4,8 +4,8 @@
  * The microphone's states are haptics on the phone (`nativeHaptic`,
  * native-microphone.ts); a button dictation has no tone, which competed with
  * the ducking around the microphone and played into AirPods still switching
- * profile. These play only when Replies are Aloud (`cuesAudible`) — on
- * Silent or Released the phone makes no sound of its own:
+ * profile. These play only when replies are Hear (`cuesAudible`) — on
+ * Read or Off the phone makes no sound of its own:
  *
  * - `error`: something failed — the microphone, a transcription, or Control
  *   itself. Two low notes, the same pitch.
@@ -13,7 +13,7 @@
  *   failure: a soft "beep boop".
  *
  * Hands-free has tones of its own as well as its haptics, heard whatever
- * Replies is set to and through the Ring/Silent switch (`playHandsFreeCue`,
+ * Off / Read / Hear is set to and through the Ring/Silent switch (`playHandsFreeCue`,
  * played by the app): `handsFreeReady`, three soft steps up, as the
  * microphone is held and listening after hands-free is turned on
  * (ready-cue.ts); `dictationStart`, two notes up, as its words begin to
@@ -55,7 +55,7 @@ export type Cue = 'error' | 'nothingToSay' | 'handsFreeReady' | 'conversationClo
  * words being taken down — two notes up; taken down and sent — two notes down; the
  * conversation window running out — three steps down; and "Control,
  * shutdown" — an octave down, held low, unlike any of them. Asked for in
- * October 2026, to be heard whatever Replies is set to and whatever the
+ * October 2026, to be heard whatever Off / Read / Hear is set to and whatever the
  * Ring/Silent switch says.
  */
 export type HandsFreeCue = 'handsFreeReady' | 'dictationStart' | 'dictationEnd' | 'conversationClosed' | 'controlShutdown' | 'notWakeWord'
@@ -78,7 +78,7 @@ const SEGMENTS: Record<Cue, Array<[number, number]>> = {
 /** Each cue's volume. Voice Operator plays at 0.35; the phone's are quieter, being heard in an ear. */
 const GAINS: Record<Cue, number> = { error: 0.3, nothingToSay: 0.2, handsFreeReady: 0.2, conversationClosed: 0.2, dictationStart: 0.2, dictationEnd: 0.2, controlShutdown: 0.2, notWakeWord: 0.2, heardUnattached: 0.2 }
 
-/** Replies are Aloud here: this phone holds Control, unmuted. The only time it makes a sound of its own. */
+/** Replies are Hear here: this phone holds Control, unmuted. The only time it makes a sound of its own. */
 export function cuesAudible(): boolean {
   return controlMode(useReceptionistStore.getState()) === 'speak'
 }
@@ -237,7 +237,7 @@ export function playCue(cue: Cue): void {
 }
 
 /**
- * One of hands-free's tones: whatever Replies is set to, and in the app
+ * One of hands-free's tones: whatever Off / Read / Hear is set to, and in the app
  * played by the app — the page's sound is WebKit's ambient type, which the
  * Ring/Silent switch silences, and the app's session is not. In a browser,
  * or from an app too old to play them, the page plays it.
@@ -342,7 +342,7 @@ function stopSonarLoop(): void {
 
 /**
  * The microphone button's words were taken, but nobody holds Control, so no
- * reply is coming. Heard whatever Replies is set to — it is set to Away.
+ * reply is coming. Heard whatever Off / Read / Hear is set to — it is set to Off.
  */
 export function playHeardUnattachedCue(): void {
   playWhateverReplies('heardUnattached')
