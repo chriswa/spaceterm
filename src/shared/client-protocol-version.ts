@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 27
+export const CLIENT_PROTOCOL_VERSION = 28
 
 /**
  * Oldest client protocol this build still serves.
@@ -125,5 +125,8 @@ export const CLIENT_PROTOCOL_VERSION = 27
  *
  * v26 cannot hold Control's backlog (`receptionist-hold-backlog`) and ignores
  * `held` in `receptionist-backlog`; it loses nothing else.
+ *
+ * v27 ignores `items` in `receptionist-backlog`, so its backlog badge only
+ * counts; it loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

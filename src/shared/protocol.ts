@@ -1744,16 +1744,25 @@ export interface ReceptionistUnreadMessage {
   first?: number
 }
 
+/** One item on Control's backlog, as the user reads it: agents by name rather than as tokens. */
+export interface ReceptionistBacklogEntry {
+  text: string
+  /** Epoch ms. */
+  addedAt: number
+}
+
 /**
- * How many items are on Control's backlog (see `backlog.ts`), for the badge
- * at the foot of its transcript, and whether it is held (Hold backlog). Sent
- * on connect and broadcast on every change.
+ * What is on Control's backlog (see `backlog.ts`), for the badge at the foot
+ * of its transcript and the list it opens, and whether it is held (Hold
+ * backlog). Sent on connect and broadcast on every change.
  */
 export interface ReceptionistBacklogMessage {
   type: 'receptionist-backlog'
   count: number
   /** Absent from a server too old to hold its backlog. */
   held?: boolean
+  /** Oldest first. Absent from a server too old to list its backlog. */
+  items?: ReceptionistBacklogEntry[]
 }
 
 /**

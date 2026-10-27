@@ -43,6 +43,24 @@ describe('Backlog', () => {
     expect(sizes).toEqual([2, 0, 1, 0])
   })
 
+  it('announces what is on it when that changes but its size does not', () => {
+    const announced: string[][] = []
+    const watched = new Backlog({ store: memoryStore(), onChange: ({ items }) => announced.push(items.map(item => item.text)) })
+    for (let i = 0; i < MAX_BACKLOG; i++) watched.add(`item ${i}`, i)
+    announced.length = 0
+    watched.add('newest', MAX_BACKLOG)
+    expect(announced).toHaveLength(1)
+    expect(announced[0][0]).toBe('item 1')
+    expect(announced[0].at(-1)).toBe('newest')
+  })
+
+  it('lists its items for the user with agents by name', () => {
+    const backlog = new Backlog({ store: memoryStore() })
+    backlog.add('{Leon:fern-hippo} finished; {stormy-glove} has questions.', 5)
+    expect(backlog.state.items).toEqual([{ text: 'Leon finished; stormy-glove has questions.', addedAt: 5 }])
+    expect(backlog.all()[0].text).toBe('{Leon:fern-hippo} finished; {stormy-glove} has questions.')
+  })
+
   it('announces being held or let go, and remembers it across a restart', () => {
     const store = memoryStore()
     const states: BacklogState[] = []
@@ -52,7 +70,8 @@ describe('Backlog', () => {
     backlog.add('Leon finished', 1)
     expect(new Backlog({ store }).held).toBe(true)
     backlog.hold(false)
-    expect(states).toEqual([{ count: 0, held: true }, { count: 1, held: true }, { count: 1, held: false }])
+    const items = [{ text: 'Leon finished', addedAt: 1 }]
+    expect(states).toEqual([{ count: 0, held: true, items: [] }, { count: 1, held: true, items }, { count: 1, held: false, items }])
     expect(new Backlog({ store }).held).toBe(false)
   })
 

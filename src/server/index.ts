@@ -1253,7 +1253,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
   send(link, receptionistStatus())
   send(link, receptionistHolderMessage())
   send(link, { type: 'receptionist-unread', ...receptionist?.unread() ?? { count: 0 } })
-  send(link, { type: 'receptionist-backlog', ...receptionistBacklog?.state ?? { count: 0, held: false } })
+  send(link, { type: 'receptionist-backlog', ...receptionistBacklog?.state ?? { count: 0, held: false, items: [] } })
   send(link, { type: 'agent-names', names: agentNameMap() })
 
   // Availability is pushed on change, which a client that connected after the

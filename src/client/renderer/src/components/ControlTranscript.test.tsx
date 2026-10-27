@@ -355,7 +355,7 @@ describe('ControlTranscript and what the user took in', () => {
     expect(bridge.callsTo('receptionist.holdBacklog').map((call) => call.args[0])).toEqual([true])
     // Pressed only once the server says so.
     expect(hold.getAttribute('aria-pressed')).toBe('false')
-    act(() => useReceptionistStore.getState().setBacklog({ count: 0, held: true }))
+    act(() => useReceptionistStore.getState().setBacklog({ count: 0, held: true, items: [] }))
     expect(hold.getAttribute('aria-pressed')).toBe('true')
     fireEvent.click(hold)
     expect(bridge.callsTo('receptionist.holdBacklog').at(-1)?.args[0]).toBe(false)

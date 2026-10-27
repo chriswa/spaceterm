@@ -17,9 +17,11 @@
  * replaced: what Control set aside has to outlast what Control remembers.
  */
 import * as path from 'path'
+import type { ReceptionistBacklog } from '../../shared/api'
 import type { NodeId } from '../../shared/ids'
 import { SOCKET_DIR } from '../../shared/protocol'
 import type { JevRequest } from '../agent-search'
+import { tokensAsNames } from './agent-token'
 import { fileStore, type NameRegistryStore } from './name-registry'
 import { ago } from './roster'
 
@@ -39,10 +41,12 @@ export interface BacklogItem {
   agents?: NodeId[]
 }
 
-/** What clients are told of the backlog, for the transcript's badge and its Hold backlog toggle. */
-export interface BacklogState {
-  count: number
-  held: boolean
+/** What clients are told of the backlog, for the transcript's badge, the list it opens, and its Hold backlog toggle. */
+export type BacklogState = ReceptionistBacklog
+
+function sameState(a: BacklogState, b: BacklogState): boolean {
+  return a.held === b.held && a.count === b.count && a.items.length === b.items.length &&
+    a.items.every((item, i) => item.text === b.items[i].text && item.addedAt === b.items[i].addedAt)
 }
 
 export class Backlog {
@@ -55,7 +59,7 @@ export class Backlog {
   private out: BacklogItem[] = []
   private isHeld = false
   private readonly store: NameRegistryStore
-  /** Told the number of items and whether the backlog is held whenever either changes. */
+  /** Told what is on the backlog and whether it is held whenever either changes. */
   private readonly onChange: (state: BacklogState) => void
   private last: BacklogState
 
@@ -76,7 +80,11 @@ export class Backlog {
   }
 
   get state(): BacklogState {
-    return { count: this.items.length, held: this.isHeld }
+    return {
+      count: this.items.length,
+      held: this.isHeld,
+      items: this.items.map(item => ({ text: tokensAsNames(item.text), addedAt: item.addedAt })),
+    }
   }
 
   hold(held: boolean): void {
@@ -142,11 +150,11 @@ export class Backlog {
     }
   }
 
-  /** Every change goes through here, so it is also where a change in size or holding is announced. */
+  /** Every change goes through here, so it is also where a change in what is on it or its holding is announced. */
   private save(): void {
     this.store.save(JSON.stringify({ items: this.items, ...(this.out.length ? { out: this.out } : {}), ...(this.isHeld ? { held: true } : {}) }))
     const state = this.state
-    if (state.count === this.last.count && state.held === this.last.held) return
+    if (sameState(state, this.last)) return
     this.last = state
     this.onChange(state)
   }

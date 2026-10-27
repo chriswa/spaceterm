@@ -225,7 +225,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       stopReplay: () => client.stopReceptionistReplay(),
       readAloud: () => client.readReceptionistAloud(),
       onUnread: (cb) => onReceptionistUnread(({ count, first }) => cb({ count, ...(first === undefined ? {} : { first }) })),
-      onBacklog: (cb) => onReceptionistBacklog(({ count, held }) => cb({ count, held: held === true })),
+      onBacklog: (cb) => onReceptionistBacklog(({ count, held, items }) => cb({ count, held: held === true, items: items ?? [] })),
       onReplaying: (cb) => on('receptionist-replaying', ({ playing, refused }) => cb(playing, refused)),
       onSpeaking: (cb) => on('receptionist-speaking', (m) => cb(m.speaking)),
       transcript: (before) => client.receptionistTranscript(before, TRANSCRIPT_PAGE),

@@ -2,7 +2,7 @@ import type {
   AgentSearchResponse, CommandOutcome,
   Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
   SessionInfo, SystemApi, TtsApi, WindowApi, DictationApi, SpeechLinkApi,
-  ReceptionistApi, ReceptionistStatus, HandsFreeApi, ControlTranscriptPage
+  ReceptionistApi, ReceptionistBacklog, ReceptionistStatus, HandsFreeApi, ControlTranscriptPage
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
@@ -182,7 +182,7 @@ export class FakeBridge implements Api {
   private readonly cameraFollow = new Set<(nodeId: NodeId) => void>()
   private readonly receptionistNotice = new Set<(text: string) => void>()
   private readonly receptionistUnread = new Set<(unread: { count: number; first?: number }) => void>()
-  private readonly receptionistBacklog = new Set<(backlog: { count: number; held: boolean }) => void>()
+  private readonly receptionistBacklog = new Set<(backlog: ReceptionistBacklog) => void>()
   private readonly receptionistReplaying = new Set<(playing: { of: number; part: number } | null, refused?: string) => void>()
   private readonly receptionistSpeaking = new Set<(speaking: { of: number; parts: number[] } | null) => void>()
   private readonly transcriptAppended = new Set<(entries: ControlTranscriptEntry[]) => void>()
@@ -288,7 +288,9 @@ export class FakeBridge implements Api {
     cameraFollow: (nodeId: NodeId): void => { for (const fn of this.cameraFollow) fn(nodeId) },
     receptionistNotice: (text: string): void => { for (const fn of this.receptionistNotice) fn(text) },
     receptionistUnread: (unread: { count: number; first?: number }): void => { for (const fn of this.receptionistUnread) fn(unread) },
-    receptionistBacklog: (count: number, held = false): void => { for (const fn of this.receptionistBacklog) fn({ count, held }) },
+    receptionistBacklog: (count: number, held = false, items: ReceptionistBacklog['items'] = []): void => {
+      for (const fn of this.receptionistBacklog) fn({ count, held, items })
+    },
     receptionistSpeaking: (speaking: { of: number; parts: number[] } | null): void => {
       for (const fn of this.receptionistSpeaking) fn(speaking)
     },

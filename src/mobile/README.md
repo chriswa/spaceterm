@@ -151,6 +151,10 @@ read at once, the transcript lighting each word as it is said and scrolling to
 keep it in view — and **Mark all read**. A reading, like a part played again
 with its own button, looks just as Control speaking does: the bar is gone,
 the Control button shows who is speaking, and what stops Control stops it.
+Above the box too, while Control has set anything aside, a yellow badge
+counts the backlog; tapping it lists the items above it, oldest first, and
+tapping it again hides them. The list closes with the badge when the last
+item goes.
 
 While it is open the bar stays up: the Control button is a down arrow that
 closes it, and the microphone talks to Control, with what it heard appearing at the bottom. It and the toolbar sheet are screens, not

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import type { ReceptionistPhase, ReceptionistStatus } from '../../../../shared/api'
+import type { ReceptionistBacklog, ReceptionistPhase, ReceptionistStatus } from '../../../../shared/api'
+import type { ReceptionistBacklogEntry } from '../../../../shared/protocol'
 import type { ReceptionistHolder } from '../../../../shared/state'
 
 /** Who holds Control, as this client sees it. */
@@ -30,11 +31,13 @@ export interface ReceptionistState {
   unread: { count: number; first?: number }
   /** How many items are on Control's backlog. */
   backlog: number
+  /** What they are, oldest first: empty from a server too old to list them, though `backlog` may not be. */
+  backlogItems: ReceptionistBacklogEntry[]
   /** Control's backlog is held: nothing on it comes up on its own (Hold backlog). */
   backlogHeld: boolean
   setStatus: (status: ReceptionistStatus) => void
   setUnread: (unread: { count: number; first?: number }) => void
-  setBacklog: (backlog: { count: number; held: boolean }) => void
+  setBacklog: (backlog: ReceptionistBacklog) => void
   /**
    * `deviceId` is this client's own; `muted`, the devices that muted Control,
    * absent from a server too old to say — then only the holder's mute is known.
@@ -55,10 +58,11 @@ export const useReceptionistStore = create<ReceptionistState>((set) => ({
   speaker: null,
   unread: { count: 0 },
   backlog: 0,
+  backlogItems: [],
   backlogHeld: false,
   setStatus: ({ phase, message, speaker }) => set({ phase, error: message ?? null, speaker: speaker ?? null }),
   setUnread: (unread) => set({ unread }),
-  setBacklog: ({ count, held }) => set({ backlog: count, backlogHeld: held }),
+  setBacklog: ({ count, held, items }) => set({ backlog: count, backlogHeld: held, backlogItems: items }),
   setHolder: (holder, deviceId, muted) => set({
     holder: holder && { label: holder.label, mine: holder.deviceId === deviceId, muted: holder.muted === true },
     mutedHere: muted ? muted.includes(deviceId) : holder?.deviceId === deviceId && holder.muted === true,

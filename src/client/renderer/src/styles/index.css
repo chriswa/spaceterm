@@ -4293,6 +4293,27 @@ html, body, #root {
   background: #f9e2af;
   color: #11111b;
 }
+.control-transcript__backlog-toggle {
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+.control-transcript__backlog-toggle:hover { background: color-mix(in srgb, #f9e2af 85%, #fff); }
+/* What is on the backlog, opened from its badge: above the badge, scrolling on its own so the conversation keeps most of the room. */
+.control-transcript__backlog-list {
+  flex-shrink: 0;
+  max-height: 40%;
+  overflow-y: auto;
+  margin: 6px 12px 0;
+  padding: 6px 10px 6px 28px;
+  border: 1px solid color-mix(in srgb, #f9e2af 55%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, #f9e2af 10%, transparent);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.control-transcript__backlog-item { margin: 4px 0; overflow-wrap: anywhere; }
+.control-transcript__backlog-age { color: var(--ct-dim); white-space: nowrap; }
 
 .control-transcript__entry--log {
   /* What Control did, as a pill on Control's side, coloured by what it did. */
