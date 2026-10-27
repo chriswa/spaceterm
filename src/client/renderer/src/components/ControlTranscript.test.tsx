@@ -225,7 +225,7 @@ describe('ControlTranscript, following along', () => {
     expect(struck.closest('details')!.dataset.action).toBe('sent')
   })
 
-  it("shows Control's activity only while Detailed is chosen, and remembers the choice", async () => {
+  it("shows Control's activity only while Verbose is on, and remembers the choice", async () => {
     useControlTranscriptStore.getState().setActivity(false)
     bridge.responses.controlTranscript = () => ({
       entries: [
@@ -242,17 +242,17 @@ describe('ControlTranscript, following along', () => {
     // A failure is shown regardless: Control said so out loud.
     expect(screen.getByText('could not answer: session not found').dataset.what).toBe('failed')
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Detailed' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Verbose' }))
     const news = screen.getByText('News: Sally is now stopped')
     expect(news.closest('details')!.dataset.what).toBe('events')
     expect(screen.getByText('Watching Sally for its next stop').dataset.what).toBe('watch')
     expect(localStorage.getItem('controlTranscript.activity')).toBe('true')
 
     // An activity line that arrives live waits for the choice too.
-    fireEvent.click(screen.getByRole('radio', { name: 'Concise' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Verbose' }))
     act(() => bridge.emit.transcriptAppended([{ offset: 300, timestamp: '2026-10-05T08:00:02Z', kind: 'trace', what: 'backlog-add', text: 'Set aside for later: Sally' }]))
     expect(screen.queryByText('Set aside for later: Sally')).toBeNull()
-    fireEvent.click(screen.getByRole('radio', { name: 'Detailed' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Verbose' }))
     expect(screen.getByText('Set aside for later: Sally')).toBeTruthy()
   })
 })
@@ -329,28 +329,44 @@ describe('ControlTranscript and what the user took in', () => {
 
   const chosen = () => within(screen.getByRole('radiogroup', { name: 'Control on this device' })).getAllByRole('radio').filter((el) => el.getAttribute('aria-checked') === 'true').map((el) => el.textContent)
 
-  it('shows Control as Away, Silent or Aloud, and moves it from its footer', async () => {
+  it('shows Control as Off, Read or Hear, and moves it from its footer', async () => {
     useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: false }, mutedHere: false, unread: { count: 0 } })
     render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
     await screen.findByText('Nothing said to Control yet')
-    expect(chosen()).toEqual(['Aloud'])
+    expect(chosen()).toEqual(['Hear'])
     expect(screen.queryByText('Control speaks here')).toBeNull()
-    fireEvent.click(screen.getByRole('radio', { name: 'Aloud' }))
-    fireEvent.click(screen.getByRole('radio', { name: 'Silent' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Hear' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Read' }))
     expect(bridge.callsTo('receptionist.hold').map((call) => call.args[0])).toEqual(['mute'])
 
     act(() => useReceptionistStore.setState({ holder: { label: 'Phone', mine: true, muted: true }, mutedHere: true, unread: { count: 2, first: 0 } }))
-    expect(chosen()).toEqual(['Silent'])
-    fireEvent.click(screen.getByRole('radio', { name: 'Away' }))
+    expect(chosen()).toEqual(['Read'])
+    fireEvent.click(screen.getByRole('radio', { name: 'Off' }))
     expect(bridge.callsTo('receptionist.hold').at(-1)?.args[0]).toBe('release')
   })
 
-  it('is Away while another device holds Control, muted here or not', async () => {
+  it('shows Hold backlog as the server has it, and asks the server to change it', async () => {
+    useReceptionistStore.setState({ backlogHeld: false })
+    render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
+    await screen.findByText('Nothing said to Control yet')
+    const hold = screen.getByRole('button', { name: 'Hold backlog' })
+    expect(hold.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(hold)
+    expect(bridge.callsTo('receptionist.holdBacklog').map((call) => call.args[0])).toEqual([true])
+    // Pressed only once the server says so.
+    expect(hold.getAttribute('aria-pressed')).toBe('false')
+    act(() => useReceptionistStore.getState().setBacklog({ count: 0, held: true, items: [] }))
+    expect(hold.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(hold)
+    expect(bridge.callsTo('receptionist.holdBacklog').at(-1)?.args[0]).toBe(false)
+  })
+
+  it('is Off while another device holds Control, muted here or not', async () => {
     useReceptionistStore.setState({ holder: { label: 'Mac', mine: false, muted: false }, mutedHere: true, unread: { count: 0 } })
     render(<ControlTranscript variant="modal" onDismiss={() => {}} />)
     await screen.findByText('Nothing said to Control yet')
-    expect(chosen()).toEqual(['Away'])
-    fireEvent.click(screen.getByRole('radio', { name: 'Aloud' }))
+    expect(chosen()).toEqual(['Off'])
+    fireEvent.click(screen.getByRole('radio', { name: 'Hear' }))
     expect(bridge.callsTo('receptionist.hold').map((call) => call.args[0])).toEqual(['speak-here'])
   })
   it('offers what waits unread read aloud in any mode, and marking it read, with no count', async () => {

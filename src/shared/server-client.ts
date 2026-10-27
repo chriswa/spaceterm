@@ -853,12 +853,6 @@ export class ServerClient {
     this.fireAndForget({ type: 'hands-free-stream-close' })
   }
 
-  /** Words said hands-free, for Control; `interrupted` when they cut its reply off. */
-  receptionistHandsFree(text: string, interrupted = false): void {
-    this.log(`[hands-free] ${text.length} chars to Control${interrupted ? ', having cut it off' : ''}`)
-    this.fireAndForget({ type: 'receptionist-hands-free', text, ...(interrupted ? { interrupted } : {}) })
-  }
-
   /** Build and install the iPhone app from the Mac. Resolves when it fails, or — rarely seen — succeeds. */
   async installMobileApp(): Promise<{ ok: boolean; message?: string }> {
     this.log('[mobile-install] asking the Mac to build and install the app')
@@ -903,6 +897,12 @@ export class ServerClient {
   holdReceptionist(action: ReceptionistHoldAction): void {
     this.log(`[receptionist] ${action} from this client`)
     this.fireAndForget({ type: 'receptionist-hold', action })
+  }
+
+  /** Whether Control's backlog is held: see `ReceptionistHoldBacklogMessage`. */
+  holdReceptionistBacklog(held: boolean): void {
+    this.log(`[receptionist] backlog ${held ? 'held' : 'let go'} from this client`)
+    this.fireAndForget({ type: 'receptionist-hold-backlog', held })
   }
 
   /** Where the user stopped taking Control in, clicked in the transcript view: see `ReceptionistMarkMessage`. */

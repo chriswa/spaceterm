@@ -4,6 +4,7 @@ import type { NodeId } from '../shared/ids'
 import { Dictation } from './dictation'
 import { insertDictation } from './pcm'
 import { promptStore } from './prompt-store'
+import { rememberComposeMic } from './compose-mic-memory'
 import { primeCues } from './cues'
 import { useDictationSession } from './dictation-session'
 import { deleteWordBefore } from './text-edit'
@@ -20,6 +21,9 @@ import { handTouchToCanvas } from '@/hooks/useTouchCamera'
  * iOS evicts a backgrounded page freely, and a dictated paragraph lost to a
  * trip to another app is the failure worth designing against. Shipping or
  * clearing moves the draft into a history the ✕ sheet can restore from.
+ *
+ * It opens into dictation when the last prompt shipped with the microphone
+ * still on, and not when it went with it off (compose-mic-memory.ts).
  *
  * The microphone is not the composer's: dictation carries on when it closes
  * (dictation-session.ts), and whichever composer is open when it stops takes
@@ -130,10 +134,12 @@ export function Composer({ nodeId, onClose, onExitToCanvas }: {
     setShipping(true)
     setError(null)
     try {
-      const outgoing = mic.kind === 'listening' ? await finishDictation() : text
+      const listening = mic.kind === 'listening'
+      const outgoing = listening ? await finishDictation() : text
       if (!outgoing.trim()) return
       await window.api.node.shipIt(nodeId, outgoing)
       store.shipped(outgoing)
+      rememberComposeMic(listening)
       setTextState('')
       setHistory(store.history())
       onClose()

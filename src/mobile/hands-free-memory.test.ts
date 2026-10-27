@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { rememberHandsFree, rememberedHandsFree, type MemoryStorage } from './hands-free-memory'
+import { rememberHandsFree, rememberedHandsFree } from './hands-free-memory'
+import type { MemoryStorage } from './browser-storage'
 
 function memory(): MemoryStorage {
   const items = new Map<string, string>()

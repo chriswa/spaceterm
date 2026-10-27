@@ -41,7 +41,7 @@ Touches never reach xterm (`terminal-gesture.ts`):
 |---|---|
 | drag up / down | scrolls — sent as wheel events, so the card's own routing picks the TUI's mouse protocol or the shell's scrollback, as on the desktop |
 | swipe sideways, pinch in | back to the canvas the moment it goes far enough; the rest of the gesture pans or zooms the canvas (`handTouchToCanvas`) |
-| tap | the composer, keyboard up |
+| tap | the composer, keyboard up, dictating — unless the last prompt shipped with the microphone off (`compose-mic-memory.ts`) |
 | long press | a radial menu around the thumb: slide to **Keyboard** (the keyboard and extra-key row, typing straight into the terminal; *Hide keyboard* while it is up), and let go. Letting go in the middle does nothing |
 
 On the canvas, a long press on a card is the desktop's ⌘-click: the
@@ -59,7 +59,7 @@ the server), **Install the app** (the Mac builds and installs it:
 `src/server/mobile-install.ts`, the same `install.sh`) and **Reload client**
 (`updateActionsStore.ts`).
 Pressing any of the three, here or on the Mac, lets go of Control first
-(Away) and then puts up a screen that cannot be dismissed
+(Off) and then puts up a screen that cannot be dismissed
 (`UpdateBlocker.tsx`) until the page goes: for a restart, until the new server
 answers and the page reloads; for an install, until iOS closes and relaunches
 the app. Only a failure takes it down, with a toast.
@@ -116,15 +116,15 @@ of the transcript's presses as said outright (`receptionist-hold`: `mute`,
 Being muted is the device's own, separate from holding Control, and outlasts
 handing Control away and back (`receptionistMuted` in the server state). The
 transcript shows the two as one choice of what you get of Control's replies
-here — **Away**, **Silent** (held, muted) or **Aloud** (held, unmuted) — since a mute matters only while Control is
-here; Silent mutes before it takes, so Control never arrives speaking. A muted phone is still Control's
+here — **Off**, **Read** (held, muted) or **Hear** (held, unmuted) — since a mute matters only while Control is
+here; Read mutes before it takes, so Control never arrives speaking. A muted phone is still Control's
 listener when it is not connected, so it can sleep (`stay-awake.ts` lets it):
 everything is waiting in the transcript when it wakes. Letting go of Control
 altogether — nobody hears it, and it tells you what you missed when you are
-back — is the transcript's **Away**.
+back — is the transcript's **Off**.
 
 Holding Control survives a reload, a server restart and a relaunch: while the
-phone is disconnected Control does not speak to it (as Away), and as it
+phone is disconnected Control does not speak to it (as Off), and as it
 reconnects it holds Control again, muted or not as before. Hands-free comes
 back on likewise (`hands-free-memory.ts`), except after the app is replaced.
 
@@ -138,15 +138,23 @@ It reads Control's full record
 compaction never shortens it: it opens at the newest — or at the first reply
 with words waiting for you, under a red Unread line — and loads older pages
 as you scroll up.
-Under the box to type in, centred: the Away / Silent / Aloud choice, captioned
-Replies, and a Concise / Detailed choice of whether Control's activity shows
-between its words. Above the box, while
+Under the box to type in, centred: the Off / Read / Hear choice, then two
+toggles, purple when on: **Verbose**, whether Control's activity shows between
+its words, kept per device; and **Hold backlog**, which keeps anything on
+Control's backlog from coming up on its own at a pause (`backlog-pause.ts`)
+until it is turned off. It is Control's own, the same on every device and
+kept across restarts (`receptionist-hold-backlog`); items still go on the
+backlog, and asking Control what is next still brings one up. Above the box, while
 replies wait unread: **Read aloud**, which reads them out on this device in
 the voices they were written in — nothing goes to Control, and they count as
 read at once, the transcript lighting each word as it is said and scrolling to
 keep it in view — and **Mark all read**. A reading, like a part played again
 with its own button, looks just as Control speaking does: the bar is gone,
 the Control button shows who is speaking, and what stops Control stops it.
+Above the box too, while Control has set anything aside, a yellow badge
+counts the backlog; tapping it lists the items above it, oldest first, and
+tapping it again hides them. The list closes with the badge when the last
+item goes.
 
 While it is open the bar stays up: the Control button is a down arrow that
 closes it, and the microphone talks to Control, with what it heard appearing at the bottom. It and the toolbar sheet are screens, not
@@ -457,8 +465,8 @@ That needs the app built since this was added (`haptics: 2` in its state);
 an older one taps on screen only. Every haptic is a `haptic` line in the
 record, and a `native-haptic` line says how the app played it.
 
-Sounds are few, and only where replies are **Aloud** — this phone holds
-Control, unmuted; on Silent or Released the phone makes no sound of its own
+Sounds are few, and only where replies are **Hear** — this phone holds
+Control, unmuted; on Read or Off the phone makes no sound of its own
 (`cuesAudible`, `cues.ts`):
 
 | Sound | Means |
@@ -467,7 +475,7 @@ Control, unmuted; on Silent or Released the phone makes no sound of its own
 | "beep boop", soft, stepping down | Control finished and chose to say nothing — not a failure (`control-tones.ts`) |
 | two low notes | something failed: the microphone, a transcription, or Control |
 
-Hands-free's own tones play whatever Replies is set to, and the app plays
+Hands-free's own tones play whatever Off / Read / Hear is set to, and the app plays
 them, so the Ring/Silent switch does not silence them (`playHandsFreeCue`):
 
 | Sound | Means |
@@ -509,12 +517,19 @@ Spaceterm is its client (`hands-free.ts`):
 - **In the app**, Voice Operator's iOS SDK owns the microphone and Control's
   voice (`NativeMicrophone.swift` is now a thin bridge to it) and streams the
   microphone to Voice Operator; the page carries its lines to the server
-  (`hands-free-stream-*`), which passes them through unread
+  (`hands-free-stream-*`), which passes them through
   (`src/server/voice-operator-hands-free.ts`). A dropped connection resumes
   where it left off: the SDK keeps a minute of audio until Voice Operator has
   it. The hold (`held-microphone.ts`) is the switch, as before; the stream
   follows it. In a browser there is no SDK, so the hold is only a held
   microphone for AirPods.
+- **Control hears it from the server**, which reads every message from Voice
+  Operator before any page does, the phone's and the Mac's alike: it gives
+  Control your words, "Control" taken off, moving Control to the device you
+  said them on, and stops Control when you cut it off. Pages only show
+  hands-free and play its sounds, so your words reach Control once however
+  many windows are open. The server registers "control" with Voice Operator
+  only while a phone or desktop client is connected.
 - **What it shows** comes from Voice Operator's messages, animated here, and
   all of it on the hands-free button, the same on the phone and the Mac
   (the microphone button only turns orange while your words are taken
@@ -553,7 +568,7 @@ Spaceterm is its client (`hands-free.ts`):
 - **"Let me turn this off"** — or "Control, shutdown" — turns hands-free off
   by voice, for when someone in the room needs you: Voice Operator ends the
   session (the button goes off, and on the phone the hold with it) and the
-  server takes the words as Away (`src/shared/control-shutdown.ts`).
+  server takes the words as Off (`src/shared/control-shutdown.ts`).
 - **Voice Operator restarting** leaves hands-free on, getting ready (the
   spark), and it starts again by itself once Voice Operator is back.
 - **So does a Spaceterm restart**: whether hands-free was on is remembered
@@ -582,6 +597,9 @@ the page holds no microphone. What differs:
   needs a headset.
 - **A Fn dictation** has the microphone to itself: hands-free stands aside
   until it ends.
+- **Every window shows it, one plays it**: with a second client open, both
+  hands-free buttons follow Voice Operator, but only one window plays its
+  cues and the deciding beep.
 - **No haptics**: the cues play in the page.
 
 ## Notifications

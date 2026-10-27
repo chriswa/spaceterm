@@ -201,9 +201,8 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       onConnect: (listener) => client.onLifecycle('connect', listener)
     },
     handsFree: {
-      say: (text, interrupted) => client.receptionistHandsFree(text, interrupted),
       setMac: (on) => client.handsFreeMac(on),
-      onMacEvent: (cb) => on('hands-free-event', (m) => cb(m.event)),
+      onMacEvent: (cb) => on('hands-free-event', (m) => cb(m.event, m.audio)),
       openStream: () => client.handsFreeStreamOpen(),
       streamLine: (line) => client.handsFreeStreamLine(line),
       closeStream: () => client.handsFreeStreamClose(),
@@ -218,6 +217,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
     receptionist: {
       stop: (cutInMsAgo) => client.stopReceptionist(cutInMsAgo),
       hold: (action) => client.holdReceptionist(action),
+      holdBacklog: (held) => client.holdReceptionistBacklog(held),
       say: (text, how) => client.sayToReceptionist(text, how?.spoken === true, how?.staysPut === true),
       mark: (of, part, char) => client.markReceptionistReply(of, part, char),
       readAll: () => client.readAllOfReceptionist(),
@@ -225,7 +225,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       stopReplay: () => client.stopReceptionistReplay(),
       readAloud: () => client.readReceptionistAloud(),
       onUnread: (cb) => onReceptionistUnread(({ count, first }) => cb({ count, ...(first === undefined ? {} : { first }) })),
-      onBacklog: (cb) => onReceptionistBacklog(({ count }) => cb(count)),
+      onBacklog: (cb) => onReceptionistBacklog(({ count, held, items }) => cb({ count, held: held === true, items: items ?? [] })),
       onReplaying: (cb) => on('receptionist-replaying', ({ playing, refused }) => cb(playing, refused)),
       onSpeaking: (cb) => on('receptionist-speaking', (m) => cb(m.speaking)),
       transcript: (before) => client.receptionistTranscript(before, TRANSCRIPT_PAGE),

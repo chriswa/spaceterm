@@ -33,12 +33,13 @@ describe('hands-free on the Mac', () => {
     expect(bridge.calls.filter((c) => c.method === 'handsFree.setMac').map((c) => c.args)).toEqual([[true], [false]])
   })
 
-  it('follows what Voice Operator says about the Mac', () => {
+  it('follows what Voice Operator says about the Mac, and leaves its words to the server', () => {
     setHandsFree(true)
     bridge.emit.handsFreeMacEvent({ type: 'state', phase: 'listening', conversation: true, closesAt: null, checking: false, pending: false })
     expect(useHandsFree.getState()).toMatchObject({ on: true, phase: 'listening', conversation: true })
+    const before = bridge.calls.length
     bridge.emit.handsFreeMacEvent({ type: 'transcript', text: 'Control, run the tests.', trigger: 'control', interrupted: false, reason: 'finished', shutdown: false })
-    expect(bridge.calls.filter((c) => c.method === 'handsFree.say').map((c) => c.args)).toEqual([['run the tests.', false]])
+    expect(bridge.calls.slice(before)).toEqual([])
   })
 
   it('sends its audio and lifecycle record to the server, as the phone does', () => {

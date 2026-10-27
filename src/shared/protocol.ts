@@ -414,7 +414,7 @@ export interface DictationStartMessage {
   /**
    * The words go to Control. The server then holds Control from the start
    * until the client hands it the words, or says there were none, with a
-   * `receptionist-say` or `receptionist-hands-free`.
+   * `receptionist-say`.
    */
   forControl?: boolean
 }
@@ -485,21 +485,6 @@ export interface HandsFreeStreamLineMessage {
 
 export interface HandsFreeStreamCloseMessage {
   type: 'hands-free-stream-close'
-}
-
-/**
- * Words dictated hands-free, after the wake word: for Control. Takes Control to this device, as speaking to it does. Sent
- * with no `text` when nothing was caught for Control, so that it stops
- * waiting for words and carries on with whatever the dictation stopped.
- */
-export interface ReceptionistHandsFreeMessage {
-  type: 'receptionist-hands-free'
-  text: string
-  /**
-   * The wake word cut off Control's reply. With no `text`, Control says it had
-   * not finished and carries on, rather than falling silent mid-answer.
-   */
-  interrupted?: boolean
 }
 
 /**
@@ -993,6 +978,16 @@ export interface ReceptionistHoldMessage {
 export type ReceptionistHoldAction = 'take' | 'release' | 'mute' | 'unmute' | 'speak-here'
 
 /**
+ * Whether Control's backlog is held: held, nothing on it comes up on its own
+ * at a pause, though the user can still ask for it. Control's, not this
+ * device's. Answered by `receptionist-backlog`.
+ */
+export interface ReceptionistHoldBacklogMessage {
+  type: 'receptionist-hold-backlog'
+  held: boolean
+}
+
+/**
  * Sent by v14 clients when a part had been on screen a second. Ignored: being
  * on screen is not reading, so nothing counts as read without the user saying.
  */
@@ -1337,7 +1332,6 @@ export type ClientMessage =
   | HandsFreeStreamOpenMessage
   | HandsFreeStreamLineMessage
   | HandsFreeStreamCloseMessage
-  | ReceptionistHandsFreeMessage
   | AgentSearchMessage
   | AgentMetaAvailabilityQueryMessage
   | AgentMetaToggleMessage
@@ -1420,6 +1414,7 @@ export type ClientMessage =
   | ControlImageMessage
   | ReceptionistStopMessage
   | ReceptionistHoldMessage
+  | ReceptionistHoldBacklogMessage
   | ReceptionistReadMessage
   | ReceptionistMarkMessage
   | ReceptionistReadAllMessage
@@ -1749,13 +1744,25 @@ export interface ReceptionistUnreadMessage {
   first?: number
 }
 
+/** One item on Control's backlog, as the user reads it: agents by name rather than as tokens. */
+export interface ReceptionistBacklogEntry {
+  text: string
+  /** Epoch ms. */
+  addedAt: number
+}
+
 /**
- * How many items are on Control's backlog (see `backlog.ts`), for the badge
- * at the foot of its transcript. Sent on connect and broadcast on every change.
+ * What is on Control's backlog (see `backlog.ts`), for the badge at the foot
+ * of its transcript and the list it opens, and whether it is held (Hold
+ * backlog). Sent on connect and broadcast on every change.
  */
 export interface ReceptionistBacklogMessage {
   type: 'receptionist-backlog'
   count: number
+  /** Absent from a server too old to hold its backlog. */
+  held?: boolean
+  /** Oldest first. Absent from a server too old to list its backlog. */
+  items?: ReceptionistBacklogEntry[]
 }
 
 /**
@@ -2183,13 +2190,16 @@ export interface DictationResultMessage {
 /**
  * What Voice Operator said about hands-free on the Mac's microphone (its
  * DESIGN.md, "Hands-free"): `state`, `gauge`, `cue`, `cut-in`, `transcript`,
- * `session`, `session-ended`, as it sent them. Broadcast; the desktop's
- * hands-free button follows it.
+ * `session`, `session-ended`, as it sent them. Broadcast to the desktop
+ * clients, whose hands-free buttons follow it. The server has already acted
+ * on it: the words went to Control, and a cut-in stopped Control.
  */
 export interface HandsFreeEventMessage {
   type: 'hands-free-event'
   source: 'mac'
   event: Record<string, unknown>
+  /** This client plays its sounds — cues and the deciding beep. Exactly one desktop client is sent `true`. */
+  audio: boolean
 }
 
 /** A line from Voice Operator for this phone's stream, or word that the stream closed. */

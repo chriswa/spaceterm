@@ -1201,7 +1201,7 @@ describe('Receptionist', () => {
       replies: [
         () => new Promise<string>(() => {}),
         (turn) => {
-          expect(turn.prompt).toContain('You were stopped part-way through your last answer')
+          expect(turn.prompt).toContain('You were stopped part-way through answering the message just before this one')
           expect(turn.prompt).toContain('nothing they said was for you. Carry on from where you stopped.')
           // Its words are in the session already, with the aborted answer: not said again.
           expect(turn.prompt).not.toContain('THE USER SAYS')
@@ -1225,7 +1225,7 @@ describe('Receptionist', () => {
       replies: [
         () => new Promise<string>(() => {}),
         (turn) => {
-          expect(turn.prompt).toContain('You were stopped part-way through your last answer')
+          expect(turn.prompt).toContain('You were stopped part-way through answering the message just before this one')
           expect(turn.prompt).not.toContain('Carry on from where you stopped')
           expect(turn.prompt).toContain('THE USER SAYS: no, Sally')
           return reply([{ from: 'control', text: 'Sally is on the login page.' }])
@@ -4144,6 +4144,48 @@ describe('Receptionist backlog at a pause', () => {
     await flush()
     expect(h.turns).toHaveLength(2)
     expect(h.backlog.size).toBe(0)
+  })
+
+  it('brings up nothing while the backlog is held, and brings it up once it is let go', async () => {
+    let judged = 0
+    const h = harness({
+      backlog: ['Leon finished.'],
+      judgePause: async () => { judged++; return READY_NOW },
+      replies: [
+        reply([{ from: 'control', text: 'Good.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('FROM YOUR BACKLOG')
+          return reply([{ from: 'control', text: 'Leon finished.' }])
+        },
+      ],
+    })
+    h.receptionist.holdBacklog(true)
+    await h.receptionist.hear('thanks, that settles it', 'spoken')
+    await flush()
+    expect(judged).toBe(0)
+    expect(h.turns).toHaveLength(1)
+    expect(h.backlog.size).toBe(1)
+    h.receptionist.holdBacklog(false)
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(h.backlog.size).toBe(0)
+  })
+
+  it('leaves the item when the backlog is held during the pause', async () => {
+    const pause = heldPause()
+    const h = harness({
+      backlog: ['Leon finished.'],
+      judgePause: async () => READY_AFTER,
+      sleep: pause.sleep,
+      replies: [reply([{ from: 'control', text: 'Sent.' }])],
+    })
+    await h.receptionist.hear('tell Sally to carry on', 'spoken')
+    await flush()
+    h.receptionist.holdBacklog(true)
+    pause.wake()
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    expect(h.backlog.size).toBe(1)
   })
 
   it('leaves the item when the user talks during the pause', async () => {

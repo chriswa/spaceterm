@@ -1,4 +1,5 @@
 import * as net from 'net'
+import { cleanHandsFreeText } from '../shared/hands-free-words'
 
 /**
  * Hands-free mode, as Voice Operator now provides it: Spaceterm is a client
@@ -13,13 +14,17 @@ import * as net from 'net'
  *   lasts exactly as long as the connection, so Voice Operator listens for
  *   "control" only while this server is up. Hands-free on the Mac's
  *   microphone (the desktop toolbar's button) is `start`/`stop` on it, and
- *   what Voice Operator says back is handed to `onEvent` for the desktop
- *   clients.
+ *   what Voice Operator says back is handed to `onEvent`, once. The
+ *   connection is held only while a desktop or phone client is connected.
  * - **Stream relays**: a phone's hands-free runs in Voice Operator's iOS SDK,
  *   which carries the phone's audio as lines of Voice Operator's protocol. The
  *   phone reaches the Mac only through this server, so each phone stream is a
- *   connection to the same socket, its lines passed through unread — except
- *   `state`, peeked at for whether the user is talking to Control.
+ *   connection to the same socket, its lines passed through.
+ *
+ * Either way the server reads what Voice Operator says before any client
+ * does, and acts on it itself, once (`handsFreeAction`): the words go to
+ * Control, and a cut-in stops Control. Clients only show it and play its
+ * sounds, so no number of open windows can say anything twice.
  *
  * Only the operator's own Spaceterm registers (`claim`): a test run claiming
  * "control" would take it from them.
@@ -78,21 +83,26 @@ export class VoiceOperatorHandsFree {
   /** The Voice Operator process the control connection is to. */
   private connectedTo: number | undefined
   private welcomed = false
+  /** Whether a desktop or phone client is connected: registered only while one is. */
+  private clientsPresent = false
   /** Whether the desktop asked for hands-free on the Mac's microphone. */
   private macWanted = false
   private reportedRefusal: string | undefined
 
   constructor(
     private readonly deps: VoiceOperatorHandsFreeDeps,
-    /** What Voice Operator says about the Mac session, for the desktop clients. */
+    /** What Voice Operator says about the Mac session, once, as it said it. */
     private readonly onEvent: (event: VoiceOperatorEvent) => void,
     /** Whether this server may claim the trigger word (`isOperatorHome()`). */
     private readonly claim: boolean,
   ) {}
 
-  /** Connect if Voice Operator is up and this server is not connected to it. Called on a timer. */
+  /**
+   * Connect if a client is here, Voice Operator is up and this server is not
+   * connected to it. Called on a timer.
+   */
   check(): void {
-    if (!this.claim) return
+    if (!this.claim || !this.clientsPresent) return
     const discovery = this.deps.readDiscovery()
     const pid = discovery?.pid
     const path = discovery?.hands_free_socket
@@ -110,6 +120,28 @@ export class VoiceOperatorHandsFree {
     })
     this.control = connection
     connection.write(JSON.stringify({ type: 'hello', protocol: HANDS_FREE_PROTOCOL, client: CLIENT_NAME, trigger: TRIGGER_WORD }))
+  }
+
+  /**
+   * Whether any client that could use hands-free is connected. With none,
+   * "control" is let go, so Voice Operator does not hear for nobody; it is
+   * registered again when one comes back, and the Mac's hands-free with it
+   * if it was on.
+   */
+  setClientsPresent(present: boolean): void {
+    if (present === this.clientsPresent) return
+    this.clientsPresent = present
+    if (present) {
+      this.check()
+      return
+    }
+    const connection = this.control
+    this.control = undefined
+    this.connectedTo = undefined
+    this.welcomed = false
+    if (!connection) return
+    this.deps.log(`[hands-free] no client connected: let "${TRIGGER_WORD}" go`)
+    connection.close()
   }
 
   /** Whether hands-free is available: Voice Operator is connected and took the trigger word. */
@@ -159,57 +191,41 @@ export class VoiceOperatorHandsFree {
   }
 }
 
+/** What the server does with one of Voice Operator's messages, for Control. */
+export type HandsFreeAction =
+  /** The words said, the wake word off; empty when nothing was caught for Control. */
+  | { kind: 'words'; text: string; interrupted: boolean }
+  /** The user began talking over Control `msAgo` ago, and it was for Control. */
+  | { kind: 'cut-in'; msAgo: number }
+
+/** What Control is owed for `event`, if anything: its words, or being cut off. */
+export function handsFreeAction(event: VoiceOperatorEvent): HandsFreeAction | undefined {
+  if (event.type === 'transcript') {
+    const trigger = typeof event.trigger === 'string' ? event.trigger : TRIGGER_WORD
+    return { kind: 'words', text: cleanHandsFreeText(String(event.text ?? ''), trigger), interrupted: event.interrupted === true }
+  }
+  if (event.type === 'cut-in') return { kind: 'cut-in', msAgo: typeof event.msAgo === 'number' ? Math.round(event.msAgo) : 0 }
+  return undefined
+}
+
 /**
  * Whether the user is talking to Control hands-free, from Voice Operator's
  * `state` and `transcript` messages, per session: from the first syllable
- * (`hearing`) until the words are delivered — the client hands them to Control
- * (`delivered`) — or turn out to be none. Control holds its voice meanwhile
- * (dictation-presence.ts).
+ * (`hearing`) until the words are handed over — which the server does before
+ * this sees the `transcript` — or turn out to be none. Control holds its
+ * voice meanwhile (dictation-presence.ts).
  */
 export class HandsFreePresence {
   private readonly talking = new Set<string>()
-  /** Sessions whose words are on their way to Control, and when to stop waiting. */
-  private readonly awaiting = new Map<string, () => void>()
 
-  constructor(
-    private readonly onChange: (speaking: boolean) => void,
-    private readonly schedule: (ms: number, fn: () => void) => () => void = (ms, fn) => {
-      const timer = setTimeout(fn, ms)
-      return () => clearTimeout(timer)
-    },
-    /** How long words on their way to Control hold it, at most. */
-    private readonly wordsLimitMs = 10_000,
-  ) {}
+  constructor(private readonly onChange: (speaking: boolean) => void) {}
 
   get speaking(): boolean { return this.talking.size > 0 }
 
   /** One message from Voice Operator about session `key`. */
   see(key: string, event: VoiceOperatorEvent): void {
-    if (event.type === 'transcript') {
-      if (typeof event.text === 'string' && event.text.trim()) {
-        this.awaiting.get(key)?.()
-        this.awaiting.set(key, this.schedule(this.wordsLimitMs, () => this.release(key)))
-      }
-      return
-    }
-    if (event.type === 'session-ended') {
-      this.release(key)
-      return
-    }
-    if (event.type !== 'state') return
-    if (event.phase === 'hearing' || event.phase === 'sending') this.set(key, true)
-    else if (!this.awaiting.has(key)) this.set(key, false)
-  }
-
-  /** The client handed Control what it made of its dictation: nothing waits on it now. */
-  delivered(): void {
-    for (const key of [...this.awaiting.keys()]) this.release(key)
-  }
-
-  private release(key: string): void {
-    this.awaiting.get(key)?.()
-    this.awaiting.delete(key)
-    this.set(key, false)
+    if (event.type === 'transcript' || event.type === 'session-ended') this.set(key, false)
+    else if (event.type === 'state') this.set(key, event.phase === 'hearing' || event.phase === 'sending')
   }
 
   private set(key: string, on: boolean): void {

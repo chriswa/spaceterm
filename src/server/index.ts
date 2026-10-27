@@ -45,7 +45,7 @@ import { setupShellIntegration } from './shell-integration'
 import { shipIt } from './ship-it'
 import { RemoteDictation } from './remote-dictation'
 import { DictationPresence } from './dictation-presence'
-import { HandsFreePresence, REAL_CONNECT, VoiceOperatorHandsFree, type LineConnection } from './voice-operator-hands-free'
+import { HandsFreePresence, REAL_CONNECT, VoiceOperatorHandsFree, handsFreeAction, type LineConnection, type VoiceOperatorEvent } from './voice-operator-hands-free'
 import { UsageTracker } from './usage-tracker'
 import { SystemStatsWatcher } from './system-stats'
 import { SpeechLinks } from './voice-operator-speech'
@@ -361,7 +361,7 @@ let forkTitler: ForkTitler
 let receptionist: Receptionist | undefined
 /** Pictures agents show the user in Control's transcript. */
 const controlImages = new ControlImages()
-/** Control's backlog, built with it: its size goes to every client for the transcript's badge. */
+/** Control's backlog, built with it: its size and whether it is held go to every client, for the transcript's badge and toggle. */
 let receptionistBacklog: Backlog | undefined
 /** Who Control's speech is being heard as, while it speaks: see `ReceptionistStatusMessage.speaker`. */
 let receptionistSpeaker: string | undefined
@@ -390,6 +390,11 @@ const remoteDictation = new RemoteDictation(new VoiceOperator(), {
   onSpeaking: (speaking) => dictationPresence.phone(speaking),
 })
 
+/** What the phone calls itself in `client-hello` (src/mobile/main.tsx). */
+const MOBILE_CLIENT_NAME = 'spaceterm-mobile'
+/** What the desktop client calls itself in `client-hello` (src/client/renderer/src/main.tsx). */
+const DESKTOP_CLIENT_NAME = 'spaceterm-electron'
+
 /**
  * Hands-free, which Voice Operator runs: this server registers "control" with
  * it, turns it on on the Mac's microphone for the desktop, and relays each
@@ -405,8 +410,15 @@ const voiceOperatorHandsFree = new VoiceOperatorHandsFree(
     log: (message) => serverLog(message),
   },
   (event) => {
+    actOnHandsFree(event, DESKTOP_DEVICE)
     handsFreePresence.see('mac', event)
-    broadcastToAll({ type: 'hands-free-event', source: 'mac', event })
+    // Every window shows it; the first one plays its sounds, so each is heard once.
+    let audio = true
+    for (const client of clients) {
+      if (client.name !== DESKTOP_CLIENT_NAME) continue
+      send(client.link, { type: 'hands-free-event', source: 'mac', event, audio })
+      audio = false
+    }
   },
   isOperatorHome(),
 )
@@ -414,8 +426,74 @@ const voiceOperatorHandsFree = new VoiceOperatorHandsFree(
 const handsFreeStreams = new Map<string, LineConnection>()
 /** The phone's audio and lifecycle record, ~/.spaceterm/mobile-events.jsonl. */
 const mobileEventsLog = new MobileEventsLog()
-/** What the phone calls itself in `client-hello` (src/mobile/main.tsx). */
-const MOBILE_CLIENT_NAME = 'spaceterm-mobile'
+
+/** Hands-free is registered with Voice Operator only while a desktop or phone client is connected. */
+function updateHandsFreeClients(): void {
+  voiceOperatorHandsFree.setClientsPresent([...clients].some((c) => c.name === DESKTOP_CLIENT_NAME || c.name === MOBILE_CLIENT_NAME))
+}
+
+/** Control stopped mid-reply because the user began talking `cutInMsAgo` ago: heard up to then, within reason. */
+function cutInOnReceptionist(cutInMsAgo: number | undefined): void {
+  void receptionist?.cancel(typeof cutInMsAgo === 'number' && cutInMsAgo > 0 ? Date.now() - Math.min(cutInMsAgo, MAX_CUT_IN_MS) : undefined)
+}
+
+/**
+ * One of Voice Operator's hands-free messages, acted on here and nowhere
+ * else, once: the words said go to Control, which comes to `holder`, the
+ * device they were said on; a cut-in stops Control. Clients only show it.
+ */
+function actOnHandsFree(event: VoiceOperatorEvent, holder: ReceptionistHolder | undefined): void {
+  const action = handsFreeAction(event)
+  if (!action) return
+  if (action.kind === 'cut-in') {
+    serverLog(`[hands-free] ${holder?.label ?? 'a phone'} cut Control off as of ${action.msAgo}ms ago`)
+    cutInOnReceptionist(action.msAgo)
+    return
+  }
+  serverLog(`[hands-free] ${action.text.length} chars to Control from ${holder?.label ?? 'a phone'} (ended on ${String(event.reason)}${action.interrupted ? ', having cut it off' : ''})`)
+  handsFreeWords(action.text, action.interrupted, holder)
+}
+
+/**
+ * Words dictated hands-free, the wake word off, for Control; empty when
+ * nothing was caught for it, so that it stops waiting and carries on with
+ * whatever the dictation stopped. `interrupted`: the dictation cut Control's
+ * reply off.
+ */
+function handsFreeWords(text: string, interrupted: boolean, holder: ReceptionistHolder | undefined): void {
+  if (!receptionist) return
+  if (!text) {
+    // "Control." alone brings Control back from away, as words would — but
+    // only when nobody holds it: a misheard wake word with nothing after it
+    // must not take Control from another device.
+    if (holder && !stateManager.getReceptionistHolder()) {
+      serverLog(`[receptionist] "Control." alone from ${holder.label}: back from away`)
+      setReceptionistHolder(holder)
+    }
+    receptionist.heardNothing(interrupted)
+    return
+  }
+  if (isControlShutdown(text)) {
+    sendReceptionistAway(text, holder?.label, interrupted)
+    return
+  }
+  // The wake word names Control: speaking to it brings it here.
+  if (holder) setReceptionistHolder(holder)
+  void receptionist.hear(text, 'spoken')
+}
+
+/**
+ * "Let me turn this off" or "Control, shutdown" (control-shutdown.ts), said
+ * hands-free or as a whole message: away, at once and without asking the
+ * model, until "Control" again brings it back. Let go before the dictation
+ * that carried the words does, so nothing resumes on that device first.
+ */
+function sendReceptionistAway(text: string, from: string | undefined, interrupted: boolean): void {
+  serverLog(`[receptionist] "${text}" from ${from ?? 'a client'}: away until "Control" again`)
+  setReceptionistHolder(null)
+  receptionist?.sentAway(interrupted)
+}
+
 /**
  * Who owns a client's dictations: its device, which a reconnect keeps, so a
  * phone back from a dropped connection can carry on with what it was saying.
@@ -1175,7 +1253,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
   send(link, receptionistStatus())
   send(link, receptionistHolderMessage())
   send(link, { type: 'receptionist-unread', ...receptionist?.unread() ?? { count: 0 } })
-  send(link, { type: 'receptionist-backlog', count: receptionistBacklog?.size ?? 0 })
+  send(link, { type: 'receptionist-backlog', ...receptionistBacklog?.state ?? { count: 0, held: false, items: [] } })
   send(link, { type: 'agent-names', names: agentNameMap() })
 
   // Availability is pushed on change, which a client that connected after the
@@ -1196,6 +1274,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
       remoteDictation.disconnected(dictationOwner(client))
       // Voice Operator keeps the session a while for the phone to come back and resume it.
       handsFreeStreams.get(client.id)?.close()
+      updateHandsFreeClients()
       speechLinks.close(client.id)
       updateReceptionistListener()
       for (const [nodeId, owner] of terminalBorrowers) {
@@ -1774,6 +1853,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       const who = msg.client ?? 'unknown client'
       client.name = msg.client
       client.protocolVersion = msg.protocolVersion
+      updateHandsFreeClients()
       if (client.name === MOBILE_CLIENT_NAME) mobileEventsLog.server('client-connected', clientLabel(client), { protocol: msg.protocolVersion })
       if (isClientDevice(msg.device)) {
         client.device = { id: msg.device.id, label: msg.device.label }
@@ -1838,8 +1918,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'receptionist-stop': {
       // Talked over before the phone could stop it: heard up to when they began, within reason.
-      const ago = msg.cutInMsAgo
-      void receptionist?.cancel(typeof ago === 'number' && ago > 0 ? Date.now() - Math.min(ago, MAX_CUT_IN_MS) : undefined)
+      cutInOnReceptionist(msg.cutInMsAgo)
       break
     }
 
@@ -1865,6 +1944,10 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       }
       break
     }
+
+    case 'receptionist-hold-backlog':
+      receptionist?.holdBacklog(msg.held)
+      break
 
     case 'receptionist-read':
       // A v14 client's: on screen a second, which is not reading.
@@ -2085,8 +2168,14 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       const key = `stream:${client.id}`
       const stream = voiceOperatorHandsFree.openStream(
         (line) => {
-          // Passed through unread, but for whether the user is talking to Control.
-          try { handsFreePresence.see(key, JSON.parse(line) as Record<string, unknown>) } catch { /* not ours to judge */ }
+          let event: VoiceOperatorEvent | undefined
+          try { event = JSON.parse(line) as VoiceOperatorEvent } catch { /* not ours to judge */ }
+          if (event) {
+            // Acted on here, before the phone has it; the phone only shows it and plays its sounds.
+            const holder = client.device ? { deviceId: client.device.id, label: client.device.label } : undefined
+            actOnHandsFree(event, holder)
+            handsFreePresence.see(key, event)
+          }
           send(client.link, { type: 'hands-free-stream', kind: 'line', line })
         },
         () => {
@@ -2112,50 +2201,32 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
-    case 'receptionist-hands-free':
     case 'receptionist-say': {
       const text = msg.text.trim()
-      if (msg.type === 'receptionist-hands-free') handsFreePresence.delivered()
       if (!receptionist) {
         remoteDictation.delivered(dictationOwner(client))
         break
       }
-      // A dictation for Control caught nothing for it. Whatever its start
-      // stopped carries on; hands-free having cut Control off itself counts.
+      // A dictation for Control caught nothing for it: whatever its start stopped carries on.
       if (!text) {
-        // "Control." alone brings Control back from away, as words would —
-        // but only when nobody holds it: a misheard wake word with nothing
-        // after it must not take Control from another device.
-        if (msg.type === 'receptionist-hands-free' && client.device && !stateManager.getReceptionistHolder()) {
-          serverLog(`[receptionist] "Control." alone from ${client.device.label}: back from away`)
-          setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
-        }
-        receptionist.heardNothing(msg.type === 'receptionist-hands-free' && msg.interrupted === true)
+        receptionist.heardNothing(false)
         remoteDictation.delivered(dictationOwner(client))
         break
       }
-      // "Let me turn this off" or "Control, shutdown" (control-shutdown.ts),
-      // said hands-free or as a whole message: away, at once and without
-      // asking the model, until "Control" again brings it back. Let go before
-      // the dictation that carried the words does, so nothing resumes on this
-      // device first.
       if (isControlShutdown(text)) {
-        serverLog(`[receptionist] "${text}" from ${client.device?.label ?? 'a client'}: away until "Control" again`)
-        setReceptionistHolder(null)
-        receptionist.sentAway(msg.type === 'receptionist-hands-free' && msg.interrupted === true)
+        sendReceptionistAway(text, client.device?.label, false)
         remoteDictation.delivered(dictationOwner(client))
         break
       }
-      // The wake word names Control, and typing in its transcript is writing
-      // to it: as speaking to it does, it brings Control here. Not the
-      // phone's microphone button, which leaves it where it is: the
-      // transcript's holder badge says where, and the phone plays a jingle
-      // when nobody holds it, so no reply is coming.
-      const staysPut = msg.type === 'receptionist-say' && msg.staysPut === true
-      if (client.device && !staysPut) setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
+      // Typing in its transcript is writing to Control: as speaking to it
+      // does, it brings Control here. Not the phone's microphone button,
+      // which leaves it where it is: the transcript's holder badge says
+      // where, and the phone plays a jingle when nobody holds it, so no reply
+      // is coming.
+      if (client.device && msg.staysPut !== true) setReceptionistHolder({ deviceId: client.device.id, label: client.device.label })
       // Heard before the dictation that carried the words lets go, so that
       // letting go finds them already taken rather than resuming without them.
-      void receptionist.hear(text, msg.type === 'receptionist-say' && msg.spoken !== true ? 'typed' : 'spoken')
+      void receptionist.hear(text, msg.spoken === true ? 'spoken' : 'typed')
       remoteDictation.delivered(dictationOwner(client))
       break
     }
@@ -3576,7 +3647,7 @@ async function startServer(): Promise<void> {
     isLive: (nodeId) => stateManager.getNode(nodeId) !== undefined,
     store: fileStore(NAMES_FILE),
   })
-  receptionistBacklog = new Backlog({ onSize: (count) => broadcastToAll({ type: 'receptionist-backlog', count }) })
+  receptionistBacklog = new Backlog({ onChange: (state) => broadcastToAll({ type: 'receptionist-backlog', ...state }) })
   receptionist = new Receptionist({
     askModel: askReceptionistModel,
     agents: receptionistAgents,

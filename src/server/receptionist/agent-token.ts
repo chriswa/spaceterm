@@ -42,3 +42,11 @@ export function stripBraces(written: string): string {
   const trimmed = written.trim()
   return trimmed.startsWith('{') && trimmed.endsWith('}') ? trimmed.slice(1, -1).trim() : trimmed
 }
+
+/** Agent tokens as the user reads them: `{Kevin:amber-otter}` as "Kevin", a bare `{amber-otter}` as itself. */
+export function tokensAsNames(text: string): string {
+  return text.replace(AGENT_TOKEN, (_, inside: string) => {
+    const ref = parseAgentRef(inside)
+    return ref.name || ref.key
+  })
+}

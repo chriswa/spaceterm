@@ -5,7 +5,7 @@ import type { Cue } from './cues'
  * What Control's turns sound like on the phone, beyond its voice and the
  * sonar while it waits (thinking-cue.ts): the `nothingToSay` tone when it
  * finished thinking and chose to say nothing — not a failure — and the
- * `error` tone when it failed. Played only where replies are Aloud
+ * `error` tone when it failed. Played only where replies are Hear
  * (`cuesAudible`, cues.ts).
  *
  * A turn the user cut short is neither: talking over Control, or a tap on

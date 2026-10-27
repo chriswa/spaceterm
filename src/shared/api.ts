@@ -28,7 +28,7 @@ import type {
   SessionInfo,
   SnapshotMessage,
   SpeakOutcome,
-  ReceptionistPhase, ControlTranscriptEntry, ReceptionistHoldAction
+  ReceptionistPhase, ControlTranscriptEntry, ReceptionistHoldAction, ReceptionistBacklogEntry
 } from './protocol'
 import type { LaunchPrefs } from './launch-prefs'
 import type { AutomationPatch } from './automation'
@@ -299,16 +299,13 @@ export interface DictationApi {
  * relayed by the server. See `src/mobile/hands-free.ts`.
  */
 export interface HandsFreeApi {
-  /**
-   * Words said after the wake word: to Control, which comes to this device.
-   * `interrupted`: the wake word cut Control's reply off — with no words, it
-   * then says it had not finished and carries on.
-   */
-  say(text: string, interrupted?: boolean): void
   /** Hands-free on the Mac's microphone, on or off. */
   setMac(on: boolean): void
-  /** What Voice Operator says about hands-free on the Mac, as it said it. */
-  onMacEvent(callback: (event: Record<string, unknown>) => void): () => void
+  /**
+   * What Voice Operator says about hands-free on the Mac, as it said it, and
+   * whether this client plays its sounds (`audio`).
+   */
+  onMacEvent(callback: (event: Record<string, unknown>, audio: boolean) => void): () => void
   /** This phone's stream to Voice Operator: open, lines out, close; lines back through `onStream`. */
   openStream(): void
   streamLine(line: string): void
@@ -344,6 +341,14 @@ export interface ReceptionistStatus {
   speaker?: string
 }
 
+/** What `receptionist-backlog` says, minus the envelope. */
+export interface ReceptionistBacklog {
+  count: number
+  held: boolean
+  /** Oldest first; empty from a server too old to list them, though `count` may not be. */
+  items: ReceptionistBacklogEntry[]
+}
+
 /**
  * The receptionist, "Control": a server-side voice agent that talks about every
  * live agent surface. See `src/server/receptionist/`.
@@ -366,6 +371,8 @@ export interface ReceptionistApi {
    * See `ReceptionistHoldMessage`.
    */
   hold(action: ReceptionistHoldAction): void
+  /** Hold Control's backlog, or let it go: see `ReceptionistHoldBacklogMessage`. */
+  holdBacklog(held: boolean): void
   /**
    * The user took in what Control has said since their last message up to
    * `char` characters into part `part` of the reply at `of`, and none of the
@@ -381,8 +388,8 @@ export interface ReceptionistApi {
   readAloud(): void
   /** Replies with words waiting for the user, and where the oldest is. */
   onUnread(callback: (unread: { count: number; first?: number }) => void): () => void
-  /** How many items are on Control's backlog. */
-  onBacklog(callback: (count: number) => void): () => void
+  /** What is on Control's backlog, and whether it is held. */
+  onBacklog(callback: (backlog: ReceptionistBacklog) => void): () => void
   /** How far Control's voice has got through a reply, or null once nothing is spoken. Not replayed. */
   onSpeaking(callback: (speaking: { of: number; parts: number[] } | null) => void): () => void
   /** This client's replay: what is playing, or null; `refused` says why one would not start. Not replayed. */

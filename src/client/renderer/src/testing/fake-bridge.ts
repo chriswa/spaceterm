@@ -2,7 +2,7 @@ import type {
   AgentSearchResponse, CommandOutcome,
   Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
   SessionInfo, SystemApi, TtsApi, WindowApi, DictationApi, SpeechLinkApi,
-  ReceptionistApi, ReceptionistStatus, HandsFreeApi, ControlTranscriptPage
+  ReceptionistApi, ReceptionistBacklog, ReceptionistStatus, HandsFreeApi, ControlTranscriptPage
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
@@ -182,11 +182,11 @@ export class FakeBridge implements Api {
   private readonly cameraFollow = new Set<(nodeId: NodeId) => void>()
   private readonly receptionistNotice = new Set<(text: string) => void>()
   private readonly receptionistUnread = new Set<(unread: { count: number; first?: number }) => void>()
-  private readonly receptionistBacklog = new Set<(count: number) => void>()
+  private readonly receptionistBacklog = new Set<(backlog: ReceptionistBacklog) => void>()
   private readonly receptionistReplaying = new Set<(playing: { of: number; part: number } | null, refused?: string) => void>()
   private readonly receptionistSpeaking = new Set<(speaking: { of: number; parts: number[] } | null) => void>()
   private readonly transcriptAppended = new Set<(entries: ControlTranscriptEntry[]) => void>()
-  private readonly handsFreeMac = new Set<(event: Record<string, unknown>) => void>()
+  private readonly handsFreeMac = new Set<(event: Record<string, unknown>, audio: boolean) => void>()
   private readonly handsFreeStream = new Set<(message: { kind: 'line'; line: string } | { kind: 'closed' }) => void>()
   private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
   /** Mod envelope listeners, keyed by the modId they asked for. */
@@ -288,7 +288,9 @@ export class FakeBridge implements Api {
     cameraFollow: (nodeId: NodeId): void => { for (const fn of this.cameraFollow) fn(nodeId) },
     receptionistNotice: (text: string): void => { for (const fn of this.receptionistNotice) fn(text) },
     receptionistUnread: (unread: { count: number; first?: number }): void => { for (const fn of this.receptionistUnread) fn(unread) },
-    receptionistBacklog: (count: number): void => { for (const fn of this.receptionistBacklog) fn(count) },
+    receptionistBacklog: (count: number, held = false, items: ReceptionistBacklog['items'] = []): void => {
+      for (const fn of this.receptionistBacklog) fn({ count, held, items })
+    },
     receptionistSpeaking: (speaking: { of: number; parts: number[] } | null): void => {
       for (const fn of this.receptionistSpeaking) fn(speaking)
     },
@@ -296,7 +298,7 @@ export class FakeBridge implements Api {
       for (const fn of this.receptionistReplaying) fn(playing, refused)
     },
     transcriptAppended: (entries: ControlTranscriptEntry[]): void => { for (const fn of this.transcriptAppended) fn(entries) },
-    handsFreeMacEvent: (event: Record<string, unknown>): void => { for (const fn of this.handsFreeMac) fn(event) },
+    handsFreeMacEvent: (event: Record<string, unknown>, audio = true): void => { for (const fn of this.handsFreeMac) fn(event, audio) },
     handsFreeStream: (message: { kind: 'line'; line: string } | { kind: 'closed' }): void => { for (const fn of this.handsFreeStream) fn(message) },
     systemMetrics: (sample: SystemMetricsSample): void => {
       for (const fn of this.systemMetrics) fn(sample)
@@ -452,7 +454,6 @@ export class FakeBridge implements Api {
   }
 
   readonly handsFree: HandsFreeApi = {
-    say: (text, interrupted) => this.record('handsFree.say', text, interrupted),
     setMac: (on) => this.record('handsFree.setMac', on),
     onMacEvent: (cb) => subscribe(this.handsFreeMac, cb),
     openStream: () => this.record('handsFree.openStream'),
@@ -476,6 +477,7 @@ export class FakeBridge implements Api {
   readonly receptionist: ReceptionistApi = {
     stop: () => this.record('receptionist.stop'),
     hold: (action) => this.record('receptionist.hold', action),
+    holdBacklog: (held) => this.record('receptionist.holdBacklog', held),
     say: (text, how) => this.record('receptionist.say', text, ...(how ? [how] : [])),
     mark: (of, part, char) => this.record('receptionist.mark', of, part, char),
     readAll: () => this.record('receptionist.readAll'),

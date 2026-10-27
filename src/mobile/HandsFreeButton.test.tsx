@@ -12,7 +12,7 @@ let bridge: FakeBridge
 
 beforeEach(() => {
   bridge = installFakeBridge()
-  uninstall = installHandsFree(realHandsFreeDeps(window.api, macHandsFreeLink(window.api.handsFree)))
+  uninstall = installHandsFree(realHandsFreeDeps(macHandsFreeLink(window.api.handsFree)))
 })
 
 afterEach(() => {
