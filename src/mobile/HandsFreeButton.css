@@ -63,3 +63,25 @@
 .m-hands-free.m-hands-free--deaf { color: #8a8a99; }
 .m-hands-free__strike-gap { stroke: #fff; stroke-width: 5; }
 .m-hands-free__strike { stroke: #11111b; }
+/* Where the sound goes (HandsFreeButton.tsx, Voice Operator's `setup`), in
+   the button's lower right corner while hands-free is on: headphones, a
+   speaker, or "?". Teal while Voice Operator's echo experiment listens through
+   our own voice on the speaker, so the experiment is never on unnoticed. */
+.m-hands-free__route {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #11111b;
+  color: #fff;
+  box-shadow: 0 0 0 1.5px #fff;
+  font: 700 10px/1 system-ui, sans-serif;
+  pointer-events: none;
+}
+.m-hands-free__route--open { background: #b45309; }
+.m-hands-free__route--echo { background: #0d9488; }

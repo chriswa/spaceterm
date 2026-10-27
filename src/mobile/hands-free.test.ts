@@ -79,6 +79,17 @@ describe('hands-free, following Voice Operator', () => {
     expect(useHandsFree.getState().standingAside).toBeNull()
   })
 
+  it('keeps where the sound goes and the echo experiment, as Voice Operator says them', () => {
+    h = harness()
+    expect(useHandsFree.getState().route).toBeNull()
+    h.vo({ type: 'setup', route: 'open', echoExperiment: 'active' })
+    expect(useHandsFree.getState()).toMatchObject({ route: 'open', echoExperiment: 'active' })
+    h.vo({ type: 'setup', route: 'somewhere-new', echoExperiment: 'sideways' })
+    expect(useHandsFree.getState()).toMatchObject({ route: null, echoExperiment: 'off' })
+    h.vo({ type: 'setup', route: 'ear', echoExperiment: 'standby' })
+    expect(useHandsFree.getState()).toMatchObject({ route: 'ear', echoExperiment: 'standby' })
+  })
+
   it('counts the window down from when Voice Operator says it closes', () => {
     h = harness()
     h.state('listening', { conversation: true, closesAt: h.now() + 9_500 })

@@ -66,6 +66,30 @@ describe('the hands-free button on the Mac', () => {
     expect(button.getAttribute('aria-label')).toMatch(/always listening for "Control"/)
   })
 
+  it('wears a badge saying where the sound goes, and whether the echo experiment listens through it', () => {
+    render(<HandsFreeButton chrome="toolbar" />)
+    const button = screen.getByRole('button', { name: /always listen/ })
+    const setup = (route: unknown, echoExperiment: string) =>
+      act(() => bridge.emit.handsFreeMacEvent({ type: 'setup', route, echoExperiment }))
+    // Off, no badge, whatever Voice Operator says.
+    setup('open', 'off')
+    expect(button.querySelector('.m-hands-free__route')).toBeNull()
+    fireEvent.click(button)
+    const badge = () => button.querySelector('.m-hands-free__route')?.getAttribute('data-route')
+    expect(badge()).toBe('open')
+    expect(button.getAttribute('aria-label')).toMatch(/\(sound on the speaker: not listening while our voice plays\) — click to stop$/)
+    setup('open', 'active')
+    expect(badge()).toBe('echo')
+    expect(button.getAttribute('aria-label')).toMatch(/echo cancellation experiment/)
+    setup('ear', 'standby')
+    expect(badge()).toBe('ear')
+    expect(button.getAttribute('aria-label')).toMatch(/sound in your ears/)
+    setup('unsure', 'off')
+    expect(badge()).toBe('unsure')
+    setup(null, 'off')
+    expect(badge()).toBeUndefined()
+  })
+
   it('does nothing when hands-free cannot run on this Mac, and says why', () => {
     render(<HandsFreeButton chrome="toolbar" unavailable="Hands-free needs macOS 26" />)
     const button = screen.getByRole('button', { name: 'Hands-free needs macOS 26' })

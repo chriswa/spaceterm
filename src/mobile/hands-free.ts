@@ -50,6 +50,23 @@ export type HandsFreePhase = 'off' | 'listening' | 'hearing' | 'sending'
 export type StandingAside = 'speech' | 'sound' | 'dictation'
 
 /**
+ * Where this device's sound goes, as Voice Operator understands it (its
+ * `setup`): `ear`, a headset — AirPods, the work headset — where the
+ * microphone does not hear our voice and "Control" cuts it off; `open`, the
+ * phone's or the Mac's own speaker, which the microphone hears, so hands-free
+ * does not listen while our voice plays; `unsure`, a route it cannot tell (a
+ * monitor's speakers, a Bluetooth speaker, a car).
+ */
+export type AudioRoute = 'ear' | 'open' | 'unsure'
+
+/**
+ * Voice Operator's echo cancellation experiment here (its menu checkbox):
+ * `off`; `standby`, on but not acting on this route; `active`, listening
+ * through our own voice on the speaker, where only "Control" cuts it off.
+ */
+export type EchoExperiment = 'off' | 'standby' | 'active'
+
+/**
  * `on`: hands-free is wanted on this device. `conversation`: the window after
  * "Control" in which anything said starts a dictation without it.
  * `secondsLeft`: how long it has left, whole seconds, rounded up — full while
@@ -57,12 +74,15 @@ export type StandingAside = 'speech' | 'sound' | 'dictation'
  * being checked. `mini`: the turn model's latest answer in this dictation;
  * kept while what was said is sent, so what ended it can be seen.
  * `standingAside`: not listening to the microphone, and why; null while it is.
+ * `route` and `echoExperiment`: Voice Operator's `setup`, for the button's badge.
  */
-export const useHandsFree = create<{ on: boolean; phase: HandsFreePhase; conversation: boolean; secondsLeft: number | null; checking: boolean; mini: MiniAnswer | null; standingAside: StandingAside | null }>(
-  () => ({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, mini: null, standingAside: null }),
+export const useHandsFree = create<{ on: boolean; phase: HandsFreePhase; conversation: boolean; secondsLeft: number | null; checking: boolean; mini: MiniAnswer | null; standingAside: StandingAside | null; route: AudioRoute | null; echoExperiment: EchoExperiment }>(
+  () => ({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, mini: null, standingAside: null, route: null, echoExperiment: 'off' }),
 )
 
 const STANDING_ASIDE: readonly StandingAside[] = ['speech', 'sound', 'dictation']
+const ROUTES: readonly AudioRoute[] = ['ear', 'open', 'unsure']
+const ECHO_EXPERIMENT: readonly EchoExperiment[] = ['off', 'standby', 'active']
 
 /**
  * turn-1-mini, which decides when a dictation ends: its latest answer `p`,
@@ -243,6 +263,17 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
         if (typeof event.haptic === 'string' && HAPTICS.has(event.haptic)) deps.haptic(event.haptic as HapticPattern)
         break
       }
+      case 'setup': {
+        const route = ROUTES.find((r) => r === event.route) ?? null
+        const echoExperiment = ECHO_EXPERIMENT.find((e) => e === event.echoExperiment) ?? 'off'
+        const was = useHandsFree.getState()
+        if (was.route !== route || was.echoExperiment !== echoExperiment) {
+          log(`sound ${route ?? 'unknown'}, echo experiment ${echoExperiment}`)
+          record('hands-free-setup', { route, echoExperiment })
+          useHandsFree.setState({ route, echoExperiment })
+        }
+        break
+      }
       case 'cut-in': {
         const msAgo = typeof event.msAgo === 'number' ? Math.round(event.msAgo) : 0
         log(`cut Control off as of ${msAgo}ms ago, when they began`)
@@ -269,7 +300,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
     setPending(false)
     setOn = () => {}
     if (useHandsFree.getState().on) deps.link.stop()
-    useHandsFree.setState({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, mini: null, standingAside: null })
+    useHandsFree.setState({ on: false, phase: 'off', conversation: false, secondsLeft: null, checking: false, mini: null, standingAside: null, route: null, echoExperiment: 'off' })
   }
 }
 

@@ -547,6 +547,13 @@ Spaceterm is its client (`hands-free.ts`):
   for you), and the ear is **greyed and struck through**, as a muted
   microphone is, until it listens again; its tooltip and label say so.
   AirPods or a headset never cause it (Voice Operator's `standingAside`).
+  While it is on, a **badge** in its lower right corner says where the sound
+  goes (Voice Operator's `setup`): headphones for a headset, where "Control"
+  cuts our voice off; an amber speaker for the phone's or the Mac's own
+  speaker, where it stands aside instead; "?" for a route Voice Operator
+  cannot tell. With Voice Operator's echo cancellation experiment on (its menu
+  checkbox) and listening through our voice on the speaker, the badge is a
+  **teal** speaker sounding waves, and only "Control" cuts in.
 - **Its cues** are Voice Operator's to call and this device's to play: three
   soft steps up as it is ready, two notes up as your words begin to be taken
   down and two down as they are sent, the sad tune (`notWakeWord`) for speech

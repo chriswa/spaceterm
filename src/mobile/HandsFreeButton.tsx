@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { holdState, onHoldStateChange, setHoldMicrophone, type HoldState } from './held-microphone'
 import { nativeMicrophoneAvailable } from './native-microphone'
-import { endSilence, setHandsFree, useHandsFree } from './hands-free'
+import { endSilence, setHandsFree, useHandsFree, type AudioRoute } from './hands-free'
 import { Spark } from './Spark'
 import { conversationLeft } from './mic-button'
 import './HandsFreeButton.css'
@@ -56,6 +56,14 @@ export function thresholdLine(at: number, [x0, x1]: readonly [number, number] = 
  * Operator). Its other reasons, a cue or a Fn dictation, are too brief or
  * show elsewhere.
  *
+ * While it is on, a badge in its corner says where the sound goes (Voice
+ * Operator's `setup`), which decides whether "Control" can cut our voice off:
+ * headphones for a headset (it can), a speaker for the phone's or the Mac's
+ * own (it cannot: hands-free stands aside while our voice plays), a "?" for a
+ * route Voice Operator cannot tell. With Voice Operator's echo experiment
+ * listening through our voice on the speaker, the speaker badge turns teal and
+ * sounds waves.
+ *
  * The same button on the Mac, in the toolbar beside Control (`chrome:
  * 'toolbar'`): there it holds the Mac's input, and holding it is hands-free.
  * `unavailable` says why it cannot run there; the button then does nothing
@@ -77,6 +85,8 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
   const secondsLeft = useHandsFree((s) => s.secondsLeft)
   const checking = useHandsFree((s) => s.checking)
   const deaf = useHandsFree((s) => s.phase === 'listening' && s.standingAside === 'speech')
+  const route = useHandsFree((s) => s.route)
+  const echoActive = useHandsFree((s) => s.echoExperiment === 'active')
   // turn-1-mini answers all the time; its bar shows only in a pause (its peak is held from the
   // pause's start) and while what was said is sent, and clears as the speaker carries on, as the quiet does.
   const mini = useHandsFree((s) => (s.mini?.peak != null ? s.mini : null))
@@ -107,7 +117,7 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
       : notListening ? 'Hands-free: not listening while our voice plays out loud, so it does not hear itself'
       : checking && !ending ? 'Hands-free: heard something — checking whether it was for Control'
       : windowOpen ? `Hands-free, in conversation with Control: just talk, no need to say "Control"${secondsLeft !== null ? ` — ${secondsLeft} seconds of quiet left` : ''}`
-      : handsFree ? 'Hands-free: always listening for "Control"' : 'Microphone held open'} — ${chrome === 'toolbar' ? 'click' : 'tap'} to stop`
+      : handsFree ? 'Hands-free: always listening for "Control"' : 'Microphone held open'}${handsFree && route ? ` (${routeLabel(route, echoActive)})` : ''} — ${chrome === 'toolbar' ? 'click' : 'tap'} to stop`
     : handsFree ? 'Hands-free: always listen for "Control"' : 'Hold the microphone open with AirPods')
   return (
     <button
@@ -154,7 +164,44 @@ export function HandsFreeButton({ chrome = 'phone-bar', unavailable }: { chrome?
         </>
       )}
       <HandsFreeIcon struck={notListening} />
+      {on && handsFree && route && <RouteBadge route={route} echoActive={echoActive} />}
     </button>
+  )
+}
+
+/** The badge's words, in the button's label and tooltip. */
+function routeLabel(route: AudioRoute, echoActive: boolean): string {
+  if (route === 'ear') return 'sound in your ears: say "Control" to cut in'
+  if (route === 'unsure') return 'cannot tell whether the microphone hears our voice'
+  return echoActive
+    ? 'sound on the speaker, echo cancellation experiment: say "Control" to cut in'
+    : 'sound on the speaker: not listening while our voice plays'
+}
+
+/**
+ * Where the sound goes, in the button's corner: headphones, a speaker (teal
+ * and sounding, with the echo experiment listening through it), or "?".
+ */
+function RouteBadge({ route, echoActive }: { route: AudioRoute; echoActive: boolean }) {
+  const kind = route === 'open' && echoActive ? 'echo' : route
+  return (
+    <span className={`m-hands-free__route m-hands-free__route--${kind}`} data-route={kind} aria-hidden="true">
+      {route === 'unsure' ? '?' : (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          {route === 'ear' ? (
+            <>
+              <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
+              <path d="M21 19a2 2 0 0 1-2 2h-1v-6h3zM3 19a2 2 0 0 0 2 2h1v-6H3z" />
+            </>
+          ) : (
+            <>
+              <path d="M11 5 6 9H2v6h4l5 4z" />
+              {echoActive && <path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14" />}
+            </>
+          )}
+        </svg>
+      )}
+    </span>
   )
 }
 
