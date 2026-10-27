@@ -5,6 +5,7 @@ import { useNodeStore } from '@/stores/nodeStore'
 import type { NodeId } from '../shared/ids'
 import { TerminalView } from './TerminalView'
 import { Composer } from './Composer'
+import { composeMicOn } from './compose-mic-memory'
 import { useVisualViewportVars } from './viewport'
 import { Dictation } from './dictation'
 import { primeCues } from './cues'
@@ -166,9 +167,10 @@ export function MobileApp({ Canvas = App, canvasMounted = ALWAYS }: { Canvas?: C
             // open the microphone and play sound.
             keyboardKeeperRef.current?.focus()
             primeCues()
-            // The composer opens into dictation — unless one is already going,
-            // started in another composer: this one takes it over.
-            if (useDictationSession.getState().mic.kind === 'idle') {
+            // The composer opens into dictation if the last prompt shipped with
+            // the microphone on (compose-mic-memory.ts) — unless one is already
+            // going, started in another composer: this one takes it over.
+            if (useDictationSession.getState().mic.kind === 'idle' && composeMicOn()) {
               void useDictationSession.getState().start(Dictation.begin(window.api.dictation))
             }
             window.api.log('[mobile-view] composer opened')

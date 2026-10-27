@@ -9,24 +9,12 @@
  * remembers nothing.
  */
 
+import { browserStorage, type MemoryStorage } from './browser-storage'
+
 const KEY = 'spaceterm.handsFree'
 
-export interface MemoryStorage {
-  getItem(key: string): string | null
-  setItem(key: string, value: string): void
-  removeItem(key: string): void
-}
-
-function storage(): MemoryStorage | null {
-  try {
-    return typeof localStorage === 'undefined' ? null : localStorage
-  } catch {
-    return null
-  }
-}
-
 /** Remember hands-free on (for this build) or off. */
-export function rememberHandsFree(on: boolean, build: string, store: MemoryStorage | null = storage()): void {
+export function rememberHandsFree(on: boolean, build: string, store: MemoryStorage | null = browserStorage()): void {
   try {
     if (on) store?.setItem(KEY, JSON.stringify({ build }))
     else store?.removeItem(KEY)
@@ -34,7 +22,7 @@ export function rememberHandsFree(on: boolean, build: string, store: MemoryStora
 }
 
 /** Whether hands-free was on when this build last ran. */
-export function rememberedHandsFree(build: string, store: MemoryStorage | null = storage()): boolean {
+export function rememberedHandsFree(build: string, store: MemoryStorage | null = browserStorage()): boolean {
   try {
     const kept = JSON.parse(store?.getItem(KEY) ?? 'null') as { build?: unknown } | null
     return kept?.build === build

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { act, cleanup, fireEvent, render } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { installFakeBridge } from '@/testing/fake-bridge'
 import { useNodeStore } from '@/stores/nodeStore'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
@@ -10,6 +10,8 @@ import type { TerminalNodeData } from '../shared/state'
 import { MobileApp } from './MobileApp'
 import { createGate } from './gate'
 import { showToast } from '@/lib/toast'
+import { useDictationSession } from './dictation-session'
+import { composeMicOn, rememberComposeMic } from './compose-mic-memory'
 
 const SURFACE = asNodeId('c35ae62d-aa5a-46d1-8e03-086f95cd612e')
 
@@ -58,6 +60,43 @@ describe('the phone’s terminal view and composer', () => {
 
     act(() => useSurfacePresenterStore.getState().publishFocusedTerminal(null))
     expect(views()).toBe(0)
+  })
+})
+
+describe('the composer’s microphone', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    useDictationSession.setState({ mic: { kind: 'idle' }, error: null })
+  })
+  afterEach(() => useDictationSession.setState({ mic: { kind: 'idle' }, error: null }))
+
+  function openComposer(): HTMLElement {
+    const { container } = render(<MobileApp Canvas={() => null} />)
+    act(() => useSurfacePresenterStore.getState().publishFocusedTerminal(SURFACE))
+    tap(container.querySelector('.mobile-term__area')!)
+    expect(container.querySelector('.mobile-composer')).not.toBeNull()
+    return container
+  }
+
+  it('opens into dictation when nothing has been shipped yet', () => {
+    openComposer()
+    expect(useDictationSession.getState().mic.kind).not.toBe('idle')
+  })
+
+  it('opens quiet after a prompt shipped with the microphone off', () => {
+    rememberComposeMic(false)
+    openComposer()
+    expect(useDictationSession.getState().mic.kind).toBe('idle')
+  })
+
+  it('remembers the microphone off when a typed prompt is shipped', async () => {
+    rememberComposeMic(false)
+    const container = openComposer()
+    rememberComposeMic(true)
+    fireEvent.change(container.querySelector('.mobile-composer__text')!, { target: { value: 'typed, not said' } })
+    fireEvent.click(container.querySelector('.mobile-btn--ship')!)
+    await waitFor(() => expect(container.querySelector('.mobile-composer')).toBeNull())
+    expect(composeMicOn()).toBe(false)
   })
 })
 
