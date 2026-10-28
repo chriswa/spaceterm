@@ -359,13 +359,14 @@ export class ClaudeStateMachine {
           // far as the indicator is concerned — bound the flag's lifetime here
           // the same way the ledger is bounded (invariant 13).
           this.manualCompactPending.delete(surfaceId)
-          // A typed turn also makes prior background context moot, and
-          // dismissing the ledger here bounds any leak from a missed completion
-          // to "until the next prompt". Dismiss, not clear: the launches are
-          // kept as a record of what stopped being waited on, so
-          // handleClientMarkBackground can take them back up. See the
-          // blocking-vs-dismissed note in background-ledger.ts.
-          this.backgroundLedger.dismissAll(surfaceId)
+          // A typed turn stops waiting on work that may never end (monitors,
+          // background shell commands), which bounds a launch whose end we
+          // cannot see to "until the next prompt". Subagents and workflows
+          // keep blocking: they always end, and the agent is still running
+          // them. Dismiss, not clear: the launches are kept as a record of what
+          // stopped being waited on, so handleClientMarkBackground can take
+          // them back up. See dismissOpenEnded in background-ledger.ts.
+          this.backgroundLedger.dismissOpenEnded(surfaceId)
         }
       }
       this.transitionQueue.enqueue(surfaceId, 'working', 'hook', `hook:${hookType}`, hookTime)

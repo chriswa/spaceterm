@@ -74,7 +74,7 @@ ledger in `src/server/claude-state/background-ledger.ts`.
 
 | Signal | Source | New State |
 |--------|--------|-----------|
-| `UserPromptSubmit` hook | hook | working (typed prompts also clear the background ledger; `<task-notification>` prompts do not) |
+| `UserPromptSubmit` hook | hook | working (typed prompts also dismiss the ledger's open-ended work — monitors and background bash — while subagents and workflows keep blocking; `<task-notification>` prompts dismiss nothing) |
 | `PreToolUse` hook | hook | working (suppressed when in waiting state) |
 | `SubagentStart` hook | hook | working (suppressed when in waiting state); registers a background subagent in the ledger |
 | `PreCompact` hook | hook | working (suppressed when in waiting state) |

@@ -190,6 +190,34 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'dismissOpenEnded dismisses monitors and shell commands, and keeps subagents and workflows blocking',
+    run: () => {
+      const l = new BackgroundLedger(fakeProbes())
+      l.registerAgent(SURFACE, 'agent-1')
+      l.ingestJsonl(SURFACE, [
+        toolResultEntry(BASH_ACK),
+        toolResultEntry('Monitor started (task mon12345)'),
+        toolResultEntry('Workflow launched in background. Task ID: wf9. Run ID: wf_abc-123'),
+      ])
+      l.dismissOpenEnded(SURFACE)
+      assertEq(l.outstandingCount(SURFACE), 2)
+      assertEq(l.dismissedCount(SURFACE), 2)
+    },
+  },
+  {
+    name: 'dismissOpenEnded ends a restore\'s arm, so a subagent finishing does not dismiss its siblings',
+    run: async () => {
+      const l = new BackgroundLedger(fakeProbes())
+      l.registerAgent(SURFACE, 'agent-1')
+      l.registerAgent(SURFACE, 'agent-2')
+      l.dismissAll(SURFACE)
+      assertEq(await l.restoreDismissed(SURFACE), true)
+      l.dismissOpenEnded(SURFACE)
+      l.completeAgent(SURFACE, 'agent-1')
+      assertEq(l.outstandingCount(SURFACE), 1)
+    },
+  },
+  {
     name: 'restoreDismissed takes the dismissed work back up',
     run: async () => {
       const l = new BackgroundLedger(fakeProbes())
@@ -474,6 +502,15 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'transcript ending in a synthetic API error is indeterminate, so the staleness bound drains it',
+    run: () => {
+      const apiError = line({ type: 'assistant', isApiErrorMessage: true, message: { stop_reason: 'stop_sequence', content: [{ type: 'text', text: 'API Error: Connection closed mid-response.' }] } })
+      assertEq(agentTranscriptVerdict([assistantLine('tool_use'), toolResultLine('ok'), apiError].join('\n')), 'indeterminate')
+      // A subagent that carried on after the error is running again.
+      assertEq(agentTranscriptVerdict([apiError, assistantLine('tool_use')].join('\n')), 'running')
+    },
+  },
+  {
     name: 'user interruption after the last assistant entry is terminal',
     run: () => {
       // The live case that pinned a surface yellow: no SubagentStop hook fires,
@@ -590,6 +627,7 @@ const cases: Case[] = [
         ['registerAgent', () => l.registerAgent(SURFACE, 'agent-1')],
         ['ingestJsonl', () => l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK)])],
         ['completeAgent', () => l.completeAgent(SURFACE, 'agent-1')],
+        ['dismissOpenEnded', () => l.dismissOpenEnded(SURFACE)],
         ['dismissAll', () => l.dismissAll(SURFACE)],
         ['restoreDismissed', async () => { await l.restoreDismissed(SURFACE) }],
         ['reconcile', () => l.reconcile(SURFACE)],

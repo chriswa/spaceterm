@@ -198,17 +198,80 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'typed UserPromptSubmit clears the ledger — a later Stop is not yellow',
+    name: 'typed UserPromptSubmit dismisses a background shell command — a later Stop is not yellow',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit', { prompt: 'start the server' })
+      jsonl(sm, [toolResult('tuB', 'Command running in background with ID: bash99. Output is being written to: /tmp/bash99.output')])
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+      hook(sm, 'UserPromptSubmit', { prompt: 'ok next' })     // typed turn — dismisses open-ended work
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'stopped')
+    },
+  },
+  {
+    name: 'typed UserPromptSubmit keeps a running subagent blocking — a later Stop is yellow',
     run: (sm, deps) => {
       hook(sm, 'UserPromptSubmit', { prompt: 'keep going' })
       hook(sm, 'SubagentStart', { agent_id: 'a1' })
       hook(sm, 'Stop')
       sm.flushForTest()
       assertEq(deps.getClaudeState(S), 'working_background')
-      hook(sm, 'UserPromptSubmit', { prompt: 'ok next' })     // typed turn — clears ledger
+      hook(sm, 'UserPromptSubmit', { prompt: 'ok next' })
       hook(sm, 'Stop')
       sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+      hook(sm, 'SubagentStop', { agent_id: 'a1' })
+      sm.flushForTest()
       assertEq(deps.getClaudeState(S), 'stopped')
+    },
+  },
+  {
+    // Replay of an agent that started three design subagents, was sent a
+    // follow-up while they ran, finished that follow-up with a subagent of its
+    // own, and asked a question once the three were back. Every stop before
+    // the question must read as background work, not as waiting on the user:
+    // Control's watch fired on the first false stop, was used up on it, and so
+    // never saw the question.
+    name: 'subagents started before a typed follow-up keep the agent yellow until the last one reports',
+    run: (sm, deps) => {
+      const notification = (id: string) => ({
+        prompt: `<task-notification>\n<task-id>${id}</task-id>\n<status>completed</status>\n</task-notification>`,
+      })
+      hook(sm, 'UserPromptSubmit', { prompt: 'design the standup loop' })
+      for (const id of ['triggers', 'meetings', 'review']) hook(sm, 'SubagentStart', { agent_id: id })
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+
+      hook(sm, 'UserPromptSubmit', { prompt: 'yes, delete the old sl' })
+      hook(sm, 'SubagentStart', { agent_id: 'delete-sl' })
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+
+      hook(sm, 'SubagentStop', { agent_id: 'delete-sl' })
+      hook(sm, 'UserPromptSubmit', notification('delete-sl'))
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+
+      for (const id of ['triggers', 'review']) {
+        hook(sm, 'SubagentStop', { agent_id: id })
+        hook(sm, 'UserPromptSubmit', notification(id))
+        hook(sm, 'Stop')
+        sm.flushForTest()
+        assertEq(deps.getClaudeState(S), 'working_background')
+      }
+
+      hook(sm, 'SubagentStop', { agent_id: 'meetings' })
+      hook(sm, 'UserPromptSubmit', notification('meetings'))
+      hook(sm, 'PreToolUse', { tool_use_id: 'ask' })
+      hook(sm, 'PermissionRequest', { tool_name: 'AskUserQuestion' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'waiting_question')
     },
   },
   {
@@ -611,11 +674,11 @@ const cases: Case[] = [
     name: 'right-click takes dismissed background work back up (stopped → yellow)',
     run: async (sm, deps) => {
       hook(sm, 'UserPromptSubmit')
-      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      jsonl(sm, [toolResult('tuB', 'Command running in background with ID: bash99. Output is being written to: /tmp/bash99.output')])
       hook(sm, 'Stop')
       sm.flushForTest()
       assertEq(deps.getClaudeState(S), 'working_background')
-      // A typed prompt dismisses the still-running subagent — this is the
+      // A typed prompt dismisses the still-running shell command — this is the
       // "appears simply stopped while background work continues" case.
       hook(sm, 'UserPromptSubmit')
       hook(sm, 'Stop')
@@ -632,7 +695,7 @@ const cases: Case[] = [
     name: 'and the next background resolution returns it to stopped (+unread, tone)',
     run: async (sm, deps) => {
       hook(sm, 'UserPromptSubmit')
-      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      jsonl(sm, [toolResult('tuB', 'Command running in background with ID: bash99. Output is being written to: /tmp/bash99.output')])
       hook(sm, 'Stop')
       hook(sm, 'UserPromptSubmit')
       hook(sm, 'Stop')
@@ -640,7 +703,10 @@ const cases: Case[] = [
       await sm.handleClientMarkBackground(S, true)
       deps.unread.set(S, false)
 
-      hook(sm, 'SubagentStop', { agent_id: 'a1' })
+      // The command's completion leaves the notification queue: positive
+      // evidence of resolution, without a wake turn of its own.
+      const done = '<task-notification><task-id>bash99</task-id><status>completed</status></task-notification>'
+      jsonl(sm, [{ type: 'queue-operation', operation: 'enqueue', content: done }, { type: 'queue-operation', operation: 'remove', content: done }])
       sm.flushForTest()
       assertEq(deps.getClaudeState(S), 'stopped')
       // The whole point of arming: being told when the work actually landed.
@@ -649,13 +715,13 @@ const cases: Case[] = [
   },
   {
     name: 'right-click waits on the live monitor, not on dismissed work that already ended',
-    probes: { ...ALWAYS_RUNNING, probeAgent: async () => 'finished' },
+    probes: { ...ALWAYS_RUNNING, probeBash: async () => 'finished' },
     run: async (sm, deps) => {
-      // A persistent Monitor alongside a subagent that ended without a
-      // SubagentStop, both dismissed by a typed prompt.
+      // A persistent Monitor alongside a shell command that ended without a
+      // completion we saw, both dismissed by a typed prompt.
       hook(sm, 'UserPromptSubmit')
       jsonl(sm, [toolResult('t1', 'Monitor started (task mon12345)')])
-      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      jsonl(sm, [toolResult('tuB', 'Command running in background with ID: bash99. Output is being written to: /tmp/bash99.output')])
       hook(sm, 'Stop')
       hook(sm, 'UserPromptSubmit')
       hook(sm, 'Stop')

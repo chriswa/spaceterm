@@ -48,8 +48,10 @@
  * on. Some background work never ends by design — a persistent `Monitor` runs
  * until its session does, and its probe (pgrep on the session id) says so —
  * which would hold the surface yellow for the rest of the session. So a typed
- * prompt dismisses everything outstanding: the work is very probably still
- * running, but it stops being treated as blocking. Only non-dismissed launches
+ * prompt dismisses the outstanding work of those open-ended kinds: it is very
+ * probably still running, but it stops being treated as blocking. Subagents
+ * and workflows always end, so they keep blocking (`dismissOpenEnded`). The
+ * user can also dismiss everything (`dismissAll`). Only non-dismissed launches
  * count toward `outstandingCount`, and therefore toward yellow.
  *
  * Dismissal marks rather than deletes, which is what makes it reversible. When
@@ -74,6 +76,15 @@ import type { ClaudeSessionId, PtySessionId } from '../../shared/ids'
 import type { PersistedSurfaceLedger, PersistedBackgroundLaunch } from '../../shared/state'
 
 export type LaunchKind = 'bash' | 'agent' | 'monitor' | 'workflow'
+
+/**
+ * Kinds of background work that may run for the rest of the session: a
+ * persistent `Monitor`, and a background shell command such as a dev server
+ * or a `tail -f`. Their probes rightly say "running" for as long as they do,
+ * so a typed prompt dismisses them (see `dismissOpenEnded`). Subagents and
+ * workflows are left out because they always end.
+ */
+const OPEN_ENDED_KINDS: ReadonlySet<LaunchKind> = new Set<LaunchKind>(['bash', 'monitor'])
 
 interface Launch {
   id: string
@@ -202,9 +213,9 @@ const DONE_TASK_ID = /<task-id>([a-z0-9]+)<\/task-id>/g
  * wrapper (978 hits); the hook payload does not carry the transcript's
  * `origin.kind` / `promptSource` fields, so the prompt text is the seam.
  *
- * Used to decide whether a UserPromptSubmit should clear the background ledger:
- * a real typed prompt may, a task-notification must not (it would drop still-
- * running monitors the moment they ping).
+ * Used to decide whether a UserPromptSubmit dismisses open-ended background
+ * work: a real typed prompt does, a task-notification must not (it would drop
+ * still-running monitors the moment they ping).
  */
 export function isTaskNotificationPrompt(prompt: unknown): boolean {
   return typeof prompt === 'string' && prompt.trimStart().startsWith('<task-notification>')
@@ -279,6 +290,8 @@ const AGENT_TAIL_WINDOWS = [8 * 1024, 64 * 1024, 1024 * 1024]
  *   an interrupt fires no SubagentStop hook, and the transcript stops at
  *   stop_reason 'tool_use', which can never become 'end_turn'. Without this
  *   case an interrupted subagent pins the surface yellow until the next prompt.
+ * - last `assistant` entry is a synthetic API error → indeterminate (see
+ *   `agentTranscriptVerdict`).
  * - any other last `assistant` entry (typically stop_reason 'tool_use') → it is
  *   mid-tool and genuinely running.
  *
@@ -332,14 +345,23 @@ export function agentTranscriptVerdict(tail: string): LivenessVerdict {
       continue
     }
     if (!parsed || typeof parsed !== 'object') continue
-    const entry = parsed as { type?: string; message?: { stop_reason?: unknown; content?: unknown } }
+    const entry = parsed as { type?: string; isApiErrorMessage?: unknown; message?: { stop_reason?: unknown; content?: unknown } }
     if (entry.type === 'user' && hasInterruptionMarker(entry.message?.content)) {
       interruptedAfterLastAssistant = true
       continue
     }
     if (entry.type === 'assistant' && entry.message) {
       if (entry.message.stop_reason === 'end_turn') return 'finished'
-      return interruptedAfterLastAssistant ? 'finished' : 'running'
+      if (interruptedAfterLastAssistant) return 'finished'
+      // Claude Code's synthetic "API Error: …" entry, written when it gives up
+      // on a request. Usually the subagent's last word (51 of 58 seen), but
+      // sometimes it carries on seconds later (7 of 58), so it is not proof of
+      // either: 'indeterminate' lets STALE_INDETERMINATE_MS drain one that
+      // never resumes. 'running' would pin the surface yellow for good, since
+      // a dead subagent sends no SubagentStop; 'finished' would go white
+      // during a resume, between two 5s sweeps.
+      if (entry.isApiErrorMessage === true) return 'indeterminate'
+      return 'running'
     }
   }
   // An interrupt with no assistant entry in view is still conclusive.
@@ -570,23 +592,49 @@ export class BackgroundLedger {
    * Stop counting this surface's background work as blocking, keeping a record
    * of what was dropped.
    *
-   * Called on a *human* UserPromptSubmit (a new typed turn makes prior
-   * background context moot, and bounds any leak from a missed completion to
-   * "until the next prompt"), and by the client when the user says a yellow
-   * surface should read as finished. Not called for `<task-notification>`
-   * UserPromptSubmits — those are Claude re-invoking itself for background
-   * deliveries, and dismissing would drop still-running work (especially
-   * persistent monitors) the moment they ping.
+   * Called by the client when the user says a yellow surface should read as
+   * finished. A typed prompt dismisses less: see `dismissOpenEnded`.
    *
    * This is where the indicator gives up accuracy on purpose: a persistent
    * Monitor really is still running, and would otherwise hold the surface
    * yellow for the rest of the session. `restoreDismissed` is the way back.
    */
   dismissAll(surfaceId: PtySessionId): void {
+    this.dismissWhere(surfaceId, () => true)
+  }
+
+  /**
+   * A typed prompt's dismissal: only the kinds of work that may never end
+   * (`OPEN_ENDED_KINDS`) stop blocking. Subagents and workflows keep counting
+   * until they finish.
+   *
+   * Dismissing every kind would mark an agent stopped while subagents it
+   * started before the prompt are still running: the next Stop finds nothing
+   * outstanding and goes white, and anything waiting for a real stop (Control's
+   * watches, the completion tone) takes it as finished.
+   *
+   * Keeping them is safe because both always end, and both have a drain path
+   * that needs no prompt: SubagentStop or a parsed completion, and behind that
+   * the transcript/state-file probes on the reconciliation sweep, with
+   * `STALE_INDETERMINATE_MS` bounding a launch nobody can see (invariant 13).
+   * The "bounds any leak until the next prompt" reason for dismissing on a
+   * typed prompt is therefore only needed for the open-ended kinds.
+   *
+   * The arm is cleared as `dismissAll` clears it: an arm exists to drain work
+   * that may never end, and this dismisses exactly that work again, leaving
+   * what remains to drain one launch at a time like any other.
+   */
+  dismissOpenEnded(surfaceId: PtySessionId): void {
+    this.dismissWhere(surfaceId, launch => OPEN_ENDED_KINDS.has(launch.kind))
+  }
+
+  private dismissWhere(surfaceId: PtySessionId, shouldDismiss: (launch: Launch) => boolean): void {
     const s = this.surfaces.get(surfaceId)
     if (!s) return
     s.awaitingAnyResolution = false
-    for (const launch of Array.from(s.launches.values())) launch.dismissed = true
+    for (const launch of Array.from(s.launches.values())) {
+      if (shouldDismiss(launch)) launch.dismissed = true
+    }
     this.touch(surfaceId)
   }
 
