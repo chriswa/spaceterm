@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'crypto'
 import { ROOT_NODE_ID, type NodeId } from '../../shared/ids'
 import type { ClaudeState, NodeData } from '../../shared/state'
 import { serverLog } from '../server-log'
-import { lastAgentProse, type TranscriptMessage } from '../agent-transcript'
+import { finalAgentMessage, lastAgentProse, type TranscriptMessage } from '../agent-transcript'
 import { INTERRUPTED_MARKER } from '../unheard'
 import { joinSpeechParts, speechPartStarts, type SpeechBackend } from '../voice-operator'
 import { SpeechChannel, speechFailureMessage, type Attempt, type SpeechPhase } from '../speech-channel'
@@ -446,6 +446,15 @@ function restartLast(calls: readonly ToolCall[]): ToolCall[] {
  * used up, and the real answer went untold.
  */
 export const STOP_HOLD_MS = 2_000
+/**
+ * How long a watched agent must sit in a tentative stop before it is reported:
+ * see `holdTentativeStop`. Longer than `STOP_HOLD_MS`, because a background
+ * shell's completion or a monitor's ping often wakes the agent within seconds.
+ */
+export const TENTATIVE_STOP_HOLD_MS = 5_000
+/** What a tentative stop is told as: the agent "is now …". */
+export const TENTATIVE_STOP_WORDS = 'possibly done: it ended its turn with a final message, but shells or monitors it started in the background ' +
+  'are still running and may wake it again. Judge from its last words whether it is finished or waiting on that work'
 /** Characters of what a forgotten agent last said that its backlog item keeps: see `forgetLater`. */
 const FORGOTTEN_LAST_SAID_CHARS = 300
 /** Told when the user takes an agent over: see `userTookOver`. */
@@ -1425,6 +1434,7 @@ export class Receptionist {
       // Back at work while its stop was held: that was no stop. See `STOP_HOLD_MS`.
       this.holding.delete(nodeId)
       if (waiting.kind === 'after-work') this.monitors.set(nodeId, { ...waiting, kind: 'next-stop' })
+      else if (state === 'working_background') void this.holdTentativeStop(nodeId)
       return
     }
     if (waiting.kind === 'after-work') return
@@ -1441,6 +1451,30 @@ export class Receptionist {
     const agent = this.deps.agents().find(candidate => candidate.nodeId === nodeId)
     if (this.monitors.get(nodeId)?.kind !== 'next-stop' || !agent || !isSettled(agent.state)) return
     this.fireMonitor(nodeId, agent.state)
+  }
+
+  /**
+   * A watched agent ended its turn with nothing but shells or monitors still
+   * running: it may be done and only leaving a listener up, or waiting on that
+   * work for a result. Its state stays "waiting on a background task", which
+   * a watch never fires on, so Control is told of it as a possible finish once
+   * it has held for `TENTATIVE_STOP_HOLD_MS`, and only if the agent's last act
+   * was a final message rather than a tool call.
+   *
+   * Once per stretch in that state: the hold starts only on the way into it.
+   * Told, the watch is used up as by any stop; passed over in silence, it is
+   * kept (`keepWatchingUntold`) for the agent's real stop.
+   */
+  private async holdTentativeStop(nodeId: NodeId): Promise<void> {
+    const hold = {}
+    this.holding.set(nodeId, hold)
+    await this.deps.sleep(TENTATIVE_STOP_HOLD_MS)
+    if (this.holding.get(nodeId) !== hold) return
+    this.holding.delete(nodeId)
+    const agent = this.deps.agents().find(candidate => candidate.nodeId === nodeId)
+    if (this.monitors.get(nodeId)?.kind !== 'next-stop' || agent?.state !== 'working_background' || !agent.openEndedWorkOnly) return
+    if (!agent.transcriptPath || !finalAgentMessage(this.deps.readTranscript(agent.transcriptPath))) return
+    this.fireMonitor(nodeId, agent.state, TENTATIVE_STOP_WORDS)
   }
 
   /**
@@ -1690,7 +1724,7 @@ export class Receptionist {
   }
 
   /** The agent has stopped: tell the model what it last said. */
-  private fireMonitor(nodeId: NodeId, state: ClaudeState): void {
+  private fireMonitor(nodeId: NodeId, state: ClaudeState, words: string = STATE_WORDS[state]): void {
     const agents = this.deps.agents()
     const agent = agents.find(candidate => candidate.nodeId === nodeId)
     this.monitors.delete(nodeId)
@@ -1701,9 +1735,9 @@ export class Receptionist {
     this.reportedStops.set(nodeId, agent.stateSince)
     const lastSaid = agent.transcriptPath ? lastAgentProse(this.deps.readTranscript(agent.transcriptPath)) : ''
     const token = this.token(nodeId, this.handles(agents))
-    this.trace('fired', `Watch fired: ${token} is now ${STATE_WORDS[state]}`)
+    this.trace('fired', `Watch fired: ${token} is now ${words}`)
     this.events.push({
-      kind: 'agent-stopped', agent: token, nodeId, state: STATE_WORDS[state],
+      kind: 'agent-stopped', agent: token, nodeId, state: words,
       lastSaid: capMessage(lastSaid),
     })
     this.maybeSpeakUp()

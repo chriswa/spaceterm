@@ -66,6 +66,7 @@ import type { StatusSample } from './receptionist/spaceterm-status'
 import { CodexSessionFileWatcher, findCodexSessionFile } from './codex-session-file-watcher'
 import { CursorSessionFileWatcher, findCursorTranscript } from './cursor-session-file-watcher'
 import { ClaudeStateMachine } from './claude-state'
+import { onlyOpenEndedWork } from './claude-state/background-ledger'
 import { localISOTimestamp } from './timestamp'
 import { FileContentManager } from './file-content-manager'
 import { GitStatusPoller } from './git-status-poller'
@@ -708,6 +709,7 @@ function receptionistAgents(): RosterAgent[] {
       title: agentSurfaceTitle(node),
       cwd: node.cwd,
       state: node.claudeState,
+      ...(onlyOpenEndedWork(stateManager.getBackgroundLedger(node.sessionId)) ? { openEndedWorkOnly: true as const } : {}),
       transcriptPath: transcriptPathForTerminal(node),
       claudeSessionId: node.claudeSessionHistory.at(-1)?.claudeSessionId,
       unread: node.claudeStatusUnread,

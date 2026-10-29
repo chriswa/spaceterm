@@ -8,7 +8,7 @@ import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import { ASK_AGENT_REMINDER, BACK_REQUEST, HANDOVER_PROMPT, HEARD_AGAIN, LISTENING_AGAIN, RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
 import {
-  MAX_TURN_RETRIES, PROMPT_HASH, RETRYING_AFTER_ERROR, TURN_RETRY_MS, Receptionist, SessionBusy, sideQuestionPrompt, STOP_HOLD_MS, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type ReceptionistDeps, type RecordedMessage, type SavedSession, type SessionTurn,
+  MAX_TURN_RETRIES, PROMPT_HASH, RETRYING_AFTER_ERROR, TURN_RETRY_MS, Receptionist, SessionBusy, sideQuestionPrompt, STOP_HOLD_MS, TENTATIVE_STOP_HOLD_MS, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type ReceptionistDeps, type RecordedMessage, type SavedSession, type SessionTurn,
 } from './receptionist'
 import type { RosterAgent } from './roster'
 import { Handles, NODE_PREFIX } from './handles'
@@ -170,6 +170,10 @@ function harness(opts: {
   readsStore?: NameRegistryStore
   /** The record as an earlier server left it, carried on; by default empty. */
   record?: RecordedMessage[]
+  /** Agents whose background work is only shells and monitors; by default none. Changed in place as a test goes on. */
+  openEndedWorkOnly?: Set<NodeId>
+  /** Transcripts in place of the usual ones, by path. */
+  transcripts?: Record<string, TranscriptMessage[]>
 }) {
   const world = opts.world ?? agentWorld()
   const states = world.states
@@ -181,7 +185,9 @@ function harness(opts: {
       ...(opts.kevinCacheWarmUntil !== undefined ? { cacheWarmUntil: opts.kevinCacheWarmUntil, cacheWarmTokens: 38_000 } : {}),
     },
     { nodeId: SALLY_ID, title: 'login page', cwd: '/src/web', state: states.get(SALLY_ID)!, stateSince: world.since.get(SALLY_ID), transcriptPath: '/t/sally.jsonl', claudeSessionId: 'sally-session' },
-  ].filter(agent => !gone.has(agent.nodeId)).map(agent => unread.has(agent.nodeId) ? { ...agent, unread: true } : agent)
+  ].filter(agent => !gone.has(agent.nodeId))
+    .map(agent => unread.has(agent.nodeId) ? { ...agent, unread: true } : agent)
+    .map(agent => opts.openEndedWorkOnly?.has(agent.nodeId) ? { ...agent, openEndedWorkOnly: true as const } : agent)
   /** Every message sent, in order, with the session it went to. */
   const turns: SessionTurn[] = []
   const replies = [...opts.replies]
@@ -278,7 +284,7 @@ function harness(opts: {
       hits: [{ nodeId: SALLY_ID, probability: 0.82 }, { nodeId: KEVIN_ID, probability: 0.1 }], noneProbability: 0.08,
     })),
     agents,
-    readTranscript: (path) => (TRANSCRIPTS[path] ?? []).slice(-2),
+    readTranscript: (path) => (opts.transcripts?.[path] ?? TRANSCRIPTS[path] ?? []).slice(-2),
     readWholeTranscript: (path) => [...(EARLY[path] ?? []), ...(TRANSCRIPTS[path] ?? [])],
     session: { load: () => session, save: (next) => { session = next } },
     record: {
@@ -2589,6 +2595,105 @@ describe('Receptionist', () => {
     })
     await h.receptionist.hear('what is this one doing?', 'spoken')
     await flush()
+  })
+})
+
+describe('Receptionist: a tentative stop, with only shells and monitors left running', () => {
+  /** Waits that end at once, except a tentative stop's hold, which ends when `release` is called. */
+  function heldTentativeStops() {
+    const holds: Array<() => void> = []
+    return {
+      sleep: (ms: number) => ms === TENTATIVE_STOP_HOLD_MS ? new Promise<void>((resolve) => { holds.push(resolve) }) : Promise.resolve(),
+      release: () => { for (const resolve of holds.splice(0)) resolve() },
+    }
+  }
+  const watchSally = reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }])
+  const SALLY_AT_A_TOOL: Record<string, TranscriptMessage[]> = {
+    '/t/sally.jsonl': [
+      { role: 'assistant', text: 'Starting the listener.' },
+      { role: 'assistant', text: '[agent tool activity, not speech] Ran: python3 listener.py' },
+    ],
+  }
+
+  it('tells a watched agent as possibly done once per stretch, and keeps watching it when Control says nothing', async () => {
+    // Stella, as it happened: she ended her turn leaving a listener shell and
+    // a monitor running, sat waiting on a background task, and was never told.
+    const holds = heldTentativeStops()
+    const h = harness({
+      sleep: holds.sleep,
+      openEndedWorkOnly: new Set([SALLY_ID]),
+      replies: [
+        watchSally,
+        (turn) => {
+          expect(turn.prompt).toMatch(namedToken(SALLY, ' is now possibly done'))
+          expect(turn.prompt).toContain('It last said: Working on the login form validation.')
+          // Not worth saying: its last words say it is waiting on that work.
+          return reply([], [])
+        },
+        (turn) => {
+          expect(turn.prompt).toMatch(namedToken(SALLY, ' is now stopped'))
+          return reply([{ from: 'control', text: `{${SALLY}} has finished.` }])
+        },
+      ],
+    })
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
+    await flush()
+    h.setState(SALLY_ID, 'working_background')
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    holds.release()
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    // Still in the same stretch: not told again.
+    holds.release()
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(3)
+  })
+
+  it('says nothing while the agent\'s last act is a tool call, not a final message', async () => {
+    const holds = heldTentativeStops()
+    const h = harness({ sleep: holds.sleep, openEndedWorkOnly: new Set([SALLY_ID]), transcripts: SALLY_AT_A_TOOL, replies: [watchSally] })
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
+    await flush()
+    h.setState(SALLY_ID, 'working_background')
+    holds.release()
+    await flush()
+    expect(h.turns).toHaveLength(1)
+  })
+
+  it('says nothing while a subagent or workflow is still running', async () => {
+    const holds = heldTentativeStops()
+    const h = harness({ sleep: holds.sleep, replies: [watchSally] })
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
+    await flush()
+    h.setState(SALLY_ID, 'working_background')
+    holds.release()
+    await flush()
+    expect(h.turns).toHaveLength(1)
+  })
+
+  it('says nothing when the agent wakes within the hold, as a monitor\'s ping wakes it', async () => {
+    const holds = heldTentativeStops()
+    const h = harness({ sleep: holds.sleep, openEndedWorkOnly: new Set([SALLY_ID]), replies: [watchSally] })
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
+    await flush()
+    h.setState(SALLY_ID, 'working_background')
+    h.setState(SALLY_ID, 'working')
+    holds.release()
+    await flush()
+    expect(h.turns).toHaveLength(1)
+  })
+
+  it('says nothing of an agent it is not watching', async () => {
+    const holds = heldTentativeStops()
+    const h = harness({ sleep: holds.sleep, openEndedWorkOnly: new Set([SALLY_ID]), replies: [] })
+    h.setState(SALLY_ID, 'working_background')
+    holds.release()
+    await flush()
+    expect(h.turns).toHaveLength(0)
   })
 })
 

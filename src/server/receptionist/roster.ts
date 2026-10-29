@@ -19,6 +19,8 @@ export interface RosterAgent {
   title: string
   cwd?: string
   state: ClaudeState
+  /** All it still runs in the background is shells and monitors, which may never end: see `onlyOpenEndedWork`. */
+  openEndedWorkOnly?: true
   transcriptPath?: string
   /** The surface's current Claude Code session, which a fork branches from. */
   claudeSessionId?: string

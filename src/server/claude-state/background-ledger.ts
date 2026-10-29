@@ -86,6 +86,23 @@ export type LaunchKind = 'bash' | 'agent' | 'monitor' | 'workflow'
  */
 const OPEN_ENDED_KINDS: ReadonlySet<LaunchKind> = new Set<LaunchKind>(['bash', 'monitor'])
 
+/**
+ * Whether a surface's blocking background work is all open-ended: at least
+ * one shell command or monitor, and no subagent or workflow. Such an agent may
+ * be finished and only leaving a listener running, or may be waiting on that
+ * work for a result; Control's tentative stop is for telling the two apart.
+ *
+ * The state machine does not use this to call such a surface stopped: of
+ * 1,529 turns that ended with only open-ended work outstanding, 957 were woken
+ * by that work (a test run finishing, a CI monitor's ping) before anyone typed.
+ * The surface stays yellow; only Control, which can read the agent's last
+ * words, gets to weigh it as a possible finish.
+ */
+export function onlyOpenEndedWork(ledger: PersistedSurfaceLedger | undefined): boolean {
+  const blocking = ledger?.launches.filter(launch => !launch.dismissed) ?? []
+  return blocking.length > 0 && blocking.every(launch => OPEN_ENDED_KINDS.has(launch.kind))
+}
+
 interface Launch {
   id: string
   kind: LaunchKind

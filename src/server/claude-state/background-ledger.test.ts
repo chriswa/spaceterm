@@ -1,5 +1,5 @@
 import { describe, it } from 'vitest'
-import { BackgroundLedger, agentTranscriptVerdict, isTaskNotificationPrompt, type LivenessProbes, type LivenessVerdict } from './background-ledger'
+import { BackgroundLedger, agentTranscriptVerdict, isTaskNotificationPrompt, onlyOpenEndedWork, type LivenessProbes, type LivenessVerdict } from './background-ledger'
 import type { SessionFileEntry } from '../session-file-watcher'
 import { asPtySessionId, asPtySessionId as pid, asClaudeSessionId as cid } from '../../shared/ids'
 
@@ -202,6 +202,23 @@ const cases: Case[] = [
       l.dismissOpenEnded(SURFACE)
       assertEq(l.outstandingCount(SURFACE), 2)
       assertEq(l.dismissedCount(SURFACE), 2)
+    },
+  },
+  {
+    name: 'onlyOpenEndedWork: shells and monitors alone, not with a subagent or workflow, and not when dismissed',
+    run: () => {
+      const l = new BackgroundLedger(fakeProbes())
+      assertEq(onlyOpenEndedWork(l.snapshot(SURFACE)), false)
+      l.ingestJsonl(SURFACE, [toolResultEntry(BASH_ACK), toolResultEntry('Monitor started (task mon12345)')])
+      assertEq(onlyOpenEndedWork(l.snapshot(SURFACE)), true)
+      l.registerAgent(SURFACE, 'agent-1')
+      assertEq(onlyOpenEndedWork(l.snapshot(SURFACE)), false)
+      l.completeAgent(SURFACE, 'agent-1')
+      l.ingestJsonl(SURFACE, [toolResultEntry('Workflow launched in background. Task ID: wf9. Run ID: wf_abc-123')])
+      assertEq(onlyOpenEndedWork(l.snapshot(SURFACE)), false)
+      // Dismissed by a typed prompt, the shells and monitors no longer count, leaving the workflow.
+      l.dismissOpenEnded(SURFACE)
+      assertEq(onlyOpenEndedWork(l.snapshot(SURFACE)), false)
     },
   },
   {
