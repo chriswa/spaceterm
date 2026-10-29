@@ -3936,7 +3936,7 @@ describe('Receptionist backlog', () => {
         reply([], [{ tool: 'backlog_next', about: "Leon's go-quiet work" }]),
         (turn) => {
           expect(turn.prompt).toContain('backlog_next: 2 items:\n- Leon finished the go-quiet work. (set aside 3 minutes ago)\n- Leon asked whether to restart the server.')
-          expect(turn.prompt).toContain('They are off the backlog now; 1 item is still waiting. If the user does not want any of them now, add those back with backlog_add.')
+          expect(turn.prompt).toContain('They are off the backlog now; 1 item is still waiting. If the user does not want any of them now, add those back with backlog_add, and they will not come up on their own again until the user next speaks.')
           h!.receptionist.userSpeaking(true)
           return reply([{ from: 'control', text: 'Two things from Leon.' }])
         },
@@ -4169,6 +4169,52 @@ describe('Receptionist backlog at a pause', () => {
     await flush()
     expect(h.turns).toHaveLength(2)
     expect(h.backlog.size).toBe(0)
+  })
+
+  it('does not bring an item straight back up when Control puts it back, until the user speaks again', async () => {
+    const h = harness({
+      backlog: ['Ivy is waiting on the user.'],
+      judgePause: async () => READY_NOW,
+      replies: [
+        reply([{ from: 'control', text: 'Good.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('FROM YOUR BACKLOG')
+          return reply([], [{ tool: 'backlog_add', item: 'Ivy is waiting on the user.' }])
+        },
+        reply([{ from: 'control', text: 'Sure.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('FROM YOUR BACKLOG: the user has finished with the last topic and gone quiet, so this was taken off your backlog for you to bring up now: Ivy is waiting on the user.')
+          return reply([{ from: 'control', text: 'Ivy is waiting on you.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('thanks, that settles it', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(h.backlog.size).toBe(1)
+    await h.receptionist.hear('ok, what now', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(4)
+    expect(h.backlog.size).toBe(0)
+  })
+
+  it('keeps an item the user turned down from coming up at the next pause', async () => {
+    const h = harness({
+      backlog: ['Ivy is waiting on the user.'],
+      judgePause: async () => READY_NOW,
+      replies: [
+        reply([{ from: 'control', text: 'Good.' }]),
+        reply([{ from: 'control', text: 'Ivy is waiting on you. Want to look?' }]),
+        reply([{ from: 'control', text: 'Put Ivy back on the backlog.' }], [{ tool: 'backlog_add', item: 'Ivy is waiting on the user; not now.' }]),
+      ],
+    })
+    await h.receptionist.hear('thanks, that settles it', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    await h.receptionist.hear('not yet, put it back', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(3)
+    expect(h.backlog.all()).toEqual([expect.objectContaining({ text: 'Ivy is waiting on the user; not now.', waitsForUser: true })])
   })
 
   it('leaves the item when the backlog is held during the pause', async () => {

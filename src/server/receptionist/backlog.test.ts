@@ -30,6 +30,20 @@ describe('Backlog', () => {
     expect(backlog.take([5])).toEqual([])
   })
 
+  it('counts an item waiting for the user as not ready until the user is heard, across a restart', () => {
+    const store = memoryStore()
+    const backlog = new Backlog({ store })
+    backlog.add('free', 1)
+    backlog.add('turned down', 2, [], true)
+    expect(backlog.size).toBe(2)
+    expect(backlog.ready).toBe(1)
+    const reloaded = new Backlog({ store })
+    expect(reloaded.ready).toBe(1)
+    reloaded.heard()
+    expect(reloaded.ready).toBe(2)
+    expect(new Backlog({ store }).all()).toEqual([{ text: 'free', addedAt: 1 }, { text: 'turned down', addedAt: 2 }])
+  })
+
   it('announces its size whenever it changes, and only then', () => {
     const store = memoryStore()
     new Backlog({ store }).add('already there', 1)

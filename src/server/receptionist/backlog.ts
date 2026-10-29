@@ -39,6 +39,13 @@ export interface BacklogItem {
   addedAt: number
   /** The agents the item is about, by surface: whose prompt cache decides what waiting on it costs. */
   agents?: NodeId[]
+  /**
+   * Set aside by Control in answer to its own bringing up: the user turned it
+   * down, or Control put it straight back. It does not come up at a pause
+   * until the user next speaks, or the pause that follows would bring it
+   * straight back up, again and again, as on 2026-10-28.
+   */
+  waitsForUser?: true
 }
 
 /** What clients are told of the backlog, for the transcript's badge, the list it opens, and its Hold backlog toggle. */
@@ -74,6 +81,11 @@ export class Backlog {
     return this.items.length
   }
 
+  /** How many items may come up at a pause: those not waiting for the user to speak (`BacklogItem.waitsForUser`). */
+  get ready(): number {
+    return this.items.filter(item => !item.waitsForUser).length
+  }
+
   /** Whether items are kept from coming up on their own: see the top of this file. */
   get held(): boolean {
     return this.isHeld
@@ -99,11 +111,20 @@ export class Backlog {
   }
 
   /** Add an item; returns any the cap pushed out, oldest first. */
-  add(text: string, now = Date.now(), agents: readonly NodeId[] = []): BacklogItem[] {
-    this.items.push({ text: text.slice(0, MAX_ITEM_CHARS), addedAt: now, ...(agents.length && { agents: [...agents] }) })
+  add(text: string, now = Date.now(), agents: readonly NodeId[] = [], waitsForUser = false): BacklogItem[] {
+    this.items.push({
+      text: text.slice(0, MAX_ITEM_CHARS), addedAt: now, ...(agents.length && { agents: [...agents] }), ...(waitsForUser && { waitsForUser: true as const }),
+    })
     const dropped = this.items.splice(0, Math.max(0, this.items.length - MAX_BACKLOG))
     this.save()
     return dropped
+  }
+
+  /** The user has spoken: every item may come up at a pause again. */
+  heard(): void {
+    if (!this.items.some(item => item.waitsForUser)) return
+    this.items = this.items.map(({ waitsForUser: _, ...item }) => item)
+    this.save()
   }
 
   /** Remove and return the items at `indices`, oldest first. */
@@ -140,7 +161,8 @@ export class Backlog {
       this.isHeld = parsed.held === true
       const valid = (list: unknown): BacklogItem[] => (Array.isArray(list) ? list : []).filter((item): item is BacklogItem =>
         typeof item?.text === 'string' && typeof item?.addedAt === 'number' &&
-        (item.agents === undefined || (Array.isArray(item.agents) && item.agents.every((id: unknown) => typeof id === 'string'))))
+        (item.agents === undefined || (Array.isArray(item.agents) && item.agents.every((id: unknown) => typeof id === 'string'))) &&
+        (item.waitsForUser === undefined || item.waitsForUser === true))
       // Taken by a turn the last server never finished: back where they were by age.
       const out = valid(parsed.out)
       this.items = [...valid(parsed.items), ...out].sort((a, b) => a.addedAt - b.addedAt).slice(-MAX_BACKLOG)

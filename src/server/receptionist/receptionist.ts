@@ -150,7 +150,7 @@ export interface ReceptionistDeps {
    */
   judgeInterruption(ctx: InterruptionContext): Promise<number>
   /** Things Control set aside to bring up with the user later: see backlog.ts. */
-  backlog: Pick<Backlog, 'size' | 'all' | 'add' | 'take' | 'restore' | 'settle' | 'held' | 'hold'>
+  backlog: Pick<Backlog, 'size' | 'ready' | 'all' | 'add' | 'heard' | 'take' | 'restore' | 'settle' | 'held' | 'hold'>
   /** The agents being watched for their next stop, kept across server restarts: see watches.ts. */
   watches: Watches
   /** Agents mark_read asked for, waiting on the user's answer, kept across server restarts: see deferred-reads.ts. */
@@ -686,6 +686,12 @@ export class Receptionist {
   private sending = new Set<Promise<void>>()
   /** What backlog_next gave the latest turn, until its reply is said; see `putBack`. */
   private taken: { attempt: Attempt; items: BacklogItem[] } | undefined
+  /**
+   * A reply that brought up backlog items has been said, and the user has not
+   * spoken since: what Control sets aside when they next do is their answer to
+   * it, and waits for them (`BacklogItem.waitsForUser`).
+   */
+  private broughtUp = false
   /**
    * Bumped whenever the quiet after a reply is broken: a turn starts, the user
    * starts talking, or nobody is listening any more. A pause that waited for a
@@ -1767,6 +1773,12 @@ export class Receptionist {
     const carried = this.carried
     this.carried = undefined
     const words = joinWords(carried?.words, heard)
+    // Whether this turn answers what the last brought up from the backlog. Spoken, the user frees whatever waited for them.
+    const answering = words !== undefined && this.broughtUp
+    if (words !== undefined) {
+      this.broughtUp = false
+      this.deps.backlog.heard()
+    }
     // The reply this turn supersedes will never be heard: what backlog_next
     // gave it goes back now, in time to be counted in this turn's message.
     if (this.taken && !this.taken.attempt.isCurrent) this.putBack(this.taken.items)
@@ -1815,7 +1827,7 @@ export class Receptionist {
     }
     let monitoring = false
     try {
-      const reply = await this.converse(attempt, opening, earlier, away, taken)
+      const reply = await this.converse(attempt, opening, earlier, away, taken, answering)
       if (!attempt.isCurrent) {
         this.requeue(attempt, events, news, heardAgain, listeningAgain)
         this.putBack(taken)
@@ -1934,7 +1946,7 @@ export class Receptionist {
    * final reply, or undefined if the attempt lost ownership.
    */
   private async converse(
-    attempt: Attempt, opening: OpeningMessage, earlier: readonly RecordMessage[], away: boolean, taken: BacklogItem[],
+    attempt: Attempt, opening: OpeningMessage, earlier: readonly RecordMessage[], away: boolean, taken: BacklogItem[], answering: boolean,
   ): Promise<Reply | undefined> {
     // Each step after the first: what the model is told of its last reply.
     let message = ''
@@ -1968,7 +1980,8 @@ export class Receptionist {
         continue
       }
       // Bookkeeping waits on nothing, so it is done the moment a reply is accepted.
-      await this.runTools(reply.tools.filter(isBookkeeping), agents, handles)
+      // Set aside in a turn that brought backlog items up, or answered one that did, it waits for the user.
+      await this.runTools(reply.tools.filter(isBookkeeping), agents, handles, undefined, [], answering || taken.length > 0)
       this.stageReads(attempt, reply.tools, agents, handles)
       // An out-of-date name in front of a handle is no reason to refuse a
       // reply: the handle decides, the real name is spoken, and the model is
@@ -2194,7 +2207,7 @@ export class Receptionist {
    */
   private async runTools(
     calls: readonly ToolCall[], agents: readonly RosterAgent[], handles: Handles,
-    interrupted = new Set<NodeId>(), taken: BacklogItem[] = [],
+    interrupted = new Set<NodeId>(), taken: BacklogItem[] = [], setBack = false,
   ): Promise<{ results: string[]; done: string[] }> {
     const results: string[] = []
     const done: string[] = []
@@ -2240,7 +2253,7 @@ export class Receptionist {
         continue
       }
       if (call.tool === 'backlog_add') {
-        this.backlogAdd(call.item)
+        this.backlogAdd(call.item, setBack)
         continue
       }
       // Taken down by `stageReads`, with the turn it waits on.
@@ -2344,8 +2357,11 @@ export class Receptionist {
    * describes, as Jev judges it, taken off the backlog and described for the
    * model. Every pick is logged, for checking Jev's judgement.
    */
-  private async takeFromBacklog(about: string | undefined): Promise<TakenItems> {
-    const items = this.deps.backlog.all()
+  private async takeFromBacklog(about: string | undefined, atPause = false): Promise<TakenItems> {
+    // At a pause, only what is not waiting for the user to speak: see `BacklogItem.waitsForUser`.
+    const all = this.deps.backlog.all()
+    const positions = all.flatMap((item, i) => atPause && item.waitsForUser ? [] : [i])
+    const items = positions.map(i => all[i])
     if (!items.length) return { items: [], described: 'the backlog is empty.' }
     const now = Date.now()
     const agents = this.deps.agents()
@@ -2376,7 +2392,7 @@ export class Receptionist {
       const why = pick.reason === 'judge-failed' ? 'the backlog could not be searched just now' : `nothing on the backlog is about ${about}`
       return { items: [], described: `${why}, so nothing was taken off it; ${waiting(items.length)}.` }
     }
-    const took = this.deps.backlog.take(pick.indices)
+    const took = this.deps.backlog.take(pick.indices.map(i => positions[i]))
     if (!took.length) return { items: [], described: 'the backlog is empty.' }
     const left = this.deps.backlog.size
     this.trace('backlog-take', `Off the backlog${about !== undefined ? `, about ${about}` : ''}: ${took.map(item => item.text).join(' / ')}`,
@@ -2387,7 +2403,8 @@ export class Receptionist {
       items: took,
       described: `${took.length === 1 ? `${described[0]}.` : `${took.length} items:\n${described.map(text => `- ${text}`).join('\n')}\n`} ` +
         `${took.length === 1 ? 'It is' : 'They are'} off the backlog now; ${left ? waiting(left) : 'nothing else is waiting'}. ` +
-        `If the user does not want ${them} now, add ${them === 'it' ? 'it' : 'those'} back with backlog_add.`,
+        `If the user does not want ${them} now, add ${them === 'it' ? 'it' : 'those'} back with backlog_add, ` +
+        `and ${them === 'it' ? 'it' : 'they'} will not come up on ${them === 'it' ? 'its' : 'their'} own again until the user next speaks.`,
     }
   }
 
@@ -2414,7 +2431,7 @@ export class Receptionist {
    */
   private async maybePull(): Promise<void> {
     const pause = this.pauses
-    if (this.deps.backlog.held || !this.deps.backlog.size || !this.quietSince(pause) || this.pauseJudged === pause) return
+    if (this.deps.backlog.held || !this.deps.backlog.ready || !this.quietSince(pause) || this.pauseJudged === pause) return
     this.pauseJudged = pause
     const verdict = await decidePause(pauseDialogue(this.deps.record.recent(RECAP_MESSAGES)), (c) => this.deps.judgePause(c))
     serverLog(`[receptionist] backlog pause: ${verdict.reason}` +
@@ -2429,7 +2446,7 @@ export class Receptionist {
     this.tracePause(verdict, wait)
     if (wait > 0) await this.deps.sleep(wait)
     if (!this.quietSince(pause) || this.deps.backlog.held) return
-    const pulled = await this.takeFromBacklog(undefined)
+    const pulled = await this.takeFromBacklog(undefined, true)
     if (!pulled.items.length) return
     // Choosing the item took a moment too.
     if (!this.quietSince(pause) || this.deps.backlog.held) {
@@ -2440,13 +2457,14 @@ export class Receptionist {
   }
 
   /** Set an item aside, with the surfaces of the live agents its tokens name, so that their caches can be weighed later. */
-  private backlogAdd(text: string): void {
+  private backlogAdd(text: string, waitsForUser = false): void {
     const live = this.deps.agents()
     const handles = this.handles(live)
     const agents = [...new Set([...text.matchAll(AGENT_TOKEN)].flatMap(([, ref]) => this.resolve(ref, handles, live) ?? []))]
-    const dropped = this.deps.backlog.add(text, Date.now(), agents)
-    this.deps.log({ event: 'backlog-add', item: text, agents, size: this.deps.backlog.size, dropped })
-    this.trace('backlog-add', `Set aside for later: ${text}`, `${this.deps.backlog.size} on the backlog now.`)
+    const dropped = this.deps.backlog.add(text, Date.now(), agents, waitsForUser)
+    this.deps.log({ event: 'backlog-add', item: text, agents, size: this.deps.backlog.size, dropped, waitsForUser })
+    this.trace('backlog-add', `Set aside for later: ${text}`,
+      `${this.deps.backlog.size} on the backlog now.${waitsForUser ? ' It waits until you next speak before it can come up again.' : ''}`)
     if (dropped.length) {
       this.trace('backlog-dropped', `Backlog full, so the oldest went: ${dropped.map(item => item.text).join(' / ')}`)
       this.notes.push(`Your backlog was full, so its oldest item was dropped: ${dropped.map(item => item.text).join('; ')}.`)
@@ -3095,6 +3113,7 @@ export class Receptionist {
     const { spoken, speakers, voices } = this.render(reply.say, agents)
     const froms = reply.say.map(part => part.from)
     // Being said: what backlog_next gave it is the user's now. Cut off, the note says to set it aside again.
+    if (taken.length) this.broughtUp = true
     this.deps.backlog.settle(taken.splice(0))
     // And so is what the turn was about. A server that stops from here on says it was cut off: see carry-over.ts.
     this.events.told(attempt)
