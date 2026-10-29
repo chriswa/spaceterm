@@ -200,7 +200,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
         break
       case 'session-ended': {
         const why = String(event.why ?? 'off')
-        log(`off (${why})`)
+        log(`off (${why}${typeof event.by === 'string' ? ` by ${event.by}` : ''})`)
         record('hands-free-session', { on: false, why })
         setPending(false)
         quiet = { since: null, patienceMs: null }
@@ -210,13 +210,14 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
         // ("getting ready") — it is started again as soon as Voice Operator is back.
         if (why === 'restarting' || why === 'disconnected') break
         // Ended from the other side — "let me turn this off", turned on on another
-        // device, lost, incognito: off here too, so the button does not say it is
-        // listening when nothing is.
+        // device, lost, incognito, or `taken`: another client (Claude Code's voice
+        // mode) took the Mac's microphone — off here too, so the button does not
+        // say it is listening when nothing is. Turning it on again takes it back.
         if (why !== 'off' && useHandsFree.getState().on) {
           useHandsFree.setState({ on: false })
           deps.link.stop()
-          // Said by voice, it has its own cue already; on another device is the user's doing.
-          if (audio && why !== 'shutdown' && why !== 'replaced') deps.playCue('error')
+          // Said by voice, it has its own cue already; on another device, or taken, is the user's doing.
+          if (audio && why !== 'shutdown' && why !== 'replaced' && why !== 'taken') deps.playCue('error')
         }
         break
       }
