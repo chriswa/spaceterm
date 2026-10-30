@@ -80,7 +80,7 @@ import { pushCameraHistory, goBack, goForward } from './lib/camera-history'
 import type { CrabEntry } from './lib/crab-nav'
 import { deriveCrabs } from './lib/crab-entries'
 import { saveFocusState, loadFocusState, cleanupStaleScrollEntries, markSessionForScrollRestore } from './lib/focus-storage'
-import { shouldYieldToFocusedEditor, strayPasteText, viewportSlotFor } from './lib/keyboard'
+import { shouldYieldToFocusedEditor, viewportSlotFor } from './lib/keyboard'
 import { tieredZIndex } from '../../../shared/card-types'
 import type { NodeData } from '../../../shared/state'
 import type { AgentType } from '../../../shared/agent-type'
@@ -2195,6 +2195,18 @@ export function App() {
         }
       }
 
+      // Cmd+Ctrl+X: show or hide Control's transcript, as the headset does.
+      // Bare Cmd+X is Cut, so Ctrl is what keeps this off it.
+      if (e.metaKey && e.ctrlKey && !e.shiftKey && e.code === 'KeyX') {
+        e.preventDefault()
+        e.stopPropagation()
+        if (!e.repeat) {
+          const transcript = useControlTranscriptStore.getState()
+          transcript.setOpen(!transcript.open)
+        }
+        return
+      }
+
       // Cmd+K: toggle search modal (before isEditable guard so it works from search input)
       if (e.metaKey && !e.shiftKey && e.key === 'k') {
         e.preventDefault()
@@ -2514,22 +2526,6 @@ export function App() {
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
   }, [archiveConfirm, archiveNodeNow, agentSelectorParentId, launchSelectedAgent, spawnNode, handleNodeFocus, flyToSelection, stepOut, fitAllNodes, snapToTarget, navigateToNode, navigateHistory, shakeCamera, bringToFront, speak, ttsStop, handleForkSession, toggleAgentSelector])
-
-  // A paste with nowhere to land is dictation: Voice Operator's Fn-alone paste
-  // into a window with nothing focused. It goes to Control, as said rather than
-  // typed, as a Fn+Control command would. See `strayPasteText`. Bubble phase, so a focused editor has already had it.
-  useEffect(() => {
-    const onPaste = (e: ClipboardEvent) => {
-      if (e.defaultPrevented) return
-      const text = strayPasteText(document.activeElement, e.clipboardData)
-      if (!text) return
-      e.preventDefault()
-      window.api.receptionist.say(text, { spoken: true })
-      showToast('Pasted to Control')
-    }
-    window.addEventListener('paste', onPaste)
-    return () => window.removeEventListener('paste', onPaste)
-  }, [])
 
   // Globally suppress Chromium's Tab focus navigation.
   // Bubble phase so xterm / CodeMirror process the key first.

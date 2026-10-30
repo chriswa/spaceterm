@@ -929,7 +929,7 @@ export class ServerClient {
     this.fireAndForget({ type: 'receptionist-read-aloud' })
   }
 
-  /** Typed in Control's transcript view, or `spoken`: dictation pasted into nothing on the Mac. `staysPut`: Control is not brought here. */
+  /** Typed in Control's transcript view, or `spoken`: said rather than typed (no client sends this now). `staysPut`: Control is not brought here. */
   sayToReceptionist(text: string, spoken = false, staysPut = false): void {
     this.log(`[receptionist] ${text.length} chars ${spoken ? 'spoken' : 'typed'} to Control`)
     this.fireAndForget({ type: 'receptionist-say', text, ...(spoken ? { spoken } : {}), ...(staysPut ? { staysPut } : {}) })
