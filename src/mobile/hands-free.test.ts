@@ -205,6 +205,15 @@ describe('hands-free, following Voice Operator', () => {
     expect(h.calls).toEqual(['start', 'stop'])
     expect(h.cues).toEqual([])
   })
+
+  it('goes off quietly when Claude Code\'s voice mode takes the Mac\'s microphone', () => {
+    h = harness()
+    setHandsFree(true)
+    h.vo({ type: 'session-ended', why: 'taken', by: 'claude-code' })
+    expect(useHandsFree.getState().on).toBe(false)
+    expect(h.calls).toEqual(['start', 'stop'])
+    expect(h.cues).toEqual([])
+  })
 })
 
 describe('the phone\'s link: the SDK\'s lines carried through the server', () => {

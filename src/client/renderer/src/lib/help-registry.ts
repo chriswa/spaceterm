@@ -26,6 +26,7 @@ export interface HelpGroup {
 
 const MAC_CMD = '\u2318'   // ⌘
 const SHIFT   = '\u21E7'   // ⇧
+const MAC_CTRL = '\u2303'  // ⌃
 const ENTER   = '\u23CE'   // ⏎
 const UP      = '\u2191'   // ↑
 const DOWN    = '\u2193'   // ↓
@@ -149,6 +150,7 @@ export const helpGroups: HelpGroup[] = [
     entries: [
       { keys: 'Click a crab icon',        name: 'Jump to Claude surface' },
       { keys: 'Drag crab icons',          name: 'Reorder Claude surfaces' },
+      { keys: `${MAC_CMD} ${MAC_CTRL} X`, name: 'Control transcript', notes: 'Same as clicking the headset' },
       { keys: 'Click the headset',        name: 'Control transcript', notes: 'Shows and hides your conversation with Control; attach, detach, mute and unmute Control at its foot' },
       { keys: 'Click the speaker',        name: 'Let Control speak up', notes: 'Control may speak unprompted when something it is watching for happens' },
     ],

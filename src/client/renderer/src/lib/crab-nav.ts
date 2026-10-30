@@ -41,6 +41,11 @@ export interface CrabEntry {
    */
   cacheWarmUntil?: number
   cacheWarmEstimated?: boolean
+  /**
+   * The surface's auto-stamp as a CSS mask, drawn in the toolbar in place of
+   * the agent's icon. Unset until one has been drawn.
+   */
+  stampMask?: string
 }
 
 /** Longest `waitingFor` the footer will render before eliding. */
