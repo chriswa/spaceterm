@@ -47,10 +47,24 @@ function indicatorIconUrl(kind: AgentIndicatorKind): string {
   return crabIcon
 }
 
-function indicatorKindClass(kind: AgentIndicatorKind): string {
-  if (kind === 'cursor') return ' toolbar__crab--cursor'
-  if (kind === 'codex') return ' toolbar__crab--codex'
+/**
+ * The row draws a surface's auto-stamp in place of its agent's icon, and the
+ * agent's icon only until one has been drawn. The phone's list already gives
+ * the auto-stamp a column of its own, so it keeps the agent's icon.
+ */
+function showsStamp(crab: CrabEntry, layout: 'row' | 'list'): crab is CrabEntry & { stampMask: string } {
+  return layout === 'row' && crab.stampMask !== undefined
+}
+
+function indicatorKindClass(crab: CrabEntry, layout: 'row' | 'list'): string {
+  if (showsStamp(crab, layout)) return ' toolbar__crab--stamped'
+  if (crab.kind === 'cursor') return ' toolbar__crab--cursor'
+  if (crab.kind === 'codex') return ' toolbar__crab--codex'
   return ''
+}
+
+function indicatorMask(crab: CrabEntry, layout: 'row' | 'list'): string {
+  return showsStamp(crab, layout) ? crab.stampMask : cssUrl(indicatorIconUrl(crab.kind))
 }
 
 export interface CrabGroupProps {
@@ -58,8 +72,9 @@ export interface CrabGroupProps {
    * `row`, the desktop toolbar's: icons side by side in the operator's order.
    * `list`, the phone's surface sheet: one row per surface with its
    * auto-stamp and title, newest (the row's rightmost) at the bottom and
-   * scrolled to on opening, reordered by a drag handle. The icons,
-   * hats, effort signs, timers and dance are the same either way.
+   * scrolled to on opening, reordered by a drag handle. The timers and dance
+   * are the same either way; the row draws auto-stamps in place of agent
+   * icons (see `showsStamp`).
    */
   layout?: 'row' | 'list'
   crabs: CrabEntry[]
@@ -128,11 +143,12 @@ export function CrabGroup({ layout = 'row', crabs, onCrabClick, onCrabReorder, s
         // Convert right-relative offset to left position within current container
         const phantomLeft = containerWidth - oldRightOffset
         const phantom = document.createElement('button')
-        phantom.className = `toolbar__crab toolbar__crab--${prev.color}${indicatorKindClass(prev.kind)}`
-        const maskUrl = indicatorIconUrl(prev.kind)
-        const maskSize = prev.kind === 'codex' ? '97%' : prev.kind === 'cursor' ? '80%' : 'contain'
-        const maskPosition = prev.kind === 'codex' ? 'center calc(50% - 1px)' : prev.kind === 'cursor' ? 'center calc(50% - 1px)' : 'center'
-        phantom.style.cssText = `position:absolute;top:0;left:${phantomLeft}px;pointer-events:none;width:20px;height:20px;border:none;padding:0;background-color:currentColor;-webkit-mask-image:${cssUrl(maskUrl)};mask-image:${cssUrl(maskUrl)};-webkit-mask-size:${maskSize};mask-size:${maskSize};-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:${maskPosition};mask-position:${maskPosition};`
+        phantom.className = `toolbar__crab toolbar__crab--${prev.color}${indicatorKindClass(prev, layout)}`
+        const mask = indicatorMask(prev, layout)
+        const kind = showsStamp(prev, layout) ? 'stamp' : prev.kind
+        const maskSize = kind === 'codex' ? '97%' : kind === 'cursor' ? '80%' : 'contain'
+        const maskPosition = kind === 'codex' ? 'center calc(50% - 1px)' : kind === 'cursor' ? 'center calc(50% - 1px)' : 'center'
+        phantom.style.cssText = `position:absolute;top:0;left:${phantomLeft}px;pointer-events:none;width:20px;height:20px;border:none;padding:0;background-color:currentColor;-webkit-mask-image:${mask};mask-image:${mask};-webkit-mask-size:${maskSize};mask-size:${maskSize};-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:${maskPosition};mask-position:${maskPosition};`
         el.appendChild(phantom)
 
         const anim = phantom.animate(
@@ -466,15 +482,16 @@ export function CrabGroup({ layout = 'row', crabs, onCrabClick, onCrabReorder, s
   /** The crab itself — the same element in either layout, which is what the dance loop animates. */
   const crabButton = (crab: CrabEntry, props: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
     <button
-      className={`toolbar__crab toolbar__crab--${crab.color}${indicatorKindClass(crab.kind)}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}${crab.nodeId === hoveredNodeId ? ' toolbar__crab--card-hovered' : ''}${crab.asleep ? ' toolbar__crab--asleep' : ''}`}
+      className={`toolbar__crab toolbar__crab--${crab.color}${indicatorKindClass(crab, layout)}${crab.unviewed ? ' toolbar__crab--attention' : ''}${crab.nodeId === selectedNodeId ? ' toolbar__crab--selected' : ''}${crab.nodeId === hoveredNodeId ? ' toolbar__crab--card-hovered' : ''}${crab.asleep ? ' toolbar__crab--asleep' : ''}`}
       {...props}
     >
       <span
         className="toolbar__crab-mark"
-        style={{ WebkitMaskImage: cssUrl(indicatorIconUrl(crab.kind)), maskImage: cssUrl(indicatorIconUrl(crab.kind)) }}
+        style={{ WebkitMaskImage: indicatorMask(crab, layout), maskImage: indicatorMask(crab, layout) }}
       />
-      {crab.hat && <CrabHat hat={crab.hat} className="toolbar__crab-hat" />}
-      <CrabEffortSigns steps={crab.effortSteps} className="toolbar__crab-effort" />
+      {/* The hat and effort signs are fitted to the crab's outline, and a stamp has none. */}
+      {!showsStamp(crab, layout) && crab.hat && <CrabHat hat={crab.hat} className="toolbar__crab-hat" />}
+      {!showsStamp(crab, layout) && <CrabEffortSigns steps={crab.effortSteps} className="toolbar__crab-effort" />}
     </button>
   )
 
