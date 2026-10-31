@@ -43,7 +43,8 @@ export const APP_CANDIDATES = [
 // ─── the tracker's report (src: UsageReport.swift), as far as the bars need it ───
 
 interface TrackerWindow { caption: string; usagePercent: number; elapsedPercent: number; modelScoped: boolean; resetsAt?: string }
-interface TrackerProvider { id: string; name: string; updatedAt?: string; error?: string; windows: TrackerWindow[] }
+/** One per account, with `--all-accounts`; a provider without accounts has one, with neither account field. */
+interface TrackerProvider { id: string; name: string; account?: string; signedIn?: boolean; updatedAt?: string; error?: string; windows: TrackerWindow[] }
 interface TrackerReport {
   providers: TrackerProvider[]
   spend?: { monthToDateUSD: number; budgetUSD?: number; percentOfBudget?: number; monthElapsedPercent: number; resetsAt?: string }
@@ -58,27 +59,33 @@ function epoch(iso: string | undefined): number | undefined {
 const PROVIDER_PALETTES: Record<string, UsagePalette> = { claude: 'claude', codex: 'codex', cursor: 'cursor', devin: 'devin', jev: 'jev' }
 
 /**
- * The bars the tray draws, in its order: each provider's windows (or one
- * warning if its fetch failed), then spend. Mirrors `PieChart.circles`.
+ * The bars the tray draws, in its order: each provider account's windows (or
+ * one warning if its fetch failed), then spend. Where a provider has several
+ * accounts, each bar names its account and the signed-in one's are marked.
+ * Mirrors `PieChart.circles`.
  */
 export function usageSnapshotFrom(report: TrackerReport): UsageSnapshot {
   const bars: UsageBar[] = []
   let updatedAt: number | null = null
   for (const p of report.providers) {
     const palette = PROVIDER_PALETTES[p.id] ?? 'claude'
+    const hasMultipleAccounts = report.providers.filter((other) => other.id === p.id).length > 1
+    const who = hasMultipleAccounts && p.account ? `${p.name} ${p.account}` : p.name
+    const activeAccount = hasMultipleAccounts && p.signedIn === true
     const at = epoch(p.updatedAt)
     if (at !== undefined) updatedAt = Math.max(updatedAt ?? at, at)
     if (p.error) {
-      bars.push({ label: `${p.name} unavailable`, palette, error: true, usage: 0, time: 0, startsGroup: true })
+      bars.push({ label: `${who} unavailable`, palette, error: true, usage: 0, time: 0, startsGroup: true, activeAccount })
       continue
     }
     p.windows.forEach((w, i) => bars.push({
-      label: `${p.name} ${w.caption}`,
+      label: `${who} ${w.caption}`,
       palette: w.modelScoped ? 'scoped' : palette,
       usage: Math.max(0, w.usagePercent / 100),
       time: Math.min(1, Math.max(0, w.elapsedPercent / 100)),
       resetsAt: epoch(w.resetsAt),
-      startsGroup: i === 0
+      startsGroup: i === 0,
+      activeAccount
     }))
   }
   const spend = report.spend
@@ -131,7 +138,7 @@ async function readTracker(): Promise<string | null> {
   }
   reportedMissing = false
   try {
-    const { stdout } = await execFileAsync(binary, ['--json'], { timeout: 15_000, maxBuffer: 1024 * 1024 })
+    const { stdout } = await execFileAsync(binary, ['--json', '--all-accounts'], { timeout: 15_000, maxBuffer: 1024 * 1024 })
     return stdout
   } catch (err) {
     serverLog(`[usage] ${binary} --json failed: ${err instanceof Error ? err.message : String(err)}`)

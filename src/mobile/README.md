@@ -87,7 +87,9 @@ mini-stats writes what its menu-bar item draws, colours and sizes decided, to
 phone is watching (`system-stats-watch`, `src/server/system-stats.ts`).
 Tapping either readout opens one panel with every set of figures (`MacReadouts.tsx`):
 each mini-stats module's reading, and each usage window's used, elapsed and
-time-to-reset.
+time-to-reset. Where a provider has several accounts, every account gets its own
+group of bars, named in the figures, with a line under the signed-in one's; the
+others' numbers are the tracker's last reading of them, carried forward.
 
 ## Control: here, muted, or let go
 

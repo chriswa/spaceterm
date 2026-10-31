@@ -184,7 +184,20 @@ textarea, input, [contenteditable="true"], .cm-content {
 }
 .m-usage__time { left: 0; right: 0; }
 .m-usage__used { right: 0; width: 3px; box-shadow: 0 0 1px rgba(0, 0, 0, 0.6); }
-.m-usage__error { margin-left: 5px; font-size: 18px; line-height: 24px; }
+.m-usage__error { position: relative; margin-left: 5px; font-size: 18px; line-height: 24px; }
+/* The signed-in account's underline, as the tray draws it: one line across its
+   bars, bridging the gaps between them, in space the bars leave for it. */
+.m-usage__bars--underlined { padding-bottom: 3px; }
+.m-usage__active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 1.5px;
+  background: rgba(255, 255, 255, 0.9);
+}
+.m-usage__active + .m-usage__active::after { left: -2px; }
 
 /* Both readouts' figures (MacReadouts.tsx), just above the bar from the
    screen's left edge: a box for the system monitor, and one for AI usage
@@ -220,6 +233,7 @@ textarea, input, [contenteditable="true"], .cm-content {
 .m-detail__table th + th,
 .m-detail__table td + td { padding-left: 10px; }
 .m-detail__table .m-detail__name { text-align: left; }
+.m-detail__table .m-detail__name--active { text-decoration: underline; text-underline-offset: 2px; }
 .m-detail__when { color: var(--m-dim); }
 
 /* A press, the instant a finger lands (press-feedback.ts): the button sinks
