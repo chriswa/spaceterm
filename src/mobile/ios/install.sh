@@ -65,9 +65,9 @@ urls="$(cd "$repo" && npx tsx src/cli/mobile-link.ts --urls)"
 # What this app is built from, so the page can tell when a newer one exists
 # (native-version.mjs; the web build publishes the current one).
 native_version="$(node "$here/native-version.mjs")"
-# Every build a newer version than the last: iOS takes a download whose
-# version matches the installed app's, asks, fetches it, then quietly keeps
-# the old one (the phone's November 1 attempts). The cable install does not
+# Every build a newer version than the last. A download whose version matched
+# the installed app's was asked for, fetched, then never installed, without a
+# word (November 1); a newer version is the likely cure. The cable install does not
 # care, but has it too, so a download after one is still newer. Seconds since
 # 2026, so each part stays well inside what a bundle version allows.
 build_number="$(( $(date +%s) - 1767225600 ))"
