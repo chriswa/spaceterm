@@ -18,6 +18,7 @@ import {
 } from './resume-target'
 import { assertNever, unhandledVariant } from '../shared/exhaustive'
 import { routeHandsFreeWords, routeWords } from './receptionist-words'
+import { AttentionKeeper, type AttentionMessage } from './hands-free-attention'
 import { hookPayloadAgentType, isForeignAgentHook } from './hook-agent'
 import { agentTypeOrDefault, type AgentType } from '../shared/agent-type'
 import { createAgentDrivers, driverFor, type AgentDriver, type AgentLaunchSpec } from './agent-drivers'
@@ -415,7 +416,9 @@ const voiceOperatorHandsFree = new VoiceOperatorHandsFree(
     log: (message) => serverLog(message),
   },
   (event) => {
-    actOnHandsFree(event, DESKTOP_DEVICE)
+    const attention = attentionFor('mac', (message) => voiceOperatorHandsFree.sendAttention(message))
+    keepAttention(attention, event)
+    actOnHandsFree(event, DESKTOP_DEVICE, attention)
     handsFreePresence.see('mac', event)
     // Every window shows it; the first one plays its sounds, so each is heard once.
     let audio = true
@@ -429,6 +432,75 @@ const voiceOperatorHandsFree = new VoiceOperatorHandsFree(
 )
 /** Each phone's hands-free stream to Voice Operator, by client id. */
 const handsFreeStreams = new Map<string, LineConnection>()
+
+/**
+ * Control was told to stop talking ("stop talking", "stop conversation",
+ * "end conversation") and has not been spoken to with "Control" since:
+ * attention is dismissed, and what reaches Control without "Control" all the
+ * same (a dictation already under way) is for someone else. Over as soon as
+ * any device holds Control again, however it came to.
+ */
+let receptionistHushed = false
+
+/**
+ * Who owns a client's dictations: its device, which a reconnect keeps, so a
+ * phone back from a dropped connection can carry on with what it was saying.
+ */
+const dictationOwner = (client: { device?: ClientDevice; id: string }) => client.device?.id ?? client.id
+
+/**
+ * Control's attention on each hands-free session — whether the user must say
+ * "Control" first — by `mac` or the phone's device, which outlives a
+ * reconnect. See hands-free-attention.ts.
+ */
+const handsFreeAttention = new Map<string, AttentionKeeper>()
+
+function attentionFor(key: string, send: (message: AttentionMessage) => void): AttentionKeeper {
+  let keeper = handsFreeAttention.get(key)
+  if (!keeper) {
+    keeper = new AttentionKeeper((message) => {
+      serverLog(`[hands-free] attention ${message.state} on ${key}${message.closesAt ? ` until ${new Date(message.closesAt).toISOString()}` : ''}`)
+      send(message)
+    })
+    handsFreeAttention.set(key, keeper)
+  }
+  return keeper
+}
+
+/** A phone's attention, told to whichever of its connections has the stream now. */
+function phoneAttention(owner: string): AttentionKeeper {
+  return attentionFor(`phone:${owner}`, (message) => {
+    const client = [...clients].find((c) => dictationOwner(c) === owner && handsFreeStreams.has(c.id))
+    if (client) handsFreeStreams.get(client.id)?.write(JSON.stringify(message))
+  })
+}
+
+/**
+ * What Voice Operator says that attention is decided on: hands-free coming
+ * on engages it (unless Control was told to stop talking), quiet times it,
+ * and each alarm counts towards dismissing it.
+ */
+function keepAttention(attention: AttentionKeeper, event: VoiceOperatorEvent): void {
+  switch (event.type) {
+    case 'session':
+      if (typeof event.conversationMs === 'number') attention.engagedMs = event.conversationMs
+      if (receptionistHushed) attention.dismiss()
+      else attention.engage()
+      break
+    case 'resumed':
+      attention.restate()
+      break
+    case 'session-ended':
+      attention.reset()
+      break
+    case 'state':
+      attention.see(event.quiet === true)
+      break
+    case 'cue':
+      if (event.name === 'notWakeWord') attention.alarmed()
+      break
+  }
+}
 /** The phone's audio and lifecycle record, ~/.spaceterm/mobile-events.jsonl. */
 const mobileEventsLog = new MobileEventsLog()
 
@@ -447,7 +519,7 @@ function cutInOnReceptionist(cutInMsAgo: number | undefined): void {
  * else, once: the words said go to Control, which comes to `holder`, the
  * device they were said on; a cut-in stops Control. Clients only show it.
  */
-function actOnHandsFree(event: VoiceOperatorEvent, holder: ReceptionistHolder | undefined): void {
+function actOnHandsFree(event: VoiceOperatorEvent, holder: ReceptionistHolder | undefined, attention: AttentionKeeper): void {
   const action = handsFreeAction(event)
   if (!action) return
   if (action.kind === 'cut-in') {
@@ -456,27 +528,23 @@ function actOnHandsFree(event: VoiceOperatorEvent, holder: ReceptionistHolder | 
     return
   }
   serverLog(`[hands-free] ${action.text.length} chars to Control from ${holder?.label ?? 'a phone'} (ended on ${String(event.reason)}${action.interrupted ? ', having cut it off' : ''})`)
-  handsFreeWords(action, holder)
+  handsFreeWords(action, holder, attention)
 }
-
-/**
- * Control was told to stop talking ("stop talking", "stop conversation",
- * "end conversation") and has not been spoken to with "Control" since:
- * what is said in the conversation window without it is for someone else.
- * Over as soon as any device holds Control again, however it came to.
- */
-let receptionistHushed = false
 
 /**
  * Words dictated hands-free, the wake word off, for Control; empty when
  * nothing was caught for it, so that it stops waiting and carries on with
  * whatever the dictation stopped. `interrupted`: the dictation cut Control's
  * reply off. Speaking to Control hands-free brings it to `holder` speaking,
- * not writing: the user is talking, so wants to hear the answer.
+ * not writing: the user is talking, so wants to hear the answer — and
+ * engages its attention, so what they say next needs no "Control".
  */
-function handsFreeWords(words: { text: string; interrupted: boolean; triggered: boolean }, holder: ReceptionistHolder | undefined): void {
+function handsFreeWords(
+  words: { text: string; interrupted: boolean; triggered: boolean }, holder: ReceptionistHolder | undefined, attention: AttentionKeeper,
+): void {
   if (!receptionist) return
   const route = routeHandsFreeWords(words, receptionistHushed)
+  if (route === 'nothing' ? words.triggered : route === 'hear') attention.engage()
   switch (route) {
     case 'overheard':
       serverLog(`[receptionist] ${words.text.length} chars from ${holder?.label ?? 'a phone'} without "Control" since "stop talking": not for Control`)
@@ -497,6 +565,12 @@ function handsFreeWords(words: { text: string; interrupted: boolean; triggered: 
       return
     case 'stop-talking':
       stopReceptionistTalking(words.text, holder?.label, words.interrupted)
+      return
+    case 'stop-listening':
+      // Attention dismissed, as it was: Control keeps its replies, and gets no words.
+      serverLog(`[receptionist] "${words.text}" from ${holder?.label ?? 'a phone'}: "Control" needed again`)
+      attention.dismiss()
+      receptionist.heardNothing(words.interrupted)
       return
     case 'hear':
       // The wake word names Control: speaking to it brings it here.
@@ -533,13 +607,9 @@ function sendReceptionistAway(text: string, from: string | undefined, interrupte
 function stopReceptionistTalking(text: string, from: string | undefined, interrupted: boolean): void {
   sendReceptionistAway(text, from, interrupted)
   receptionistHushed = true
+  for (const attention of handsFreeAttention.values()) attention.dismiss()
 }
 
-/**
- * Who owns a client's dictations: its device, which a reconnect keeps, so a
- * phone back from a dropped connection can carry on with what it was saying.
- */
-const dictationOwner = (client: { device?: ClientDevice; id: string }) => client.device?.id ?? client.id
 const clientLabel = (client: { name?: string; id: string }) => `${client.name ?? 'client'} ${client.id.slice(0, 8)}`
 
 /** The phone's "App update" badge builds and installs the iPhone app from here. */
@@ -2341,7 +2411,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           if (event) {
             // Acted on here, before the phone has it; the phone only shows it and plays its sounds.
             const holder = client.device ? { deviceId: client.device.id, label: client.device.label } : undefined
-            actOnHandsFree(event, holder)
+            const attention = phoneAttention(dictationOwner(client))
+            keepAttention(attention, event)
+            actOnHandsFree(event, holder, attention)
             handsFreePresence.see(key, event)
           }
           send(client.link, { type: 'hands-free-stream', kind: 'line', line })

@@ -1,5 +1,6 @@
 import * as net from 'net'
 import { cleanHandsFreeText } from '../shared/hands-free-words'
+import type { AttentionMessage } from './hands-free-attention'
 
 /**
  * Hands-free mode, as Voice Operator now provides it: Spaceterm is a client
@@ -157,6 +158,11 @@ export class VoiceOperatorHandsFree {
       return
     }
     this.control?.write(JSON.stringify(on ? { type: 'start', source: 'mac' } : { type: 'stop' }))
+  }
+
+  /** Control's attention on the Mac's hands-free (hands-free-attention.ts). */
+  sendAttention(message: AttentionMessage): void {
+    if (this.welcomed) this.control?.write(JSON.stringify(message))
   }
 
   /**

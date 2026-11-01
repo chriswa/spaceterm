@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isControlShutdown, isControlStopTalking, wakeFreeShutdown } from './control-shutdown'
+import { isControlShutdown, isControlStopTalking, isStopListening, wakeFreeShutdown } from './control-shutdown'
 
 describe('isControlShutdown', () => {
   it('matches "Control, shutdown", however dictation writes it', () => {
@@ -71,5 +71,12 @@ describe('isControlStopTalking', () => {
     ]) {
       expect(isControlStopTalking(text), text).toBe(false)
     }
+  })
+})
+
+describe('isStopListening', () => {
+  it('is the phrase on its own, with or without "Control"', () => {
+    for (const text of ['Stop listening.', 'Control, stop listening', 'STOP LISTENING!']) expect(isStopListening(text), text).toBe(true)
+    for (const text of ['Stop listening to Kevin.', 'Tell Kevin to stop listening.', 'Stop talking.', '']) expect(isStopListening(text), text).toBe(false)
   })
 })

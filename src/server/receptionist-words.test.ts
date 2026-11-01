@@ -29,3 +29,11 @@ describe('routeHandsFreeWords', () => {
     expect(routeHandsFreeWords({ text: 'stop talking', triggered: true }, true)).toBe('stop-talking')
   })
 })
+
+describe('stop listening', () => {
+  it('dismisses attention when said hands-free, with or without "Control", and only on its own', () => {
+    expect(routeHandsFreeWords({ text: 'Stop listening.', triggered: false }, false)).toBe('stop-listening')
+    expect(routeHandsFreeWords({ text: 'stop listening', triggered: true }, false)).toBe('stop-listening')
+    expect(routeHandsFreeWords({ text: 'Stop listening to Kevin.', triggered: false }, false)).toBe('hear')
+  })
+})

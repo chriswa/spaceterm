@@ -1,4 +1,4 @@
-import { isControlShutdown, isControlStopTalking } from '../shared/control-shutdown'
+import { isControlShutdown, isControlStopTalking, isStopListening } from '../shared/control-shutdown'
 
 /**
  * What the server does with words for Control, before the model sees any:
@@ -10,11 +10,13 @@ import { isControlShutdown, isControlStopTalking } from '../shared/control-shutd
  * - `away` — "let me turn this off" or "Control, shutdown": replies Off, and
  *   hands-free goes off with it (Voice Operator turns it off itself).
  * - `stop-talking` — "stop talking", "stop conversation" or "end
- *   conversation": replies Off, and Control hears nothing more until
- *   "Control"; hands-free stays on.
+ *   conversation": replies Off, and attention dismissed — Control hears
+ *   nothing more until "Control"; hands-free stays on.
+ * - `stop-listening` — "stop listening": attention dismissed, replies as
+ *   they were, and no words for Control.
  * - `hear` — words for the model.
  */
-export type ReceptionistWordsRoute = 'overheard' | 'nothing' | 'away' | 'stop-talking' | 'hear'
+export type ReceptionistWordsRoute = 'overheard' | 'nothing' | 'away' | 'stop-talking' | 'stop-listening' | 'hear'
 
 /**
  * Words dictated hands-free, the wake word off. `triggered`: they began with
@@ -23,11 +25,12 @@ export type ReceptionistWordsRoute = 'overheard' | 'nothing' | 'away' | 'stop-ta
  */
 export function routeHandsFreeWords(words: { text: string; triggered: boolean }, hushed: boolean): ReceptionistWordsRoute {
   if (hushed && !words.triggered) return 'overheard'
+  if (isStopListening(words.text)) return 'stop-listening'
   return routeWords(words.text)
 }
 
 /** A whole message to Control — typed, or a dictation sent from the microphone button. */
-export function routeWords(text: string): Exclude<ReceptionistWordsRoute, 'overheard'> {
+export function routeWords(text: string): Exclude<ReceptionistWordsRoute, 'overheard' | 'stop-listening'> {
   if (!text) return 'nothing'
   if (isControlShutdown(text)) return 'away'
   if (isControlStopTalking(text)) return 'stop-talking'

@@ -59,6 +59,19 @@ export function isControlStopTalking(text: string): boolean {
   return STOP_TALKING_PHRASES.some((phrase) => sameWords(words, phrase))
 }
 
+/**
+ * "Stop listening", with or without "Control" first: said hands-free, it
+ * dismisses Control's attention — "Control" is needed again, and speech
+ * without it gets no alarm — and Control gets no words. Unlike "stop
+ * talking", replies stay as they were. Only the phrase on its own counts:
+ * "stop listening to Kevin" does not.
+ */
+export function isStopListening(text: string): boolean {
+  const words = phraseWords(text)
+  if (words[0] === 'control') words.shift()
+  return sameWords(words, ['stop', 'listening'])
+}
+
 /** Lowercased words, punctuation dropped, "lemme" as dictation sometimes writes "let me". */
 function phraseWords(text: string): string[] {
   return text.toLowerCase().replace(/[^\p{L}\s]/gu, ' ').split(/\s+/).filter(Boolean).flatMap((w) => w === 'lemme' ? ['let', 'me'] : [w])

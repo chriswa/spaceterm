@@ -483,7 +483,7 @@ them, so the Ring/Silent switch does not silence them (`playHandsFreeCue`):
 | three soft steps up | hands-free is ready: Voice Operator is listening (its `ready` cue) |
 | two notes up | hands-free has begun taking your words down |
 | two notes down | they have been taken down and sent |
-| three soft steps down | the conversation window closed, or you said "stop listening"; "Control" is needed again |
+| three soft steps down | Control's attention is no longer engaged — it lapsed, or you said "stop listening" or "stop talking"; "Control" is needed again |
 | an octave down, held low | "Let me turn this off" (or "Control, shutdown"): Control is away until you say "Control" again |
 
 The microphone button leaves Control where it is — it does not bring Control
@@ -556,27 +556,37 @@ Spaceterm is its client (`hands-free.ts`):
   **teal** speaker sounding waves, and only "Control" cuts in.
 - **Its cues** are Voice Operator's to call and this device's to play: three
   soft steps up as it is ready, two notes up as your words begin to be taken
-  down and two down as they are sent, the sad tune (`notWakeWord`) for speech
-  that did not start with "Control" (three times in a row at most, then quiet
-  until you say "Control" again), three steps down as the window closes,
+  down and two down as they are sent, the sad tune (`notWakeWord`) — the
+  alarm — for speech that did not start with "Control" while attention has
+  lapsed, three steps down as attention stops being engaged,
   an octave down for "let me turn this off", and the soft repeating beep
   while it decides whether you said "Control" (`pending`).
-- **The conversation window**: after "Control", and as hands-free is turned
-  on, anything you say starts a dictation without it — your first word kept,
-  a cough or filler ignored — including cutting Control off mid-reply. It
-  stays open while either of you is speaking and closes once neither has for
-  15 s. **"Stop listening"** (or "Control, stop listening") closes it at once,
-  as if the 15 s had run out, and Control gets no words; hands-free stays on,
-  and the sad tune stays quiet until you say "Control" again.
+- **Control's attention** — whether you need to say "Control" first — is
+  the server's to keep (`src/server/hands-free-attention.ts`), and Voice
+  Operator listens the way it is told (its DESIGN.md, "Attention"). Three
+  states:
+  - **Engaged**, the conversation window: anything you say is taken down
+    without "Control" — your first word kept, a cough or filler ignored —
+    including cutting Control off mid-reply. Hands-free coming on engages
+    it, and so does every time you speak to Control. It holds while anyone
+    is speaking, Control's voice included, and lapses once nobody has for
+    15 s (Voice Operator's Hands-Free Listening Timeout).
+  - **Lapsed**: Control let it go, and you may not know, so speech without
+    "Control" gets the alarm, three times; then it is dismissed.
+  - **Dismissed**: you ended it, and know, so speech without "Control" gets
+    nothing at all — not even the deciding beep — and you can talk to people
+    in the room. **"Stop listening"** (or "Control, stop listening") dismisses
+    it, and Control gets no words; its replies stay as they were.
+
+  Leaving engaged plays three steps down, whichever way it went.
 - **"Stop talking"** — or "stop conversation", or "end conversation", with or
-  without "Control" first — turns Control's replies Off at once (from Hear,
-  Read or Off), cutting its voice off with anything queued, so no reply or
-  agent news is spoken. Hands-free stays on, and Control hears nothing said
-  without "Control" until you say it again, so you can talk to people in the
-  room; the server drops those words (`receptionist-words.ts`). Voice
-  Operator's window is not closed by it, so its dictation tones can still
-  sound for them until the window runs out. The next "Control, …" is heard,
-  and brings Control back to that device on Hear.
+  without "Control" first — dismisses attention as "stop listening" does, and
+  also turns Control's replies Off at once (from Hear, Read or Off), cutting
+  its voice off with anything queued, so no reply or agent news is spoken.
+  Hands-free stays on. Should a dictation already under way reach the server
+  without "Control" all the same, it is dropped (`receptionist-words.ts`).
+  The next "Control, …" is heard, and brings Control back to that device on
+  Hear, attention engaged.
 - **Speaking to Control hands-free answers aloud**: words heard hands-free
   bring Control to that device on Hear, unmuting it there if it was on Read.
   A message sent from the microphone button or typed leaves Read as it was.
