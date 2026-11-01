@@ -9,7 +9,8 @@ import SwiftUI
 /// hold the microphone open without AirPods (NativeMicrophone.swift).
 ///
 /// Installed from the Mac by `install.sh` — by hand, or when the page's
-/// "App update" badge asks the server to (src/server/mobile-install.ts).
+/// "App update" badge asks the server to (src/server/mobile-install.ts); away
+/// from the Mac's network, as a download the phone fetches over Tailscale.
 @main
 struct SpacetermApp: App {
     var body: some Scene {
