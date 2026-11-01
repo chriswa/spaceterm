@@ -6,7 +6,8 @@ import type { UsageBar, UsagePalette, UsageSnapshot } from '../shared/usage-repo
  * menu bar (TrayBars.swift): one bar per window, filling bottom-up — a dim
  * column for time elapsed, a bright stripe in its right-hand lane for usage —
  * on black, framed by a hairline that turns white at 100%. Tight gaps within a
- * provider, wider between. Only the bars, always.
+ * provider's account, wider between, and a line under the signed-in account's
+ * bars when the provider has several accounts. Only the bars, always.
  *
  * Scaled down, whole, when there are more bars than the bar's left zone is
  * wide. The tap-for-details table is `UsageDetail`, shown by MacReadouts.tsx.
@@ -35,14 +36,15 @@ export function ageText(ms: number): string {
 
 function Bar({ bar }: { bar: UsageBar }) {
   const colour = PALETTE_RGB[bar.palette]
+  const signedInSuffix = bar.activeAccount ? ' (signed in)' : ''
   if (bar.error) {
-    return <span className="m-usage__error" style={{ color: rgb(colour) }} aria-label={bar.label}>⚠︎</span>
+    return <span className={`m-usage__error${bar.activeAccount ? ' m-usage__active' : ''}`} style={{ color: rgb(colour) }} aria-label={bar.label + signedInSuffix}>⚠︎</span>
   }
   return (
     <span
-      className={`m-usage__bar${bar.usage >= 1 ? ' m-usage__bar--maxed' : ''}`}
+      className={`m-usage__bar${bar.usage >= 1 ? ' m-usage__bar--maxed' : ''}${bar.activeAccount ? ' m-usage__active' : ''}`}
       style={{ marginLeft: bar.startsGroup ? 5 : 2 }}
-      aria-label={`${bar.label}: ${pct(bar.usage)} used, ${pct(bar.time)} of the window gone`}
+      aria-label={`${bar.label}${signedInSuffix}: ${pct(bar.usage)} used, ${pct(bar.time)} of the window gone`}
     >
       <span className="m-usage__time" style={{ height: pct(Math.min(1, bar.time)), background: rgb(colour, 0.5) }} />
       <span className="m-usage__used" style={{ height: pct(Math.min(1, bar.usage)), background: rgb(colour) }} />
@@ -111,7 +113,7 @@ export function UsageBars({ snapshot }: { snapshot: UsageSnapshot }) {
       // A transform leaves the layout box at full size, so the box is given the scaled size.
       style={shrunk ? { width: fit.width * fit.scale, height: fit.height * fit.scale } : undefined}
     >
-      <span ref={bars} className="m-usage__bars" style={shrunk ? { transform: `scale(${fit.scale})` } : undefined}>
+      <span ref={bars} className={`m-usage__bars${snapshot.bars.some((b) => b.activeAccount) ? ' m-usage__bars--underlined' : ''}`} style={shrunk ? { transform: `scale(${fit.scale})` } : undefined}>
         {snapshot.bars.map((b) => <Bar key={b.label} bar={b} />)}
       </span>
     </div>
@@ -129,7 +131,7 @@ export function UsageDetail({ snapshot, now }: { snapshot: UsageSnapshot; now: n
         <tbody>
           {snapshot.bars.map((b) => (
             <tr key={b.label} style={{ color: rgb(PALETTE_RGB[b.palette]) }}>
-              <td className="m-detail__name">{b.label}</td>
+              <td className={`m-detail__name${b.activeAccount ? ' m-detail__name--active' : ''}`}>{b.label}</td>
               {b.error ? <td colSpan={3} /> : (
                 <>
                   <td>{pct(b.usage)}</td>

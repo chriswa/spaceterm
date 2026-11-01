@@ -39,6 +39,54 @@ describe('usageSnapshotFrom', () => {
     expect(bars).toEqual([expect.objectContaining({ palette: 'claude', error: true, startsGroup: true })])
   })
 
+  describe('a provider with several accounts', () => {
+    const SPARE = {
+      id: 'claude',
+      name: 'Claude',
+      account: 'Spare',
+      signedIn: false,
+      updatedAt: '2026-10-01T16:39:22-07:00',
+      windows: [{ caption: '7-Day', elapsedPercent: 40.3, modelScoped: false, usagePercent: 71 }]
+    }
+    const PERSONAL = {
+      id: 'claude',
+      name: 'Claude',
+      account: 'Personal',
+      signedIn: true,
+      updatedAt: '2026-10-02T17:21:08-07:00',
+      windows: [
+        { caption: '7-Day', elapsedPercent: 5.8, modelScoped: false, usagePercent: 10 },
+        { caption: 'Fable 7-Day', elapsedPercent: 5.8, modelScoped: true, usagePercent: 0 }
+      ]
+    }
+
+    it('gives each account its own group, named, in the tracker\'s order, with the signed-in one marked', () => {
+      const { bars, updatedAt } = usageSnapshotFrom({ providers: [SPARE, PERSONAL] })
+      expect(bars.map((b) => [b.label, b.startsGroup, b.activeAccount])).toEqual([
+        ['Claude Spare 7-Day', true, false],
+        ['Claude Personal 7-Day', true, true],
+        ['Claude Personal Fable 7-Day', false, true]
+      ])
+      expect(updatedAt).toBe(READ_AT)
+    })
+
+    it('a failed fetch is the signed-in account\'s warning, and leaves the other account\'s bars', () => {
+      const { bars } = usageSnapshotFrom({ providers: [SPARE, { ...PERSONAL, error: 'HTTP 401' }] })
+      expect(bars.map((b) => [b.label, b.error, b.activeAccount])).toEqual([
+        ['Claude Spare 7-Day', undefined, false],
+        ['Claude Personal unavailable', true, true]
+      ])
+    })
+
+    it('a single account needs no name and no mark', () => {
+      const { bars } = usageSnapshotFrom({ providers: [PERSONAL] })
+      expect(bars.map((b) => [b.label, b.activeAccount])).toEqual([
+        ['Claude 7-Day', false],
+        ['Claude Fable 7-Day', false]
+      ])
+    })
+  })
+
   it('spend with no budget fills once anything is spent', () => {
     const { bars } = usageSnapshotFrom({ providers: [], spend: { monthToDateUSD: 3, monthElapsedPercent: 10 } })
     expect(bars[0].usage).toBe(1)

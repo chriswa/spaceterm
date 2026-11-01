@@ -11,7 +11,7 @@
 export type UsagePalette = 'claude' | 'codex' | 'cursor' | 'devin' | 'jev' | 'scoped' | 'spend'
 
 export interface UsageBar {
-  /** Who and which window, e.g. "Claude 5-Hour" — for a tooltip or label. */
+  /** Who and which window, e.g. "Claude 5-Hour", or "Claude Personal 5-Hour" where a provider has several accounts. Unique within a snapshot. */
   label: string
   palette: UsagePalette
   /** The provider's last fetch failed: draw a warning, not a bar. */
@@ -22,8 +22,10 @@ export interface UsageBar {
   time: number
   /** When the window starts over (ms since epoch). Absent when the tracker does not say, or from a server older than the field. */
   resetsAt?: number
-  /** First bar of a provider (or the spend bar): a wider gap before it. */
+  /** First bar of a provider's account (or the spend bar): a wider gap before it. */
   startsGroup: boolean
+  /** Belongs to the signed-in account of a provider with several: underlined. Absent from a server older than the field. */
+  activeAccount?: boolean
 }
 
 export interface UsageSnapshot {

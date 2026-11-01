@@ -70,6 +70,28 @@ describe('MacReadouts', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
+  it('with several accounts, marks the signed-in one in the bars and the figures, and leaves the others plain', () => {
+    const bridge = installFakeBridge()
+    render(<MacReadouts />)
+    act(() => bridge.emit.usageReport({
+      updatedAt: Date.now(),
+      bars: [
+        { label: 'Claude Spare 7-Day', palette: 'claude', usage: 0.71, time: 0.4, startsGroup: true, activeAccount: false },
+        { label: 'Claude Personal 7-Day', palette: 'claude', usage: 0.1, time: 0.06, startsGroup: true, activeAccount: true }
+      ]
+    }))
+
+    const bar = (label: string) => screen.getByLabelText(new RegExp(`^${label}`))
+    expect(bar('Claude Personal 7-Day').classList.contains('m-usage__active')).toBe(true)
+    expect(bar('Claude Personal 7-Day').getAttribute('aria-label')).toContain('(signed in)')
+    expect(bar('Claude Spare 7-Day').classList.contains('m-usage__active')).toBe(false)
+
+    fireEvent.click(bar('Claude Spare 7-Day'))
+    const panel = screen.getByRole('dialog')
+    expect(within(panel).getByText('Claude Personal 7-Day').classList.contains('m-detail__name--active')).toBe(true)
+    expect(within(panel).getByText('Claude Spare 7-Day').classList.contains('m-detail__name--active')).toBe(false)
+  })
+
   it('a touch anywhere else on the page closes the figures', () => {
     const bridge = installFakeBridge()
     render(<><MacReadouts /><button>rocket</button></>)
