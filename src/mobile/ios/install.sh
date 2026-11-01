@@ -65,6 +65,13 @@ urls="$(cd "$repo" && npx tsx src/cli/mobile-link.ts --urls)"
 # What this app is built from, so the page can tell when a newer one exists
 # (native-version.mjs; the web build publishes the current one).
 native_version="$(node "$here/native-version.mjs")"
+# Every build a newer version than the last: iOS takes a download whose
+# version matches the installed app's, asks, fetches it, then quietly keeps
+# the old one (the phone's November 1 attempts). The cable install does not
+# care, but has it too, so a download after one is still newer. Seconds since
+# 2026, so each part stays well inside what a bundle version allows.
+build_number="$(( $(date +%s) - 1767225600 ))"
+version_settings=(MARKETING_VERSION="1.0.$build_number" CURRENT_PROJECT_VERSION="$build_number")
 
 if [ "${1:-}" = "--over-the-air" ]; then
   secret="${2:?--over-the-air needs the secret the download is served under}"
@@ -87,6 +94,7 @@ if [ "${1:-}" = "--over-the-air" ]; then
     -xcconfig "$config" \
     SPACETERM_URLS="$urls" \
     SPACETERM_NATIVE_VERSION="$native_version" \
+    "${version_settings[@]}" \
     archive 2>&1 | grep -E "error:|ARCHIVE (SUCCEEDED|FAILED)" || true
   [ -d "$archive" ] || { echo "Build or signing failed; see the errors above."; exit 1; }
   # Signed for development, as the cable install is: an install from a link
@@ -182,6 +190,7 @@ xcodebuild \
   SYMROOT="$here/build" \
   SPACETERM_URLS="$urls" \
   SPACETERM_NATIVE_VERSION="$native_version" \
+  "${version_settings[@]}" \
   build | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
 
 app="$here/build/Release-iphoneos/SpacetermMobile.app"
