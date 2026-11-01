@@ -38,6 +38,10 @@ final class NativeDictation: NSObject, WKScriptMessageHandler {
 enum LastDictation {
     private static let key = "spaceterm.lastDictation"
 
+    /// Posted on the main queue as the shortcut's Get Last Dictation hands it
+    /// out, for the app's sparkle (NativeMicrophone.swift `playDictationCopied`).
+    static let handedOut = Notification.Name("spaceterm.lastDictationHandedOut")
+
     static func keep(_ text: String) {
         UserDefaults.standard.set(text, forKey: key)
     }

@@ -65,6 +65,20 @@ final class NativeMicrophone: NSObject, WKScriptMessageHandler, VoiceAudioEngine
             status["handsFree"] = self.handsFree.isOn
             return status
         }
+        NotificationCenter.default.addObserver(forName: LastDictation.handedOut, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.playDictationCopied() }
+        }
+    }
+
+    /// The Action button's sparkle, as its shortcut takes the last "dictate …"
+    /// (DictationIntents.swift): the answer to the page's `dictationKept`
+    /// (src/mobile/cues.ts), which ends hanging on D7 — from that D7, through
+    /// B6, home to a held C7, in the same rhythm. Times are as played (the
+    /// page's halved by its `SPEEDUP`), and at its gain. Only with the engine
+    /// up, as under hands-free, which is the only time a dictation is kept.
+    private func playDictationCopied() {
+        let segments: [[Double]] = [[2349, 0.035], [0, 0.01], [1976, 0.035], [0, 0.01], [2349, 0.035], [0, 0.01], [2093, 0.1]]
+        engine.handle(command: "cue", body: ["name": "dictationCopied", "segments": segments, "gain": 0.15])
     }
 
     // MARK: - From the page

@@ -16,6 +16,8 @@ struct GetLastDictationIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ReturnsValue<String> {
         guard let text = LastDictation.text else { throw NothingDictated() }
+        // The press was taken: the app sparkles, so the shortcut need not show anything.
+        await MainActor.run { NotificationCenter.default.post(name: LastDictation.handedOut, object: nil) }
         return .result(value: text)
     }
 }

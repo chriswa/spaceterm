@@ -24,9 +24,11 @@
  * a sad slide down from G5, as speech that needed "Control" turns out not to
  * start with it and is thrown away. While it decides whether such speech
  * starts with "Control", a beep repeats (`playPendingTone`). `dictationKept`,
- * a quick high sparkle — G6 and C7, twice — follows `dictationEnd` when the
- * words began with "dictate": kept, not sent to Control — on the Mac's
- * clipboard, or on the phone for its Action button to copy.
+ * a quick high sparkle — G6 C7 G6, up to a held D7 — follows `dictationEnd`
+ * when the words began with "dictate": kept, not sent to Control — on the
+ * Mac's clipboard, or on the phone for its Action button to copy. It ends
+ * unresolved on purpose: the Action button's sparkle answers it, from that
+ * D7 through B6 home to C7 (the app's `dictationCopied`, NativeMicrophone.swift).
  *
  * `heardUnattached`, a short odd little tune, plays the same way when the
  * microphone button's words reached Control while nobody holds it: taken,
@@ -75,8 +77,9 @@ const SEGMENTS: Record<Cue, Array<[number, number]>> = {
   // From the pending beep's G5, sliding sadly down a semitone at a time, then dropping to a long D5.
   notWakeWord: [[784, 0.16], [740, 0.16], [698, 0.16], [587, 0.56]],
   // G5, C#6, A#5 A#5, D#5 — pause — G#5, D#6.
-  // G6, C7, G6, C7, the last held: a sparkle, an octave above anything else here.
-  dictationKept: [[1568, 0.07], [0, 0.02], [2093, 0.07], [0, 0.02], [1568, 0.07], [0, 0.02], [2093, 0.2]],
+  // G6, C7, G6, D7, the last held and left hanging: a sparkle, an octave above anything else
+  // here, that the Action button's `dictationCopied` (NativeMicrophone.swift) resolves to C7.
+  dictationKept: [[1568, 0.07], [0, 0.02], [2093, 0.07], [0, 0.02], [1568, 0.07], [0, 0.02], [2349, 0.2]],
   heardUnattached: [[784, 0.12], [0, 0.04], [1109, 0.12], [0, 0.04], [932, 0.08], [0, 0.03], [932, 0.08], [0, 0.04], [622, 0.22], [0, 0.10], [831, 0.12], [0, 0.04], [1245, 0.36]],
 }
 

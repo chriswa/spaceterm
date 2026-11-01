@@ -487,7 +487,8 @@ them, so the Ring/Silent switch does not silence them (`playHandsFreeCue`):
 | two notes down | they have been taken down and sent |
 | three soft steps down | Control's attention is no longer engaged — it lapsed, or you said "stop listening" or "stop talking"; "Control" is needed again |
 | an octave down, held low | "Let me turn this off" (or "Control, shutdown"): Control is away until you say "Control" again |
-| a high sparkle, two notes twice | "dictate …": the words were kept, not sent to Control — on the Mac's clipboard, or on the phone for the Action button |
+| a high sparkle, rising to a note left hanging | "dictate …": the words were kept, not sent to Control — on the Mac's clipboard, or on the phone for the Action button |
+| the same sparkle, answering it home | the Action button took the last "dictate …" for the clipboard (played by the app, `dictationCopied`) |
 
 The microphone button leaves Control where it is — it does not bring Control
 to this phone; the transcript's holder badge says where it is. When nobody
