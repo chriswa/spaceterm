@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { PendingNews } from './pending-news'
 import type { NameRegistryStore } from './name-registry'
 import type { ReceptionistEvent } from './prompt'
+import { asNodeId } from '../../shared/ids'
 
 function memoryStore(json?: string): NameRegistryStore {
   const store = { json, load: () => store.json, save: (next: string) => { store.json = next } }
@@ -15,6 +16,16 @@ describe('PendingNews', () => {
     const store = memoryStore()
     new PendingNews({ store }).push(ended('{Kevin:amber-otter}'))
     expect(new PendingNews({ store }).all()).toEqual([ended('{Kevin:amber-otter}')])
+  })
+
+  it('keeps every kind of news, a blocked agent included', () => {
+    const store = memoryStore()
+    const blocked: ReceptionistEvent = {
+      kind: 'agent-blocked', agent: '{Molly:coral-moose}', nodeId: asNodeId('52ec09f0'), since: 1, state: 'waiting_permission',
+      waitingFor: 'it asks permission to use Bash: running `kill 30179`', lastSaid: 'Socket path too long.',
+    }
+    new PendingNews({ store }).push(blocked)
+    expect(new PendingNews({ store }).all()).toEqual([blocked])
   })
 
   it('tells again news a turn took and never finished with, ahead of what came after', () => {

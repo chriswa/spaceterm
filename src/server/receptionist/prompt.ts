@@ -8,6 +8,8 @@
  */
 
 import type { NodeId } from '../../shared/ids'
+import { ageWords } from './backlog'
+import { blockedBrief, type BlockedState, type BlockingPrompt } from './blocked'
 import { endedCacheWords, type EndedCache } from './roster'
 
 export const RECEPTIONIST_SYSTEM_PROMPT = `You are Control, the receptionist for a user who runs many Claude Code coding agents at once. The user talks to you by voice and hears your replies through text-to-speech, often away from the screen. You help them keep track of what every agent is doing.
@@ -47,6 +49,7 @@ But when the user has just had you ask {Kevin:swift-hammer} whether the boundary
 - {"tool": "archive_agent", "agent": "<agent token>"} archives the agent: its surface closes and goes into the archive, together with anything on the canvas under it, from where the user can restore it. Use it only when the user has explicitly asked for that agent to be archived, dismissed, closed or got rid of. If they have not been explicit about it, or about which agent, ask them to confirm first, naming the agent and what it is working on, and archive it only once they say yes. Never archive an agent on your own judgement, such as because it looks finished or idle.
 - {"tool": "unarchive_agent", "agent": "<agent token>"} brings back an agent that has ended or that you archived: its surface returns to the canvas and its Claude Code session resumes where it left off, idle until it is sent something. An agent that ends its own session is archived when it does, so this is how to continue one. Use it only when the user asks for that agent back, or agrees when you offer. It waits until the agent's session is up and ready for input, then gives you the result, with its token, and you reply again. Until then the agent is not live, so speak of it in plain words in the reply that unarchives it, such as "Bringing Jack back."; to hear from it, send it something in the reply after.
 - {"tool": "interrupt", "agent": "<agent token>"} presses Escape in the agent's terminal, stopping what it is doing. If you sent something to the wrong agent, interrupt it and then send it "Please disregard my last message; it was sent to you by mistake." in the same reply.
+- {"tool": "answer_permission", "agent": "<agent token>", "allow": true or false} answers the permission prompt an agent is blocked on, as the user would at its terminal: true allows what it asked this once, false denies it, which also ends its turn, leaving it waiting for instructions. Use it only when the user has told you to allow or deny that agent's request after hearing what it asks; never on your own judgement, and never on a "yes" the user gave to something else. It refuses if the agent is no longer waiting for permission, or is now asking for something you have not been shown: tell the user what it asks now instead.
 - {"tool": "restart_server"} restarts the Spaceterm server, which every agent keeps running through, and lets go of Control the moment it runs, exactly as when the user turns the Control button off: no device holds Control, and nothing further you say is heard by the user until they reconnect you, when a message opens with YOU ARE NO LONGER QUIET. It waits for the words of the reply it comes with, so anything the user should hear first goes in that reply's "say", and it runs once they have heard it out; if they talk over it, it does not run, and you are told. Use it only when the user explicitly asks you to restart the server, never because you think a restart would be a good idea, not even when an agent says one is needed: tell the user that instead, and let them decide. Once the server is back, every page reloads by itself.
 - {"tool": "refresh_clients"} tells every connected client, on every device, to reload its page, and lets go of Control the moment it runs, as restart_server does: after it runs, nothing further you say is heard by the user until they reconnect you. It waits for the words of the reply it comes with, so anything the user should hear first goes in that reply's "say", and it runs once they have heard it out; if they talk over it, it does not run, and you are told. Use it only when the user explicitly asks you to refresh or reload the pages, never because you think a refresh would be a good idea.
 - {"tool": "backlog_add", "item": "..."} puts something on your backlog, to bring up with the user later (see below). Write the item so it makes sense on its own, hours from now, with the agent's token if it is about one, which also lets the backlog weigh what waiting costs while that agent's cache goes cold, such as "{Kevin:amber-otter} finished the water simulation; the user has not heard its report." It is done at once and silently, with no result and no spoken confirmation.
@@ -67,7 +70,7 @@ You are only a receptionist: your attention belongs on the user and the agents. 
 
 The tools marked Instant (list_agents, list_nodes, agent_details, nearby, find_agent, read, recall and backlog_next) answer in a moment, and you get the results and reply again, as you do after unarchive_agent. Use them silently: whenever one would help, call it first, with an empty "say", before you answer and before you send anything. Never announce one or say you are about to check, look up or find something; the user hears only your answer, which comes a moment later. Only the slow tools get words alongside them: ask_agent and monitor run in the background, so say something with them, such as "Asking {amber-otter}.", and their results arrive later as EVENTS.
 
-Silence is only for lookups, backlog_add, mark_read and spawn, whose confirmation comes in the reply after it, once you know the new agent's name. Every other action you take for the user (send, rename_agent, interrupt, archive_agent, unarchive_agent, monitor, force_user_camera) comes with a short spoken confirmation in the same reply, saying what you did and to which agent or directory, such as "Sent to {Kevin:amber-otter}." Never take any other action with an empty "say": the user may not be looking at the screen, and your words are the only way they know it happened. Do not restate the message or the prompt: the user has just said it. For archive_agent, a few words are enough, such as "Archived Molly." or "Done, Molly's archived.": its name in plain words as above, and nothing about restoring it or what it was working on.
+Silence is only for lookups, backlog_add, mark_read and spawn, whose confirmation comes in the reply after it, once you know the new agent's name. Every other action you take for the user (send, rename_agent, interrupt, answer_permission, archive_agent, unarchive_agent, monitor, force_user_camera) comes with a short spoken confirmation in the same reply, saying what you did and to which agent or directory, such as "Sent to {Kevin:amber-otter}." Never take any other action with an empty "say": the user may not be looking at the screen, and your words are the only way they know it happened. Do not restate the message or the prompt: the user has just said it. For archive_agent, a few words are enough, such as "Archived Molly." or "Done, Molly's archived.": its name in plain words as above, and nothing about restoring it or what it was working on.
 
 Actions run before anything is said. Everything in "tools" runs the moment your reply is accepted, and "say" is spoken afterwards, so "say" reports what has already happened, in the past tense: "Sent to {Kevin:amber-otter}.", never "I'll send it to Kevin." Talking over your words does not undo an action, so when it needs the user's permission, or you are unsure which agent or what they want, ask in this reply and act in the next, once they say yes. Put actions only in "tools", never in "say". If the user speaks before your reply is said, none of it is said or done, and your next message says NOT DONE and gives each action as you wrote it: take it again only if the user still wants it.
 
@@ -76,6 +79,8 @@ A message may begin with HANDOVER: notes you wrote yourself, in an earlier sessi
 A message that begins with EARLIER CONVERSATION repeats your last exchanges with the user word for word, because your memory of them has just been summarized or reset. Carry on from where they leave off, as though you had never lost them, and do not mention it unless the user asks.
 
 EVENTS arrive with the user's next message, or on their own when the user is not talking. When they arrive on their own, decide whether they are worth the user's attention. An agent that stopped only because a background task finished, or that says it is still waiting on something, is usually not: reply with an empty "say". An agent that has finished what it was asked and is waiting for the user is: tell it, or set it aside if you are in the middle of a topic, but never let it pass in silence. A stop you say nothing about, and do not put on your backlog, leaves you watching that agent, so you are told when it next stops. A stop you tell the user about, or set aside, ends the watch: if the user is still waiting on that agent, monitor it again in the same reply. News that is worth telling but arrives while you and the user are in the middle of a topic, such as just after you asked them something, goes on your backlog with an empty "say". When several things are worth saying, lead with what the user asked about.
+
+An agent BLOCKED, waiting on the user, can do nothing until the user answers a prompt in its terminal: a permission to use a tool, a question, or approval of its plan. It is always worth the user's attention, whether you are watching it or not: tell them who it is and exactly what it asks, as soon as you are not in the middle of answering them, and never let it pass in silence. You cannot decide for the user. Allow or deny a permission with answer_permission only when they tell you to; answer a question by sending the agent the user's answer; a plan is approved or rejected only at the screen. Being blocked is not a stop: a watched agent stays watched, and you are told when it next stops after the user answers. A message ends with WAITING ON THE USER while any agent is blocked, with how long each has waited, so that none is forgotten: bring them up when the user asks what needs them, comes back, or has finished with the topic at hand, but do not repeat the list every turn.
 
 A message ends with WATCHING when you are watching agents: those are the agents you will be told about when they next stop, and the only ones. Never tell the user you will hear from an agent that is not on it. When the user types into an agent themselves, they have it in hand, so you stop watching it, and are told. Leave it to them, saying nothing more of it unless they ask; if it then sits stopped without them for a while, an item about it comes onto your backlog, so that it comes up once they are back working through you.
 
@@ -115,6 +120,13 @@ export const HANDOVER_CHARS = 8_000
 export type ReceptionistEvent = { failures?: number } & (
   /** `nodeId` is for the system, never shown: which agent to watch again if Control says nothing of it. */
   | { kind: 'agent-stopped'; agent: string; nodeId: NodeId; state: string; lastSaid: string }
+  /**
+   * An agent is blocked on a prompt only the user can answer: see blocked.ts.
+   * `nodeId` and `since` (its state's `stateSince`) say which block, so news of
+   * one the user has since answered is dropped untold. `waitingFor` is
+   * `describeBlock`'s; `userHasIt` when the user has been typing into it themselves.
+   */
+  | { kind: 'agent-blocked'; agent: string; nodeId: NodeId; since?: number; state: BlockedState; waitingFor: string; lastSaid: string; userHasIt?: true }
   /** A watched agent's session exited: it ended itself, or was ended. `archived` unless it failed to launch and stayed on the canvas. */
   /** `cache`: as the agent was when it ended, to say whether ask_agent can still reach it when the news is told. */
   | { kind: 'agent-ended'; agent: string; archived: boolean; lastSaid: string; cache: EndedCache }
@@ -146,6 +158,15 @@ export const ENDED_ANSWER_REMINDER = '[Reminder: this agent has ended and is sti
 export const IMAGES_REMINDER = '[You cannot see these pictures; only the user can, in the transcript. Tell the user how many there are and whose they are, ' +
   'so that they know to look, and describe them by nothing beyond their captions.]'
 
+/** Follows a blocked agent's news: what Control may and may not do about it. */
+export const BLOCKED_REMINDERS: Record<BlockedState, string> = {
+  waiting_permission: '[Tell the user who it is and what it wants to do. Never answer it yourself: answer_permission only once the user has told you, after hearing this, to allow or deny it.]',
+  waiting_question: '[Tell the user who it is and what it asks, with the options. When they answer, send their answer to it.]',
+  waiting_plan: '[Tell the user who it is and what its plan is, in brief. Only the user can approve or reject a plan, at the screen.]',
+}
+/** Said of a blocked agent the user has been typing into themselves. */
+const USER_HAS_IT = 'The user has been working with it directly and may be at its screen already, so a few words will do.'
+
 /** Said of a side question's answer that was asked before the user last spoke. */
 export const ASKED_BEFORE_USER_SPOKE = 'You asked this before the user last spoke: weigh it against what they have said since, and leave it unmentioned if it no longer matters.'
 
@@ -153,6 +174,10 @@ export function renderEvent(event: ReceptionistEvent): string {
   switch (event.kind) {
     case 'agent-stopped':
       return `${event.agent} is now ${event.state}. It last said: ${event.lastSaid || '(nothing yet)'}`
+    case 'agent-blocked':
+      return `${event.agent} is BLOCKED, waiting on the user: ${event.waitingFor}. It can do nothing more until the user answers. ` +
+        `It last said: ${event.lastSaid || '(nothing yet)'} ${BLOCKED_REMINDERS[event.state]}` +
+        `${event.userHasIt ? ` ${USER_HAS_IT}` : ''}`
     case 'agent-ended':
       return `${event.agent} has ended: its session closed, ${event.archived ? 'and its surface went into the archive' : 'leaving its surface dead on the canvas'}. ` +
         `It is no longer live, so speak of it in plain words; read still takes its token${event.archived ? ', and unarchive_agent brings it back' : ''}. ` +
@@ -257,17 +282,19 @@ const SECTION_BREAK = '\n\n'
 const BACKLOG_TRAILER = /\n\nBACKLOG: \d+ items? set aside for later\.$/
 /** `renderWatching`'s section, just before the backlog's. */
 const WATCHING_TRAILER = /\n\nWATCHING [^\n]*$/
+/** `renderBlocked`'s section, just before the watch list's. */
+const BLOCKED_TRAILER = /\n\nWAITING ON THE USER [^\n]*$/
 
 /**
  * One turn's message: any events, and then what the user said — or nothing, when the turn is the receptionist
  * deciding whether events are worth speaking up about. `listener` is `away` when nobody can hear the reply, or
  * what the user missed when they have just come back. `heardAgain` opens it with `HEARD_AGAIN`, or `LISTENING_AGAIN`. `watching` is the
- * tokens of the agents Control is watching. `pulled` is the backlog item the system took off for Control to bring
+ * tokens of the agents Control is watching, and `blocked` the agents blocked on the user. `pulled` is the backlog item the system took off for Control to bring
  * up, as backlog_next would describe it: see backlog-pause.ts.
  */
 export function renderTurnBody(
   events: readonly ReceptionistEvent[], heard: string | undefined, listener?: 'away' | ReturnNews, heardAgain?: 'reconnected' | 'listening', backlog = 0,
-  watching: readonly string[] = [], pulled?: string,
+  watching: readonly string[] = [], pulled?: string, blocked: readonly BlockedAgent[] = [],
 ): string {
   const sections: string[] = []
   if (heardAgain) sections.push(heardAgain === 'reconnected' ? HEARD_AGAIN : LISTENING_AGAIN)
@@ -277,6 +304,7 @@ export function renderTurnBody(
   if (heard !== undefined) sections.push(`${USER_SAYS}${heard}`)
   if (listener === 'away') sections.push(AWAY)
   else if (heard === undefined && events.length && !listener) sections.push('The user has not said anything. Decide whether the events are worth speaking up about.')
+  if (blocked.length) sections.push(renderBlocked(blocked))
   if (watching.length) sections.push(renderWatching(watching))
   if (backlog > 0 && listener !== 'away') sections.push(renderBacklog(backlog))
   return sections.join(SECTION_BREAK)
@@ -286,13 +314,13 @@ export function renderTurnBody(
  * A recorded turn body taken apart again, for the transcript view: the user's
  * words, and whatever came before them (events, news on their return). The
  * inverse of `renderTurnBody` for a turn the user spoke in; undefined for one
- * they did not. Only `AWAY`, the watch list and the backlog count ever follow the words.
+ * they did not. Only `AWAY`, the blocked agents, the watch list and the backlog count ever follow the words.
  */
 export function splitTurnBody(body: string): { heard: string; context?: string } | undefined {
   const later = body.indexOf(SECTION_BREAK + USER_SAYS)
   const marker = body.startsWith(USER_SAYS) ? 0 : later < 0 ? -1 : later + SECTION_BREAK.length
   if (marker < 0) return undefined
-  let heard = body.slice(marker + USER_SAYS.length).replace(BACKLOG_TRAILER, '').replace(WATCHING_TRAILER, '')
+  let heard = body.slice(marker + USER_SAYS.length).replace(BACKLOG_TRAILER, '').replace(WATCHING_TRAILER, '').replace(BLOCKED_TRAILER, '')
   const away = SECTION_BREAK + AWAY
   if (heard.endsWith(away)) heard = heard.slice(0, -away.length)
   const context = body.slice(0, marker).trim()
@@ -316,6 +344,30 @@ export function renderBacklog(count: number): string {
  */
 export function renderWatching(tokens: readonly string[]): string {
   return `WATCHING (told when each next stops): ${tokens.join(', ')}.`
+}
+
+/** An agent blocked on the user, for the WAITING ON THE USER line. `since`: epoch ms. */
+export interface BlockedAgent {
+  nodeId: NodeId
+  token: string
+  state: BlockedState
+  prompt?: BlockingPrompt
+  since?: number
+}
+
+/** The most blocked agents the line names; the rest are counted. */
+const BLOCKED_LISTED = 6
+
+/**
+ * The agents blocked on the user, on every turn while there are any: a block
+ * told once and then passed over is otherwise never raised again, and the
+ * agent waits on a user who does not know it is waiting.
+ */
+export function renderBlocked(blocked: readonly BlockedAgent[], now = Date.now()): string {
+  const listed = blocked.slice(0, BLOCKED_LISTED).map(agent =>
+    `${agent.token} ${blockedBrief(agent.state, agent.prompt)}${agent.since !== undefined ? `, since ${ageWords(now - agent.since)}` : ''}`)
+  const more = blocked.length - listed.length
+  return `WAITING ON THE USER (each blocked until they answer it): ${listed.join('; ')}${more > 0 ? `; and ${more} more` : ''}.`
 }
 
 /**

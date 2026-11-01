@@ -25,7 +25,10 @@ import { mergeNews, type ReceptionistEvent, type ReturnNews } from './prompt'
 
 export const PENDING_NEWS_FILE = path.join(SOCKET_DIR, 'receptionist', 'pending-news.json')
 
-const KINDS: ReadonlySet<ReceptionistEvent['kind']> = new Set(['agent-stopped', 'agent-ended', 'agent-answer', 'agent-answer-failed', 'agent-images'])
+/** Every kind of news, so that a new one is a compile error here rather than news a restart quietly drops. */
+const KINDS: Record<ReceptionistEvent['kind'], true> = {
+  'agent-stopped': true, 'agent-blocked': true, 'agent-ended': true, 'agent-answer': true, 'agent-answer-failed': true, 'agent-images': true,
+}
 
 /** Which turn took something: settling a turn that has been superseded must not drop what its successor took. */
 export type Taking = object
@@ -220,7 +223,7 @@ function asEvents(value: unknown): ReceptionistEvent[] {
 }
 
 function isEvent(event: unknown): event is ReceptionistEvent {
-  return typeof event === 'object' && event !== null && KINDS.has((event as { kind?: unknown }).kind as ReceptionistEvent['kind'])
+  return typeof event === 'object' && event !== null && Object.hasOwn(KINDS, String((event as { kind?: unknown }).kind))
     && typeof (event as { agent?: unknown }).agent === 'string'
 }
 

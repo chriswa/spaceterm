@@ -21,6 +21,7 @@ import { EndedAgents } from './ended-agents'
 import { PendingNews } from './pending-news'
 import { CarryOver, CRASHED_MID_REPLY, RESTARTED_MID_REPLY } from './carry-over'
 import type { Compaction } from './compaction'
+import { isBlocked, type BlockingPrompt } from './blocked'
 import type { NameRegistryStore } from './name-registry'
 import type { ControlImage, ControlTrace, ControlTranscriptEntry } from '../../shared/protocol'
 import { spokenPart } from './transcript'
@@ -174,6 +175,8 @@ function harness(opts: {
   openEndedWorkOnly?: Set<NodeId>
   /** Transcripts in place of the usual ones, by path. */
   transcripts?: Record<string, TranscriptMessage[]>
+  /** What each agent's last PermissionRequest asked, shown while it is blocked; by default nothing is known. Changed in place as a test goes on. */
+  prompts?: Map<NodeId, BlockingPrompt>
 }) {
   const world = opts.world ?? agentWorld()
   const states = world.states
@@ -188,6 +191,7 @@ function harness(opts: {
   ].filter(agent => !gone.has(agent.nodeId))
     .map(agent => unread.has(agent.nodeId) ? { ...agent, unread: true } : agent)
     .map(agent => opts.openEndedWorkOnly?.has(agent.nodeId) ? { ...agent, openEndedWorkOnly: true as const } : agent)
+    .map(agent => isBlocked(agent.state) && opts.prompts?.has(agent.nodeId) ? { ...agent, prompt: opts.prompts.get(agent.nodeId)! } : agent)
   /** Every message sent, in order, with the session it went to. */
   const turns: SessionTurn[] = []
   const replies = [...opts.replies]
@@ -356,6 +360,7 @@ function harness(opts: {
     notify: (text) => notices.push(text),
     send: (nodeId, text) => wire.push(`send ${nodeId} ${text}`),
     interrupt: (nodeId) => wire.push(`escape ${nodeId}`),
+    answerPermission: (nodeId, allow) => wire.push(`${allow ? 'allow' : 'deny'} ${nodeId}`),
     markRead: (nodeId) => { wire.push(`read ${nodeId}`); unread.delete(nodeId) },
     // As the server does: no device holds Control, so nobody hears it.
     letGo: () => { wire.push('let go'); receptionist.setListener(undefined) },
@@ -5404,5 +5409,249 @@ describe('Receptionist: mark_read waits on the user', () => {
       await flush()
       expect(reads(after)).toEqual([`read ${KEVIN_ID}`])
     })
+  })
+})
+
+describe('Receptionist: agents blocked on the user', () => {
+  // Molly's, as it happened on 2026-11-01: told only as a stop, with nothing of what she wanted, it passed in silence.
+  const MOLLY_PROMPT: BlockingPrompt = { tool: 'Bash', input: { command: 'kill 30179 30158 30219; rm -rf "$(cat $S/home-path)"' } }
+  /** An agent's token, named or not yet, then `rest`. */
+  const anyToken = (handle: string, rest = ''): RegExp => new RegExp(`\\{(?:\\w+:)?${handle}\\}${rest.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
+  const WAITING_LINE = /WAITING ON THE USER \(each blocked until they answer it\): \{(?:\w+:)?[\w-]+\} for permission to use Bash/
+
+  it('tells of an agent nobody is watching that asks permission, with what it wants to run', async () => {
+    const h = harness({
+      prompts: new Map([[SALLY_ID, MOLLY_PROMPT]]),
+      replies: [(turn) => {
+        expect(turn.prompt).toMatch(anyToken(SALLY, ' is BLOCKED, waiting on the user: it asks permission to use Bash: running `kill 30179'))
+        expect(turn.prompt).toContain('Never answer it yourself')
+        expect(turn.prompt).toMatch(WAITING_LINE)
+        return reply([{ from: 'control', text: `{${SALLY}} wants to kill three processes. Allow it?` }])
+      }],
+    })
+    h.setState(SALLY_ID, 'waiting_permission')
+    await flush()
+    expect(h.turns).toHaveLength(1)
+  })
+
+  it('tells of a question and a plan too, and of each block once', async () => {
+    const h = harness({
+      prompts: new Map([[SALLY_ID, {
+        tool: 'AskUserQuestion',
+        input: { questions: [{ question: 'Which database?', options: [{ label: 'Postgres' }, { label: 'SQLite' }] }] },
+      }]]),
+      replies: [
+        (turn) => {
+          expect(turn.prompt).toMatch(anyToken(SALLY, ' is BLOCKED, waiting on the user: it asks the user a question.'))
+          expect(turn.prompt).toContain('Question: Which database?\n- Postgres\n- SQLite')
+          return reply([{ from: 'control', text: `{${SALLY}} asks which database: Postgres or SQLite?` }])
+        },
+        (turn) => {
+          expect(turn.prompt).toMatch(anyToken(KEVIN, ' is BLOCKED, waiting on the user: it wants the user to approve its plan'))
+          expect(turn.prompt).toContain('Only the user can approve or reject a plan')
+          return reply([{ from: 'control', text: `{${KEVIN}} has a plan for you.` }])
+        },
+      ],
+    })
+    h.setState(SALLY_ID, 'waiting_question')
+    await flush()
+    // The same block again, as the server re-asserts it: nothing new.
+    h.receptionist.agentBlocked(SALLY_ID)
+    await flush()
+    expect(h.turns).toHaveLength(1)
+    h.setState(KEVIN_ID, 'working')
+    h.setState(KEVIN_ID, 'waiting_plan')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it('says nothing of a block the user answers at the screen within the hold', async () => {
+    const holds: Array<() => void> = []
+    const h = harness({
+      sleep: (ms) => ms === STOP_HOLD_MS ? new Promise<void>((resolve) => { holds.push(resolve) }) : Promise.resolve(),
+      replies: [],
+    })
+    h.setState(SALLY_ID, 'waiting_permission')
+    h.setState(SALLY_ID, 'working')
+    for (const resolve of holds.splice(0)) resolve()
+    await flush()
+    expect(h.turns).toHaveLength(0)
+  })
+
+  it('drops news of a block the user answered at the screen before Control got to it', async () => {
+    // Molly's again: told sixteen seconds after the user had allowed it.
+    const h = harness({
+      prompts: new Map([[SALLY_ID, MOLLY_PROMPT]]),
+      replies: [
+        (turn) => {
+          expect(turn.prompt).not.toContain('BLOCKED')
+          expect(turn.prompt).not.toContain('WAITING ON THE USER')
+          return reply([{ from: 'control', text: 'Nothing new.' }])
+        },
+      ],
+    })
+    // Held by the user talking, the news waits; meanwhile they allow it at the screen.
+    h.receptionist.userSpeaking(true)
+    h.setState(SALLY_ID, 'waiting_permission')
+    await flush()
+    h.setState(SALLY_ID, 'working')
+    const heard = h.receptionist.hear('anything new?', 'spoken')
+    h.receptionist.userSpeaking(false)
+    await heard
+    await flush()
+    expect(h.turns).toHaveLength(1)
+  })
+
+  it('tells a block it passed over while answering the user again, in a turn of its own', async () => {
+    const h = harness({
+      prompts: new Map([[SALLY_ID, MOLLY_PROMPT]]),
+      replies: [
+        (turn) => {
+          expect(turn.prompt).toMatch(anyToken(SALLY, ' is BLOCKED'))
+          expect(turn.prompt).toMatch(/THE USER SAYS: what about the wraps/)
+          // Passed over, answering the user.
+          return reply([{ from: 'control', text: 'They have five wraps.' }])
+        },
+        (turn) => {
+          expect(turn.prompt).toMatch(anyToken(SALLY, ' is BLOCKED'))
+          expect(turn.prompt).not.toContain('THE USER SAYS')
+          return reply([{ from: 'control', text: `{${SALLY}} needs your permission to kill some processes.` }])
+        },
+      ],
+    })
+    h.receptionist.userSpeaking(true)
+    h.setState(SALLY_ID, 'waiting_permission')
+    await flush()
+    const heard = h.receptionist.hear('what about the wraps?', 'spoken')
+    h.receptionist.userSpeaking(false)
+    await heard
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it('lists every blocked agent on each turn, longest waiting first', async () => {
+    const h = harness({
+      prompts: new Map([[SALLY_ID, MOLLY_PROMPT]]),
+      replies: [
+        reply([], []),
+        reply([], []),
+        (turn) => {
+          expect(turn.prompt).toMatch(/WAITING ON THE USER \(each blocked until they answer it\): \{(?:\w+:)?[\w-]+\} for permission to use Bash, since just now; \{(?:\w+:)?[\w-]+\} with a question, since just now\./)
+          return reply([{ from: 'control', text: 'Two agents need you.' }])
+        },
+      ],
+    })
+    h.setState(SALLY_ID, 'waiting_permission')
+    await flush()
+    h.setState(KEVIN_ID, 'working')
+    h.setState(KEVIN_ID, 'waiting_question')
+    await flush()
+    await h.receptionist.hear('what needs me?', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(3)
+  })
+
+  it('keeps watching an agent through its block, and tells its stop once the user has answered', async () => {
+    const h = harness({
+      prompts: new Map([[SALLY_ID, MOLLY_PROMPT]]),
+      replies: [
+        reply([{ from: 'control', text: 'Will do.' }], [{ tool: 'monitor', agent: SALLY }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(anyToken(SALLY, ' is BLOCKED'))
+          expect(turn.prompt).not.toMatch(anyToken(SALLY, ' is now'))
+          return reply([{ from: 'control', text: `{${SALLY}} needs your permission.` }])
+        },
+        (turn) => {
+          expect(turn.prompt).toMatch(anyToken(SALLY, ' is now stopped'))
+          return reply([{ from: 'control', text: `{${SALLY}} is done.` }])
+        },
+      ],
+    })
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
+    await flush()
+    h.setState(SALLY_ID, 'waiting_permission')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(h.turns[1].prompt).toMatch(new RegExp(`WATCHING \\(told when each next stops\\): \\{(?:\\w+:)?${SALLY}\\}\\.`))
+    h.setState(SALLY_ID, 'working')
+    h.setState(SALLY_ID, 'stopped')
+    await flush()
+    expect(h.turns).toHaveLength(3)
+  })
+
+  it('answers a permission prompt only when told to, and only the one it was shown', async () => {
+    const prompts = new Map([[SALLY_ID, MOLLY_PROMPT]])
+    const h = harness({
+      prompts,
+      replies: [
+        reply([{ from: 'control', text: `{${SALLY}} wants to kill three processes. Allow it?` }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(/THE USER SAYS: yes, allow it/)
+          return reply([{ from: 'control', text: 'Allowed.' }], [{ tool: 'answer_permission', agent: SALLY, allow: true }])
+        },
+        reply([{ from: 'control', text: `{${SALLY}} wants to delete a folder. Allow it?` }]),
+        // Before its news of the next prompt arrived: refused, and told what it asks now.
+        (turn) => {
+          expect(turn.prompt).toMatch(/THE USER SAYS: no, deny it/)
+          return reply([{ from: 'control', text: 'Denied.' }], [{ tool: 'answer_permission', agent: SALLY, allow: false }])
+        },
+        reply([{ from: 'control', text: 'Denied.' }]),
+      ],
+    })
+    h.setState(SALLY_ID, 'waiting_permission')
+    await flush()
+    await h.receptionist.hear('yes, allow it', 'spoken')
+    await flush()
+    expect(h.wire).toEqual([`allow ${SALLY_ID}`])
+    expect(h.record.some(message => /ALLOWED \{(?:\w+:)?[\w-]+\}'S PERMISSION REQUEST/.test(message.content))).toBe(true)
+
+    h.setState(SALLY_ID, 'working')
+    h.setState(SALLY_ID, 'waiting_permission')
+    prompts.set(SALLY_ID, { tool: 'Bash', input: { command: 'rm -rf build' } })
+    await flush()
+    expect(h.turns).toHaveLength(3)
+
+    // A third prompt, before Control is told of it: it is not the one the user heard.
+    const holds: Array<() => void> = []
+    const held = harness({
+      prompts,
+      sleep: (ms) => ms === STOP_HOLD_MS ? new Promise<void>((resolve) => { holds.push(resolve) }) : Promise.resolve(),
+      replies: [
+        (turn) => {
+          expect(turn.prompt).toMatch(/THE USER SAYS: deny it/)
+          return reply([{ from: 'control', text: 'Denied.' }], [{ tool: 'answer_permission', agent: SALLY, allow: false }])
+        },
+        // Told now what it asks, with the user's next words.
+        (turn) => {
+          expect(turn.prompt).toContain('answer_permission did nothing')
+          expect(turn.prompt).toContain('running `rm -rf build`')
+          expect(turn.prompt).toMatch(/THE USER SAYS: yes, deny it/)
+          return reply([{ from: 'control', text: 'Denied.' }], [{ tool: 'answer_permission', agent: SALLY, allow: false }])
+        },
+      ],
+    })
+    held.setState(SALLY_ID, 'waiting_permission')
+    await held.receptionist.hear('deny it', 'spoken')
+    await flush()
+    expect(held.wire).toEqual([])
+    // As if Control had told the user the new request, and they still say deny.
+    await held.receptionist.hear('yes, deny it', 'spoken')
+    await flush()
+    expect(held.wire).toEqual([`deny ${SALLY_ID}`])
+  })
+
+  it('refuses to answer an agent that is not waiting for permission', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Allowed.' }], [{ tool: 'answer_permission', agent: SALLY, allow: true }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(/answer_permission did nothing: \{(?:\w+:)?[\w-]+\} \("login page"\) is not waiting for permission, but working/)
+          return reply([{ from: 'control', text: 'It is not asking for anything.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('allow Sally', 'spoken')
+    await flush()
+    expect(h.wire).toEqual([])
   })
 })

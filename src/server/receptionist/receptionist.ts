@@ -20,7 +20,8 @@ import type { CameraBounds, ControlImage, ControlTrace, ControlTraceKind, Contro
 import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
 import type { EndedAnswer } from '../ended-side-question'
 import {
-  FORMAT_REMINDER, HANDOVER_CHARS, IMAGE_CAPTION_CHARS, IMAGE_CAPTIONS_TOLD, HANDOVER_HEADING, HANDOVER_PROMPT, mergeNews, RECEPTIONIST_SYSTEM_PROMPT, renderEvent, renderTurnBody, type ReceptionistEvent, type ReturnNews,
+  FORMAT_REMINDER, HANDOVER_CHARS, IMAGE_CAPTION_CHARS, IMAGE_CAPTIONS_TOLD, HANDOVER_HEADING, HANDOVER_PROMPT, mergeNews, RECEPTIONIST_SYSTEM_PROMPT, renderEvent, renderTurnBody,
+  type BlockedAgent, type ReceptionistEvent, type ReturnNews,
 } from './prompt'
 import {
   CONVERSATION_WORDS, decideInterruption, HANG_ON, lastWords, splitAtOffset, type InterruptionContext, type InterruptionVerdict,
@@ -37,6 +38,7 @@ import type { EndedAgent, EndedAgents } from './ended-agents'
 import type { Asking, PendingNews } from './pending-news'
 import { RESTARTED_MID_REPLY, type CarryOver } from './carry-over'
 import { compactionTrace, type Compaction } from './compaction'
+import { describeBlock, isBlocked } from './blocked'
 import {
   cacheWords, capMessage, endedAskable, endedCacheWords, NO_SIDE_QUESTIONS, readAgent, renderAgentDetails, renderRoster, STATE_WORDS, type RosterAgent,
 } from './roster'
@@ -283,6 +285,8 @@ export interface ReceptionistDeps {
   send(nodeId: NodeId, text: string): void
   /** Press Escape in an agent's terminal. */
   interrupt(nodeId: NodeId): void
+  /** Answer the permission prompt in an agent's terminal, as the user's own keystroke would: allow it once, or deny it. */
+  answerPermission(nodeId: NodeId, allow: boolean): void
   /** Mark an agent read, as the user's own click on its unread badge does: see deferred-reads.ts. */
   markRead(nodeId: NodeId): void
   /**
@@ -599,6 +603,17 @@ export class Receptionist {
   private readonly ended: EndedAgents
   /** The stop each agent was last reported at (its `stateSince`), so the same stop is never reported twice. */
   private readonly reportedStops = new Map<NodeId, number | undefined>()
+  /** Blocked agents whose block is being held before it is told, each with its own hold: see `holdBlocked`. */
+  private readonly holdingBlocks = new Map<NodeId, object>()
+  /** The block each agent was last told of (its `stateSince`), so the same block is never told twice. */
+  private readonly toldBlocks = new Map<NodeId, number | undefined>()
+  /**
+   * The block each agent was last shown to the model at, with what it asks:
+   * answer_permission answers only that one, never a prompt that took its
+   * place unseen. The WAITING ON THE USER line does not count, since it says
+   * only what kind of prompt each is.
+   */
+  private readonly shownBlocks = new Map<NodeId, number | undefined>()
   /** Cold agents being woken before a side question reaches them: see `warmUp`. */
   private readonly warming = new Map<NodeId, Waking>()
   private readonly channel: SpeechChannel
@@ -1415,8 +1430,10 @@ export class Receptionist {
     queueMicrotask(() => this.maybeSpeakUp())
   }
 
-  /** An agent's Claude state changed. Fires a monitor if one is waiting on it. */
+  /** An agent's Claude state changed. Fires a monitor if one is waiting on it, and tells of a block. */
   agentStateChanged(nodeId: NodeId, state: ClaudeState): void {
+    if (isBlocked(state)) this.agentBlocked(nodeId)
+    else this.holdingBlocks.delete(nodeId)
     const waking = this.warming.get(nodeId)
     if (waking) {
       if (!isSettled(state)) waking.worked = true
@@ -1438,7 +1455,61 @@ export class Receptionist {
       return
     }
     if (waiting.kind === 'after-work') return
+    // Blocked is not a stop: the watch is for what it does once the user answers. See `agentBlocked`.
+    if (isBlocked(state)) return
     void this.holdStop(nodeId)
+  }
+
+  /**
+   * An agent is blocked on a prompt only the user can answer (blocked.ts):
+   * on its way into a blocked state, or asking again while in one, which is a
+   * new block with a new `stateSince`. Told to Control whether it is watched
+   * or not, once it has held for `STOP_HOLD_MS` — a user at the screen often
+   * answers within it — and once per block.
+   */
+  agentBlocked(nodeId: NodeId): void {
+    void this.holdBlocked(nodeId)
+  }
+
+  private async holdBlocked(nodeId: NodeId): Promise<void> {
+    const hold = {}
+    this.holdingBlocks.set(nodeId, hold)
+    await this.deps.sleep(STOP_HOLD_MS)
+    if (this.holdingBlocks.get(nodeId) !== hold || this.closing) return
+    this.holdingBlocks.delete(nodeId)
+    const agents = this.deps.agents()
+    const agent = agents.find(candidate => candidate.nodeId === nodeId)
+    if (!agent || !isBlocked(agent.state)) return
+    if (this.toldBlocks.has(nodeId) && this.toldBlocks.get(nodeId) === agent.stateSince) return
+    this.toldBlocks.set(nodeId, agent.stateSince)
+    const token = this.token(nodeId, this.handles(agents))
+    const waitingFor = describeBlock(agent.state, agent.prompt)
+    const lastSaid = agent.transcriptPath ? lastAgentProse(this.deps.readTranscript(agent.transcriptPath)) : ''
+    this.deps.log({ event: 'agent-blocked', nodeId, state: agent.state, since: agent.stateSince, ...(agent.prompt ? { tool: agent.prompt.tool } : {}) })
+    this.events.push({
+      kind: 'agent-blocked', agent: token, nodeId, ...(agent.stateSince !== undefined ? { since: agent.stateSince } : {}),
+      state: agent.state, waitingFor, lastSaid: capMessage(lastSaid),
+      ...(this.burner.takenAt(nodeId) !== undefined ? { userHasIt: true as const } : {}),
+    })
+    this.maybeSpeakUp()
+  }
+
+  /** Whether news of a block is still true: the agent is at that same block. */
+  private stillBlocked(event: { nodeId: NodeId; since?: number }, agents: readonly RosterAgent[]): boolean {
+    const agent = agents.find(candidate => candidate.nodeId === event.nodeId)
+    return !!agent && isBlocked(agent.state) && agent.stateSince === event.since
+  }
+
+  /** The agents blocked on the user, longest waiting first, for the turn's WAITING ON THE USER line. */
+  private blocked(): BlockedAgent[] {
+    const agents = this.deps.agents()
+    const handles = this.handles(agents)
+    return agents.flatMap(agent => isBlocked(agent.state) ? [{ agent, state: agent.state }] : [])
+      .sort((a, b) => (a.agent.stateSince ?? Infinity) - (b.agent.stateSince ?? Infinity))
+      .map(({ agent, state }) => ({
+        nodeId: agent.nodeId, token: this.token(agent.nodeId, handles), state,
+        ...(agent.prompt ? { prompt: agent.prompt } : {}), ...(agent.stateSince !== undefined ? { since: agent.stateSince } : {}),
+      }))
   }
 
   /** Report a watched agent's stop once it has held for `STOP_HOLD_MS`, if it is still watched and still stopped. */
@@ -1449,7 +1520,7 @@ export class Receptionist {
     if (this.holding.get(nodeId) !== hold) return
     this.holding.delete(nodeId)
     const agent = this.deps.agents().find(candidate => candidate.nodeId === nodeId)
-    if (this.monitors.get(nodeId)?.kind !== 'next-stop' || !agent || !isSettled(agent.state)) return
+    if (this.monitors.get(nodeId)?.kind !== 'next-stop' || !agent || !isStop(agent.state)) return
     this.fireMonitor(nodeId, agent.state)
   }
 
@@ -1636,7 +1707,7 @@ export class Receptionist {
    */
   private watchFromNow(agent: RosterAgent, why: string): 'reported' | 'watching' {
     const reported = this.reportedStops.has(agent.nodeId) && this.reportedStops.get(agent.nodeId) === agent.stateSince
-    if (isSettled(agent.state) && !reported) {
+    if (isStop(agent.state) && !reported) {
       this.fireMonitor(agent.nodeId, agent.state)
       return 'reported'
     }
@@ -1662,7 +1733,8 @@ export class Receptionist {
    */
   private keepWatchingUntold(events: readonly ReceptionistEvent[], reply: Reply, withWords: boolean): void {
     const stops = events.filter(event => event.kind === 'agent-stopped')
-    if (!stops.length) return
+    const blocks = withWords ? events.filter(event => event.kind === 'agent-blocked') : []
+    if (!stops.length && !blocks.length) return
     const agents = this.deps.agents()
     const handles = this.handles(agents)
     const tokensIn = (text: string) => [...text.matchAll(AGENT_TOKEN)].map(([, ref]) => ref)
@@ -1671,6 +1743,14 @@ export class Receptionist {
       ...reply.tools.flatMap(call => call.tool === 'backlog_add' ? tokensIn(call.item) : []),
     ]
     const told = new Set(refs.flatMap(ref => this.resolve(ref, handles, agents) ?? []))
+    // A block passed over while answering the user is news again, as a stop is, while the agent is still at it.
+    // Passed over alone, it was judged, and stays on the WAITING ON THE USER line.
+    for (const block of blocks) {
+      if (told.has(block.nodeId) || !this.stillBlocked(block, agents)) continue
+      this.events.push(block)
+      this.deps.log({ event: 'kept-untold', nodeId: block.nodeId, blocked: true })
+      this.trace('requeued', `Said nothing of ${this.traceToken(block.nodeId)} waiting on you while answering you: it is news again, for the next turn`)
+    }
     for (const stop of stops) {
       const { nodeId } = stop
       const agent = agents.find(candidate => candidate.nodeId === nodeId)
@@ -1827,6 +1907,10 @@ export class Receptionist {
     const away = !this.listening
     const news = away ? undefined : this.returnNews
     if (!away) this.returnNews = undefined
+    // News of a block the user has answered since is no news: on 2026-11-01 Control was told Molly
+    // wanted permission sixteen seconds after the user had given it at the screen.
+    const live = this.deps.agents()
+    this.events.drop(event => event.kind === 'agent-blocked' && !this.stillBlocked(event, live))
     // Held on disk as this turn's until it is over: see pending-news.ts.
     const events = this.events.take(attempt, words, news)
     this.keepAway()
@@ -1838,7 +1922,9 @@ export class Receptionist {
     // As things stand at the turn's start, however late its message leaves: words carried to it change, nothing else does.
     const backlogSize = this.deps.backlog.size
     const watching = this.watching()
-    const render = (said: string | undefined) => renderTurnBody(events, said, away ? 'away' : news, again, backlogSize, watching, pulled?.described)
+    const blocked = this.blocked()
+    for (const event of events) if (event.kind === 'agent-blocked') this.shownBlocks.set(event.nodeId, event.since)
+    const render = (said: string | undefined) => renderTurnBody(events, said, away ? 'away' : news, again, backlogSize, watching, pulled?.described, blocked)
     // With the user's words, the events are in the transcript already, as what came with them.
     if (words === undefined && (events.length || news)) {
       this.trace('events', `${events.length ? `News: ${events.map(eventHeadline).join('; ')}` : 'You were back'}${away ? ', with nobody listening' : ''}`,
@@ -2350,6 +2436,9 @@ export class Receptionist {
           this.deps.interrupt(agent.nodeId)
           done.push(`interrupt pressed Escape for ${who}`)
           break
+        case 'answer_permission':
+          done.push(this.answerPermission(agent, call.allow, who, this.token(agent.nodeId, handles)))
+          break
         case 'send':
           this.track(this.send(agent.nodeId, call.message, interrupted.has(agent.nodeId), handles))
           done.push(`send delivered to ${who}, which is now watched for its reply`)
@@ -2373,6 +2462,31 @@ export class Receptionist {
       this.deps.log({ event: 'tool', ...call, nodeId: agent.nodeId })
     }
     return { results, done }
+  }
+
+  /**
+   * The answer_permission tool. Only the block whose request Control was
+   * shown: a prompt that has taken its place since is one the user has not
+   * heard, so it is described instead, for Control to tell them, and the
+   * next answer_permission answers it.
+   */
+  private answerPermission(agent: RosterAgent, allow: boolean, who: string, token: string): string {
+    if (agent.state !== 'waiting_permission') {
+      return `answer_permission did nothing: ${who} is not waiting for permission, but ${STATE_WORDS[agent.state]}`
+    }
+    const shown = this.shownBlocks.has(agent.nodeId) && this.shownBlocks.get(agent.nodeId) === agent.stateSince
+    if (!shown) {
+      this.shownBlocks.set(agent.nodeId, agent.stateSince)
+      this.deps.log({ event: 'answer-permission-refused', nodeId: agent.nodeId, allow })
+      return `answer_permission did nothing: ${who} is asking for something you had not been shown. Now ${describeBlock(agent.state, agent.prompt)}. ` +
+        'Tell the user, and answer it only once they say to'
+    }
+    this.deps.answerPermission(agent.nodeId, allow)
+    this.shownBlocks.delete(agent.nodeId)
+    this.deps.record.append([{ role: 'assistant', content: actionHeadline({ tool: 'answer_permission', agent: token, allow }) }])
+    return allow
+      ? `answer_permission allowed ${who}'s request; it carries on`
+      : `answer_permission denied ${who}'s request, which ended its turn: it waits for instructions`
   }
 
   /**
@@ -3551,6 +3665,11 @@ function isSettled(state: ClaudeState): boolean {
   return state !== 'working' && state !== 'working_background'
 }
 
+/** Settled, and not blocked on the user: the end of what it was doing, which a watch reports. */
+function isStop(state: ClaudeState): boolean {
+  return isSettled(state) && !isBlocked(state)
+}
+
 /**
  * Actions that never ran, told plainly enough for the model to take them
  * again if it still should: each exactly as it wrote it.
@@ -3573,6 +3692,7 @@ function replyOf(raw: string): Reply | undefined {
 function eventHeadline(event: ReceptionistEvent): string {
   switch (event.kind) {
     case 'agent-stopped': return `${event.agent} is now ${event.state}`
+    case 'agent-blocked': return `${event.agent} is blocked, waiting on you`
     case 'agent-ended': return `${event.agent} ended`
     case 'agent-answer': return `${event.agent} answered "${event.question}"`
     case 'agent-answer-failed': return `asking ${event.agent} failed`

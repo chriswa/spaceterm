@@ -92,6 +92,7 @@ import { BackBurner } from './receptionist/back-burner'
 import { EndedAgents } from './receptionist/ended-agents'
 import { PendingNews } from './receptionist/pending-news'
 import { CarryOver } from './receptionist/carry-over'
+import { blockingPrompt, isBlocked, type BlockingPrompt } from './receptionist/blocked'
 import { jevPauseJudge } from './receptionist/backlog-pause'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
 import { REAL_RECEPTIONIST_RECORD, REAL_RECEPTIONIST_SESSION, RecordNameScanner, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
@@ -700,6 +701,15 @@ function announceRecorded(appended: Array<{ line: string; offset: number }>): nu
   return appended.map(({ offset }) => offset)
 }
 
+/**
+ * The tool call each surface last asked the user's permission for, by pty
+ * session: the PermissionRequest hook's, for Control to tell the user what a
+ * blocked agent wants (receptionist/blocked.ts). Only read while the surface
+ * is blocked, which only a PermissionRequest puts it in, so it is never stale
+ * then. Not kept across a restart: a block from before one is told by kind alone.
+ */
+const blockingPrompts = new Map<PtySessionId, BlockingPrompt>()
+
 /** Live Claude Code surfaces: everything the receptionist knows about. */
 function receptionistAgents(): RosterAgent[] {
   const messagingIds = readPeerNames()
@@ -711,6 +721,7 @@ function receptionistAgents(): RosterAgent[] {
       title: agentSurfaceTitle(node),
       cwd: node.cwd,
       state: node.claudeState,
+      ...(isBlocked(node.claudeState) && blockingPrompts.has(node.sessionId) ? { prompt: blockingPrompts.get(node.sessionId)! } : {}),
       ...(onlyOpenEndedWork(stateManager.getBackgroundLedger(node.sessionId)) ? { openEndedWorkOnly: true as const } : {}),
       transcriptPath: transcriptPathForTerminal(node),
       claudeSessionId: node.claudeSessionHistory.at(-1)?.claudeSessionId,
@@ -1536,6 +1547,11 @@ function handleIngestMessage(msg: IngestMessage): void {
       // the state machine) so hook types the state machine ignores, like the
       // question notification, still count as an interaction.
       stateManager.recordAgentActivity(msg.surfaceId, hookTime)
+
+      if (hookType === 'PermissionRequest') {
+        const prompt = blockingPrompt(msg.payload)
+        if (prompt) blockingPrompts.set(msg.surfaceId, prompt)
+      }
 
       // Delegate state transition logic to the state machine
       claudeStateMachine.handleHook(msg.surfaceId, hookType, msg.payload as Record<string, unknown>, hookTime)
@@ -3584,6 +3600,8 @@ async function startServer(): Promise<void> {
       // monitor waiting for "stopped" must not fire on a surface that already was.
       const nodeId = stateManager.getNodeIdForSession(id)
       if (nodeId && state !== previous) receptionist?.agentStateChanged(nodeId, state)
+      // Asked again while already blocked: a new prompt, with the same state.
+      else if (nodeId && isBlocked(state)) receptionist?.agentBlocked(nodeId)
     },
     hasPotentialError: (id) => potentialErrorDetector.hasPotentialError(id),
     getClaudeStatusUnread: (id) => stateManager.getClaudeStatusUnread(id),
@@ -3803,6 +3821,16 @@ async function startServer(): Promise<void> {
     interrupt: (nodeId) => {
       const node = stateManager.getNode(nodeId)
       if (node?.type === 'terminal' && node.alive) sessionManager.write(node.sessionId, '\x1b')
+    },
+    // The keys the user would press: "1" picks "Yes" (allow once) in every
+    // Claude Code permission prompt, checked against 2.1.312 through a PTY; Escape
+    // is its "No". Not Enter, which picks whichever option the cursor was left on.
+    answerPermission: (nodeId, allow) => {
+      const node = stateManager.getNode(nodeId)
+      if (node?.type !== 'terminal' || !node.alive) return
+      serverLog(`[receptionist] ${allow ? 'allowing' : 'denying'} ${nodeId.slice(0, 8)}'s permission request`)
+      sessionManager.write(node.sessionId, allow ? '1' : '\x1b')
+      claudeStateMachine.handleClientInteract(node.sessionId)
     },
     // As the user's own click on the unread badge (`set-claude-status-unread`).
     markRead: (nodeId) => {

@@ -3,6 +3,7 @@ import type { NodeId } from '../../shared/ids'
 import type { ClaudeState } from '../../shared/state'
 import { isToolActivity, lastAgentProse, type TranscriptMessage } from '../agent-transcript'
 import { agentToken } from './agent-token'
+import type { BlockingPrompt } from './blocked'
 
 /**
  * What the receptionist knows about the agents, and the transcript reading its
@@ -19,6 +20,8 @@ export interface RosterAgent {
   title: string
   cwd?: string
   state: ClaudeState
+  /** While it is blocked on the user (blocked.ts), the tool call its prompt asks about, if known. */
+  prompt?: BlockingPrompt
   /** All it still runs in the background is shells and monitors, which may never end: see `onlyOpenEndedWork`. */
   openEndedWorkOnly?: true
   transcriptPath?: string

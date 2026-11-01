@@ -32,6 +32,8 @@ export type ToolCall = (
   | { tool: 'monitor'; agent: string }
   | { tool: 'send'; agent: string; message: string }
   | { tool: 'interrupt'; agent: string }
+  /** Allow or deny the permission prompt the agent is blocked on: see blocked.ts. */
+  | { tool: 'answer_permission'; agent: string; allow: boolean }
   | { tool: 'archive_agent'; agent: string }
   | { tool: 'unarchive_agent'; agent: string }
   /** `under`: the handle of the directory or title the new agent goes under. */
@@ -118,6 +120,7 @@ export function actionHeadline(call: ToolCall): string {
     case 'ask_agent': return `ASKED ${who(call.agent)}: ${call.question}`
     case 'monitor': return `WATCHED ${who(call.agent)}`
     case 'interrupt': return `INTERRUPTED ${who(call.agent)}`
+    case 'answer_permission': return `${call.allow ? 'ALLOWED' : 'DENIED'} ${who(call.agent)}'S PERMISSION REQUEST`
     case 'archive_agent': return `ARCHIVED ${who(call.agent)}`
     case 'unarchive_agent': return `UNARCHIVED ${who(call.agent)}`
     case 'spawn': return `STARTED AN AGENT under ${call.under}: ${call.prompt}`
@@ -173,7 +176,7 @@ function parseSayPart(value: unknown): SayPart {
 
 /** Every tool, so a wrong name is answered with the right ones rather than a guess at its fields. */
 const TOOL_NAMES: Record<ToolCall['tool'], true> = {
-  read: true, ask_agent: true, monitor: true, send: true, interrupt: true, archive_agent: true, unarchive_agent: true,
+  read: true, ask_agent: true, monitor: true, send: true, interrupt: true, answer_permission: true, archive_agent: true, unarchive_agent: true,
   spawn: true, rename_agent: true, recall: true, list_agents: true, list_nodes: true, agent_details: true, find_agent: true, nearby: true, force_user_camera: true,
   restart_server: true, refresh_clients: true,
   backlog_add: true, backlog_next: true, mark_read: true,
@@ -256,6 +259,9 @@ function parseToolCall(value: unknown): ToolCall {
       return { tool: 'send', agent, message: value.message.trim() }
     case 'interrupt':
       return { tool: 'interrupt', agent }
+    case 'answer_permission':
+      if (typeof value.allow !== 'boolean') throw new Error('"answer_permission" needs "allow": true to allow it or false to deny it')
+      return { tool: 'answer_permission', agent, allow: value.allow }
     case 'archive_agent':
       return { tool: 'archive_agent', agent }
     case 'mark_read':
