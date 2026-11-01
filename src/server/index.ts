@@ -528,7 +528,8 @@ function actOnHandsFree(event: VoiceOperatorEvent, holder: ReceptionistHolder | 
     cutInOnReceptionist(action.msAgo)
     return
   }
-  serverLog(`[hands-free] ${action.text.length} chars to Control from ${holder?.label ?? 'a phone'} (ended on ${String(event.reason)}${action.interrupted ? ', having cut it off' : ''})`)
+  // Heard, not yet routed: where the words go — Control, or kept off it by "dictate" — is logged where they go.
+  serverLog(`[hands-free] ${action.text.length} chars heard from ${holder?.label ?? 'a phone'} (ended on ${String(event.reason)}${action.interrupted ? ', having cut Control off' : ''})`)
   handsFreeWords(action, holder, attention)
 }
 
@@ -643,7 +644,7 @@ function keepDictation(text: string, holder: ReceptionistHolder | undefined): vo
     serverLog(`[hands-free] ${text.length} chars dictated on ${from}, whose page is too old to keep them: not kept`)
     return
   }
-  serverLog(`[hands-free] ${text.length} chars dictated on ${from}: kept by ${clientLabel(client)}`)
+  serverLog(`[hands-free] ${text.length} chars dictated on ${from}, not for Control: kept by ${clientLabel(client)}`)
   send(client.link, { type: 'dictation-kept', text })
 }
 
