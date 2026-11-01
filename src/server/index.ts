@@ -62,7 +62,7 @@ import { cursorCacheWarmth } from './cursor-cache-warmth'
 import { SessionFileWatcher } from './session-file-watcher'
 import { readRestartFlag, clearRestartFlag, watchRestartFlag } from './restart-flag'
 import { realProcess, relaunchInPlace } from './relaunch'
-import type { StatusSample } from './receptionist/spaceterm-status'
+import { pendingStatus, type StatusSample } from './receptionist/spaceterm-status'
 import { CodexSessionFileWatcher, findCodexSessionFile } from './codex-session-file-watcher'
 import { CursorSessionFileWatcher, findCursorTranscript } from './cursor-session-file-watcher'
 import { ClaudeStateMachine } from './claude-state'
@@ -83,7 +83,7 @@ import { ForkTitler, forkName, surfaceTitle, FORK_LABEL } from './fork-title'
 import { parse as shellParse } from 'shell-quote'
 import { PotentialErrorDetector } from './auto-continue'
 import { readTranscript, readWholeTranscript } from './agent-transcript'
-import { NO_LISTENER, Receptionist, VOICE_FOLLOW_MS } from './receptionist/receptionist'
+import { NO_LISTENER, Receptionist, VOICE_FOLLOW_MS, type PhoneInstallResult } from './receptionist/receptionist'
 import { jevJudge } from './receptionist/self-interruption'
 import { Backlog, jevBacklogJudge } from './receptionist/backlog'
 import { Watches } from './receptionist/watches'
@@ -785,20 +785,43 @@ function isClientDevice(value: unknown): value is ClientDevice {
 }
 
 /**
- * Devices whose app last said it is behind the Mac's source (`app-behind`),
- * kept while they are away: an app that is behind stays behind until an
- * install, and the app says so again when it next connects.
+ * What each device last said is behind the Mac's source (`app-behind`): its
+ * native app, and its page. Kept while it is away: what is behind stays behind
+ * until an install or a reload, and the device says so again when it next
+ * connects.
  */
-const appsBehind = new Set<string>()
+const devicesBehind = new Map<string, { native: boolean; web: boolean }>()
 
-/** What Spaceterm is waiting on the user to do, for Control: see receptionist/spaceterm-status.ts. */
+/**
+ * What Spaceterm is waiting on the user to do, for Control: see
+ * receptionist/spaceterm-status.ts. Each device's by the rule its rocket menu
+ * shows, so Control is told what the menu shows.
+ */
 function spacetermStatus(): StatusSample {
   const holder = stateManager.getReceptionistHolder()
   return {
-    restartPending: readRestartFlag() !== null,
-    phoneInstallPending: appsBehind.size > 0,
+    ...pendingStatus(readRestartFlag() !== null, devicesBehind.values()),
     ...(holder ? { device: holder.label } : {}),
   }
+}
+
+/** Opening the download link Control's install sends (`mobile-app-install-link`) was new in v31. */
+const INSTALL_LINK_PROTOCOL_VERSION = 31
+
+/**
+ * Control's install_phone_app: the toolbar's install, run for Control. Away
+ * from the Mac's network, the phones are sent the download link to open, as
+ * the toolbar's install opens it on the phone that asked.
+ */
+async function installPhoneAppForControl(): Promise<PhoneInstallResult> {
+  const outcome = await mobileAppInstaller.install()
+  if (outcome.ok) return { result: 'installed' }
+  if (!('installUrl' in outcome)) return { result: 'failed', message: outcome.message }
+  const phones = [...clients].filter((client) =>
+    client.name === MOBILE_CLIENT_NAME && (client.protocolVersion ?? 0) >= INSTALL_LINK_PROTOCOL_VERSION)
+  for (const phone of phones) send(phone.link, { type: 'mobile-app-install-link', installUrl: outcome.installUrl })
+  serverLog(`[mobile-install] Sent the download link to ${phones.length} phone(s), for Control`)
+  return { result: 'download', sentToPhone: phones.length > 0 }
 }
 
 /** The connections from the device holding Control, newest last. */
@@ -2357,8 +2380,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'app-behind': {
       if (typeof msg.deviceId !== 'string' || msg.deviceId === '') break
-      if (msg.behind === true) appsBehind.add(msg.deviceId)
-      else appsBehind.delete(msg.deviceId)
+      const behind = { native: msg.behind === true, web: msg.web === true }
+      if (behind.native || behind.web) devicesBehind.set(msg.deviceId, behind)
+      else devicesBehind.delete(msg.deviceId)
       break
     }
 
@@ -3880,6 +3904,7 @@ async function startServer(): Promise<void> {
     letGo: () => setReceptionistHolder(null),
     restartServer: () => restartServer('Control'),
     reloadPages: () => broadcastToAll({ type: 'reload-page' }),
+    installPhoneApp: installPhoneAppForControl,
     log: appendReceptionistLog,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     voiceTick: () => new Promise((resolve) => setTimeout(resolve, VOICE_FOLLOW_MS)),

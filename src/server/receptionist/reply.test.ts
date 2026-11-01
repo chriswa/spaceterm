@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseAgentRef } from './agent-token'
-import { CONTROL, isBlocking, parseReply, playedLengths, redactSpoken, renderSpeech, type Speaker } from './reply'
+import { CONTROL, isBlocking, letsGo, parseReply, playedLengths, redactSpoken, renderSpeech, type Speaker } from './reply'
 
 const KEVIN: Speaker = { name: 'Kevin', voice: 'am_michael' }
 const resolveKevin = (handle: string): Speaker | undefined => handle === 'a1' ? KEVIN : undefined
@@ -16,9 +16,10 @@ describe('parseReply', () => {
     expect(parseReply('Sure:\n```json\n{"say":[{"text":"Hi."}]}\n```').say).toEqual([{ from: CONTROL, text: 'Hi.' }])
   })
 
-  it('reads restart_server and refresh_clients, which take nothing', () => {
-    const parsed = parseReply('{"say":[{"text":"Restarting."}],"tools":[{"tool":"restart_server"},{"tool":"refresh_clients"}]}')
-    expect(parsed.tools).toEqual([{ tool: 'restart_server' }, { tool: 'refresh_clients' }])
+  it('reads restart_server, refresh_clients and install_phone_app, which take nothing', () => {
+    const parsed = parseReply('{"say":[{"text":"Restarting."}],"tools":[{"tool":"restart_server"},{"tool":"refresh_clients"},{"tool":"install_phone_app","extra":1}]}')
+    expect(parsed.tools).toEqual([{ tool: 'restart_server' }, { tool: 'refresh_clients' }, { tool: 'install_phone_app' }])
+    expect(parsed.tools.every(letsGo)).toBe(true)
   })
 
   it('refuses go_quiet, which is no longer a tool', () => {

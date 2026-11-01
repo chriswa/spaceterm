@@ -291,13 +291,19 @@ export interface ReceptionistDeps {
   markRead(nodeId: NodeId): void
   /**
    * Let go of Control, exactly as the Control button does when it lets go:
-   * no device holds it, every button shows it, and nobody hears it. See restart_server and refresh_clients.
+   * no device holds it, every button shows it, and nobody hears it. See restart_server, refresh_clients and install_phone_app.
    */
   letGo(): void
   /** Restart the server gracefully, as the ↻ button does. Returns why it cannot, if it cannot. */
   restartServer(): string | undefined
   /** Have every connected client reload its page, as the toolbar's reload does. */
   reloadPages(): void
+  /**
+   * Build the iPhone app and install it on the phone, as the toolbar's install
+   * does, sending the phones the download link when the phone is away from the
+   * Mac's network. Takes minutes; resolves with how it went.
+   */
+  installPhoneApp(): Promise<PhoneInstallResult>
   /**
    * What the user is looking at: the screen of the device holding Control
    * (or, failing that, the one that last moved), and the nodes nearest
@@ -433,6 +439,17 @@ export const PROMPT_HASH = createHash('sha256').update(RECEPTIONIST_SYSTEM_PROMP
 const INTERRUPT_SETTLE_MS = 800
 
 const isRestart = (call: ToolCall): boolean => call.tool === 'restart_server'
+
+/**
+ * How install_phone_app went: installed and launched over the old app; built
+ * as a download, the phone being away from the Mac's network, with the link
+ * sent to the phone if one was connected to take it; or failed, with the
+ * install script's last words.
+ */
+export type PhoneInstallResult =
+  | { result: 'installed' }
+  | { result: 'download'; sentToPhone: boolean }
+  | { result: 'failed'; message: string }
 
 /**
  * `calls` with restart_server moved to the end, whatever order the model
@@ -1800,7 +1817,22 @@ export class Receptionist {
         this.deps.reloadPages()
         this.deps.log({ event: 'refresh-clients' })
         return `refresh_clients told every page to reload: ${unheard}`
+      case 'install_phone_app':
+        this.deps.log({ event: 'install-phone-app' })
+        this.deps.record.append([{ role: 'assistant', content: actionHeadline({ tool }) }])
+        void this.deps.installPhoneApp().then(
+          outcome => this.installDone(outcome),
+          (err: unknown) => this.installDone({ result: 'failed', message: err instanceof Error ? err.message : String(err) }),
+        )
+        return `install_phone_app is building the iPhone app on the Mac, which takes a few minutes, and you will be told how it went: ${unheard}`
     }
+  }
+
+  /** install_phone_app has finished: news, told now or when the user is back, like an agent's. */
+  private installDone(outcome: PhoneInstallResult): void {
+    this.deps.log({ event: 'install-phone-app-done', ...outcome })
+    this.events.push({ kind: 'phone-install', ...outcome })
+    this.maybeSpeakUp()
   }
 
   /** The agent has stopped: tell the model what it last said. */
@@ -3697,6 +3729,8 @@ function eventHeadline(event: ReceptionistEvent): string {
     case 'agent-answer': return `${event.agent} answered "${event.question}"`
     case 'agent-answer-failed': return `asking ${event.agent} failed`
     case 'agent-images': return `${event.agent} showed you ${event.count === 1 ? 'a picture' : `${event.count} pictures`}`
+    case 'phone-install': return event.result === 'installed' ? 'the iPhone app is installed'
+      : event.result === 'download' ? 'the iPhone app was built as a download' : 'the iPhone app install failed'
   }
 }
 

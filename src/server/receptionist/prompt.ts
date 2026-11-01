@@ -52,6 +52,7 @@ But when the user has just had you ask {Kevin:swift-hammer} whether the boundary
 - {"tool": "answer_permission", "agent": "<agent token>", "allow": true or false} answers the permission prompt an agent is blocked on, as the user would at its terminal: true allows what it asked this once, false denies it, which also ends its turn, leaving it waiting for instructions. Use it only when the user has told you to allow or deny that agent's request after hearing what it asks; never on your own judgement, and never on a "yes" the user gave to something else. It refuses if the agent is no longer waiting for permission, or is now asking for something you have not been shown: tell the user what it asks now instead.
 - {"tool": "restart_server"} restarts the Spaceterm server, which every agent keeps running through, and lets go of Control the moment it runs, exactly as when the user turns the Control button off: no device holds Control, and nothing further you say is heard by the user until they reconnect you, when a message opens with YOU ARE NO LONGER QUIET. It waits for the words of the reply it comes with, so anything the user should hear first goes in that reply's "say", and it runs once they have heard it out; if they talk over it, it does not run, and you are told. Use it only when the user explicitly asks you to restart the server, never because you think a restart would be a good idea, not even when an agent says one is needed: tell the user that instead, and let them decide. Once the server is back, every page reloads by itself.
 - {"tool": "refresh_clients"} tells every connected client, on every device, to reload its page, and lets go of Control the moment it runs, as restart_server does: after it runs, nothing further you say is heard by the user until they reconnect you. It waits for the words of the reply it comes with, so anything the user should hear first goes in that reply's "say", and it runs once they have heard it out; if they talk over it, it does not run, and you are told. Use it only when the user explicitly asks you to refresh or reload the pages, never because you think a refresh would be a good idea.
+- {"tool": "install_phone_app"} builds the iPhone app on the Mac and installs it on the phone, exactly as the user tapping Install iPhone app in the rocket menu does, and lets go of Control the moment it runs, as restart_server does, since a successful install replaces the app the user may be listening on. It waits for the words of the reply it comes with, just as restart_server does, and if they talk over it, it does not run, and you are told. The build takes a few minutes. When it is done, you are told how it went as news: installed; or, when the phone is away from the Mac's network, built as a download over Tailscale, with the link sent to the phone for the user to tap Install when iOS asks; or failed, with why. Tell the user that result once they can hear you again. Use it only when the user explicitly asks you to install or update the iPhone app, never because you think an install would be a good idea, not even when SPACETERM STATUS says one is pending.
 - {"tool": "backlog_add", "item": "..."} puts something on your backlog, to bring up with the user later (see below). Write the item so it makes sense on its own, hours from now, with the agent's token if it is about one, which also lets the backlog weigh what waiting costs while that agent's cache goes cold, such as "{Kevin:amber-otter} finished the water simulation; the user has not heard its report." It is done at once and silently, with no result and no spoken confirmation.
 - {"tool": "mark_read", "agent": "<agent token>"} marks the agent read, so it is no longer UNREAD, once the user has heard what you told them. Put it in the reply whose words tell the user that agent's news: what it finished, found, or needs from them, in its own voice or in yours. The system holds on to it, and marks the agent read only if the user hears every word the agent says in its own voice in that reply, or every word of the reply if it says none, without cutting you off, and then says something to you; cutting you off after its own words, in yours or another agent's, does not stop it. If they cut you off before that, or the reply is never heard, or the agent has news since, it stays UNREAD, and you need do nothing about it. Use it for every UNREAD agent whose news you tell, so that what the user has heard stops showing as new; not for an agent you only mention in passing, or whose news you put on your backlog instead of telling. It is silent, with no result and no spoken confirmation.
 - {"tool": "backlog_next"} Instant. takes the one item on your backlog that matters most now, chosen for you, off the backlog, and gives it to you with how many are left. Use it when the user asks what is next, then bring up what it gives you. Add "about": "..." to take instead every item about one thing, described as fully as you can, such as "Kevin's water simulation": use it whenever the user asks about something that may be on your backlog, so that what is there comes off rather than coming up again later. You may get several items, or none, and are told which.
@@ -141,6 +142,10 @@ export type ReceptionistEvent = { failures?: number } & (
    * Only how many and what they are called: Control never sees the pictures.
    */
   | { kind: 'agent-images'; agent: string; count: number; captions: string[] }
+  /** install_phone_app has finished: see `PhoneInstallResult`. */
+  | { kind: 'phone-install'; result: 'installed' }
+  | { kind: 'phone-install'; result: 'download'; sentToPhone: boolean }
+  | { kind: 'phone-install'; result: 'failed'; message: string }
 )
 
 /** The most captions an `agent-images` event lists, and the most of each. */
@@ -191,6 +196,23 @@ export function renderEvent(event: ReceptionistEvent): string {
     case 'agent-images':
       return `${event.agent} put ${event.count === 1 ? 'a picture' : `${event.count} pictures`} in the transcript for the user to look at` +
         `${event.captions.length ? `: ${event.captions.map(caption => `"${caption}"`).join('; ')}` : ''}. ${IMAGES_REMINDER}`
+    case 'phone-install':
+      return renderPhoneInstall(event)
+  }
+}
+
+/** How install_phone_app went, for the model to tell the user. */
+function renderPhoneInstall(event: Extract<ReceptionistEvent, { kind: 'phone-install' }>): string {
+  switch (event.result) {
+    case 'installed':
+      return 'The iPhone app install you started has finished: the new app is installed on the phone, and has replaced the one that was running. Tell the user it is done.'
+    case 'download':
+      return 'The iPhone app install you started could not reach the phone directly, because the phone is away from the Mac\'s network, so the app was built as a download over Tailscale instead. ' +
+        (event.sentToPhone
+          ? 'The phone was sent the download link: iOS asks the user whether to install it, and they tap Install. Tell the user that.'
+          : 'No phone was connected to send the download link to. Tell the user, and that tapping Install iPhone app in the rocket menu on the phone gets it.')
+    case 'failed':
+      return `The iPhone app install you started failed. The install script said: ${event.message} Tell the user it failed and, briefly, why.`
   }
 }
 

@@ -27,7 +27,7 @@ export const PENDING_NEWS_FILE = path.join(SOCKET_DIR, 'receptionist', 'pending-
 
 /** Every kind of news, so that a new one is a compile error here rather than news a restart quietly drops. */
 const KINDS: Record<ReceptionistEvent['kind'], true> = {
-  'agent-stopped': true, 'agent-blocked': true, 'agent-ended': true, 'agent-answer': true, 'agent-answer-failed': true, 'agent-images': true,
+  'agent-stopped': true, 'agent-blocked': true, 'agent-ended': true, 'agent-answer': true, 'agent-answer-failed': true, 'agent-images': true, 'phone-install': true,
 }
 
 /** Which turn took something: settling a turn that has been superseded must not drop what its successor took. */

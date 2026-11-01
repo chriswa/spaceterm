@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 30
+export const CLIENT_PROTOCOL_VERSION = 31
 
 /**
  * Oldest client protocol this build still serves.
@@ -134,6 +134,11 @@ export const CLIENT_PROTOCOL_VERSION = 30
  *
  * v29 ignores `installUrl` in `mobile-app-install-result`, so a phone away
  * from the Mac's network is only told it could install from a download; it
+ * loses nothing else.
+ *
+ * v30 never says whether its page is behind (`web` in `app-behind`), so
+ * Control is never told a refresh is waiting; and it is never sent the
+ * download link when Control installs the app (`mobile-app-install-link`). It
  * loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

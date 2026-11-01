@@ -526,10 +526,11 @@ export interface ClientLogMessage {
 
 /**
  * Whether the app around this page is older than the Mac's source, so that
- * only an install from the Mac brings it up to date (`update-check.ts`). Sent
- * by the phone on each connect and whenever it changes; the server keeps each
- * device's last word, so that Control can say an install is waiting. See
- * `receptionist/spaceterm-status.ts`.
+ * only an install from the Mac brings it up to date, and whether the page
+ * itself is older than the Mac's latest build, which a reload fixes
+ * (`update-check.ts`). Sent by the phone on each connect and whenever either
+ * changes; the server keeps each device's last word, so that Control is told
+ * what the device's rocket menu shows. See `receptionist/spaceterm-status.ts`.
  */
 export interface AppBehindMessage {
   type: 'app-behind'
@@ -538,7 +539,10 @@ export interface AppBehindMessage {
    * report sent on connect can arrive before the handshake has named it.
    */
   deviceId: string
+  /** The native app is behind. */
   behind: boolean
+  /** The page is behind. Absent from a phone before v31, which never says. */
+  web?: boolean
 }
 
 /**
@@ -1497,6 +1501,17 @@ export interface MobileAppInstallResultMessage {
 }
 
 /**
+ * Unsolicited, to the phones: open this `itms-services:` link, which has iOS
+ * ask, then install the app as a download. Control's install_phone_app found
+ * the phone away from the Mac's network; the toolbar's install is answered in
+ * `mobile-app-install-result` instead. See `src/server/mobile-install.ts`.
+ */
+export interface MobileAppInstallLinkMessage {
+  type: 'mobile-app-install-link'
+  installUrl: string
+}
+
+/**
  * Unsolicited broadcast: the server now serves a new build of the mobile web
  * app. A phone checks whether that leaves its page behind
  * (src/mobile/update-check.ts) rather than waiting for its next look.
@@ -2322,6 +2337,7 @@ export type ServerMessage =
   | SpeechLinkMessage
   | MobileAppInstallResultMessage
   | MobileBuildChangedMessage
+  | MobileAppInstallLinkMessage
   | ReloadPageMessage
   | ServerRestartingMessage
   | LocationRequestMessage

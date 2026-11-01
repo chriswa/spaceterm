@@ -72,7 +72,7 @@ export type ServerEventType =
   | 'peer-connected' | 'peer-disconnected' | 'peer-camera-bounds'
   | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'restart-required' | 'usage-report'
   | 'system-stats'
-  | 'speech-link' | 'mobile-build-changed' | 'reload-page' | 'server-restarting'
+  | 'speech-link' | 'mobile-build-changed' | 'mobile-app-install-link' | 'reload-page' | 'server-restarting'
   | 'agent-meta-availability' | 'server-error'
   | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
   | 'receptionist-transcript-appended' | 'receptionist-unread' | 'receptionist-backlog' | 'receptionist-replaying' | 'receptionist-speaking'
@@ -290,6 +290,7 @@ export class ServerClient {
       case 'system-stats':
       case 'speech-link':
       case 'mobile-build-changed':
+      case 'mobile-app-install-link':
       case 'reload-page':
       case 'server-restarting':
       case 'agent-meta-availability':
@@ -783,9 +784,9 @@ export class ServerClient {
     this.fireAndForget({ type: 'mod', modId, event, payload })
   }
 
-  /** Whether the app around this page needs installing again: see `AppBehindMessage`. */
-  appBehind(behind: boolean): void {
-    this.fireAndForget({ type: 'app-behind', deviceId: this.options.device.id, behind })
+  /** Whether the app around this page needs installing again, and the page reloading: see `AppBehindMessage`. */
+  appBehind(behind: { native: boolean; web: boolean }): void {
+    this.fireAndForget({ type: 'app-behind', deviceId: this.options.device.id, behind: behind.native, web: behind.web })
   }
 
   /** Put a line in the server's log, for a client that has nowhere else to write. */

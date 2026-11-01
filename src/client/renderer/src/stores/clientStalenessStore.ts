@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { pendingUpdates, type PendingUpdates } from '../../../../shared/pending-updates'
 import { useRestartRequiredStore } from './restartRequiredStore'
 
 /**
@@ -19,29 +20,7 @@ export const useClientStalenessStore = create<ClientStalenessState>((set) => ({
   set: ({ web, native }) => set({ web, native })
 }))
 
-/** Each thing waiting to bring this client and the Mac up to date. */
-export interface PendingUpdates {
-  restart: boolean
-  install: boolean
-  reload: boolean
-}
-
-/**
- * What to ask for, given what is behind. A reload is not asked for while a
- * server restart is — the restarted server reloads every client anyway — nor
- * while the app is behind, since the new app loads the new page.
- */
-export function pendingUpdates(state: { restart: boolean; native: boolean; web: boolean }): PendingUpdates {
-  return {
-    restart: state.restart,
-    install: state.native,
-    reload: state.web && !state.restart && !state.native
-  }
-}
-
-export function anyPending(pending: PendingUpdates): boolean {
-  return pending.restart || pending.install || pending.reload
-}
+export { anyPending, pendingUpdates, type PendingUpdates } from '../../../../shared/pending-updates'
 
 /** `pendingUpdates` over the live stores: the server's restart flag and this client's staleness. */
 export function usePendingUpdates(): PendingUpdates {

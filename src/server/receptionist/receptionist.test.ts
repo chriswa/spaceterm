@@ -8,7 +8,7 @@ import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import { ASK_AGENT_REMINDER, BACK_REQUEST, HANDOVER_PROMPT, HEARD_AGAIN, LISTENING_AGAIN, RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
 import {
-  MAX_TURN_RETRIES, PROMPT_HASH, RETRYING_AFTER_ERROR, TURN_RETRY_MS, Receptionist, SessionBusy, sideQuestionPrompt, STOP_HOLD_MS, TENTATIVE_STOP_HOLD_MS, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type ReceptionistDeps, type RecordedMessage, type SavedSession, type SessionTurn,
+  MAX_TURN_RETRIES, PROMPT_HASH, RETRYING_AFTER_ERROR, TURN_RETRY_MS, Receptionist, SessionBusy, sideQuestionPrompt, STOP_HOLD_MS, TENTATIVE_STOP_HOLD_MS, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type PhoneInstallResult, type ReceptionistDeps, type RecordedMessage, type SavedSession, type SessionTurn,
 } from './receptionist'
 import type { RosterAgent } from './roster'
 import { Handles, NODE_PREFIX } from './handles'
@@ -111,6 +111,8 @@ function harness(opts: {
   speechEnds?: Partial<SpeechStatus>
   /** Why restart_server cannot restart the server; by default it can. */
   restartRefused?: string
+  /** How install_phone_app's install goes; by default it never finishes. */
+  phoneInstall?: () => Promise<PhoneInstallResult>
   /** Where Control speaks to begin with, in place of the recording fake. */
   speech?: SpeechBackend
   /** What the user is looking at; by default nothing has said. */
@@ -366,6 +368,7 @@ function harness(opts: {
     letGo: () => { wire.push('let go'); receptionist.setListener(undefined) },
     restartServer: () => { wire.push('restart server'); return opts.restartRefused },
     reloadPages: () => wire.push('reload pages'),
+    installPhoneApp: () => { wire.push('install phone app'); return opts.phoneInstall?.() ?? new Promise(() => {}) },
     userView: opts.userView ?? (() => undefined),
     spawn: (parent, title, prompt) => {
       wire.push(`spawn ${parent} ${title}: ${prompt}`)
@@ -376,7 +379,7 @@ function harness(opts: {
     sleep: opts.sleep ?? (async () => {}),
     voiceTick: opts.voiceTick ?? (() => new Promise(() => {})),
     voiceOperatorDiscovered: () => true,
-    spacetermStatus: opts.status ?? (() => ({ restartPending: false, phoneInstallPending: false, device: 'Mac' })),
+    spacetermStatus: opts.status ?? (() => ({ restartPending: false, phoneInstallPending: false, reloadPending: false, device: 'Mac' })),
   }, { listener: { id: 'here', speech: opts.speech ?? speech }, onPhase: () => {}, onError: () => {}, onSpeaking: (now) => speaking.push(now) })
   return {
     receptionist, listener: { id: 'here', speech }, backlog, turns, aborted, spoken, focused, sideQuestions, endedQuestions, assigned, wire, notices, record, heardMarks, consumedMarks, notDone, traces, speaking, shownImages,
@@ -578,7 +581,7 @@ describe('Receptionist', () => {
 
   describe('Spaceterm status', () => {
     it('tells the session what is pending only when it changes, ahead of the user\'s words', async () => {
-      let status: StatusSample = { restartPending: false, phoneInstallPending: false, device: 'Mac' }
+      let status: StatusSample = { restartPending: false, phoneInstallPending: false, reloadPending: false, device: 'Mac' }
       const h = harness({ status: () => status, replies: ['a', 'b', 'c', 'd'].map(text => reply([{ from: 'control', text }])) })
       await h.receptionist.hear('hello', 'spoken')
       await flush()
@@ -590,7 +593,7 @@ describe('Receptionist', () => {
       const told = h.turns[1].prompt
       expect(told).toMatch(new RegExp(`^${STATUS_HEADING}, from the Spaceterm system itself, not from the user[^]*Server restart: pending[^]*THE USER SAYS: anything new\\?`))
       expect(told).toContain('The user is on the Mac.')
-      expect(h.session?.toldStatus).toEqual({ restartPending: true, phoneInstallPending: false })
+      expect(h.session?.toldStatus).toEqual({ restartPending: true, phoneInstallPending: false, reloadPending: false })
       // Unchanged: not said again.
       await h.receptionist.hear('ok', 'spoken')
       await flush()
@@ -605,7 +608,7 @@ describe('Receptionist', () => {
 
     it('never puts the status in the record, so the transcript shows only what the user said', async () => {
       const h = harness({
-        status: () => ({ restartPending: true, phoneInstallPending: true, device: 'Phone' }),
+        status: () => ({ restartPending: true, phoneInstallPending: true, reloadPending: false, device: 'Phone' }),
         replies: [reply([{ from: 'control', text: 'A restart is waiting.' }])],
       })
       await h.receptionist.hear('hello', 'spoken')
@@ -615,7 +618,7 @@ describe('Receptionist', () => {
     })
 
     it('remembers across a server restart what the session was told', async () => {
-      const toldStatus = { restartPending: true, phoneInstallPending: false }
+      const toldStatus = { restartPending: true, phoneInstallPending: false, reloadPending: false }
       const replies = [reply([{ from: 'control', text: 'Yes.' }])]
       // The flag outlived the restart that did not clear it: nothing to tell.
       const still = harness({ saved: { sessionId: 'kept', promptHash: PROMPT_HASH, toldStatus }, status: () => ({ ...toldStatus }), replies: [...replies] })
@@ -623,7 +626,7 @@ describe('Receptionist', () => {
       await flush()
       expect(still.turns[0].prompt).not.toContain(STATUS_HEADING)
       // The restart it asked for: the session is told it is done.
-      const restarted = harness({ saved: { sessionId: 'kept', promptHash: PROMPT_HASH, toldStatus }, status: () => ({ restartPending: false, phoneInstallPending: false }), replies: [...replies] })
+      const restarted = harness({ saved: { sessionId: 'kept', promptHash: PROMPT_HASH, toldStatus }, status: () => ({ restartPending: false, phoneInstallPending: false, reloadPending: false }), replies: [...replies] })
       await restarted.receptionist.hear('still there?', 'spoken')
       await flush()
       expect(restarted.turns[0].prompt).toContain('Server restart: not needed any more; the restart has been done.')
@@ -631,7 +634,7 @@ describe('Receptionist', () => {
     })
 
     it('tells a compacted session again what is still pending, since its summary may have dropped it', async () => {
-      const toldStatus = { restartPending: true, phoneInstallPending: false }
+      const toldStatus = { restartPending: true, phoneInstallPending: false, reloadPending: false }
       const h = harness({
         saved: { sessionId: 'kept', promptHash: PROMPT_HASH, toldStatus, compactsAt: Date.now() - 1_000 },
         status: () => ({ ...toldStatus }),
@@ -646,7 +649,7 @@ describe('Receptionist', () => {
     it('tells it again when the message carrying it failed', async () => {
       const failed: string[] = []
       const h = harness({
-        status: () => ({ restartPending: true, phoneInstallPending: false }),
+        status: () => ({ restartPending: true, phoneInstallPending: false, reloadPending: false }),
         // The first message fails, as one the model's safeguards flag.
         failWhen: (turn) => failed.length === 0 && failed.push(turn.prompt) > 0,
         replies: [reply([{ from: 'control', text: 'Yes.' }])],
@@ -656,7 +659,7 @@ describe('Receptionist', () => {
       expect(failed[0]).toContain('Server restart: pending')
       expect(h.turns).toHaveLength(1)
       expect(h.turns[0].prompt).toContain('Server restart: pending')
-      expect(h.session?.toldStatus).toEqual({ restartPending: true, phoneInstallPending: false })
+      expect(h.session?.toldStatus).toEqual({ restartPending: true, phoneInstallPending: false, reloadPending: false })
     })
   })
 
@@ -1556,6 +1559,7 @@ describe('Receptionist', () => {
   it.each([
     ['restart_server', 'restart server'],
     ['refresh_clients', 'reload pages'],
+    ['install_phone_app', 'install phone app'],
   ] as const)('%s lets go of Control before it runs, once the words it came with are heard out', async (tool, done) => {
     const speech = handPlayed()
     const h = harness({ speech: speech.backend, replies: [reply([{ from: 'control', text: 'Here is the answer first.' }], [{ tool }])] })
@@ -1571,6 +1575,7 @@ describe('Receptionist', () => {
   it.each([
     ['restart_server', 'RESTARTED THE SERVER'],
     ['refresh_clients', 'REFRESHED EVERY PAGE'],
+    ['install_phone_app', 'STARTED INSTALLING THE IPHONE APP'],
   ] as const)('%s does not run when the user talks over the words it waited for, and the model is told', async (tool, headline) => {
     const speech = handPlayed()
     const h = harness({
@@ -1737,6 +1742,68 @@ describe('Receptionist', () => {
     await flush()
     expect(h.turns).toHaveLength(3)
     expect(said(h).join(' ')).toContain('stopped while you were away.')
+  })
+
+  it.each([
+    [{ result: 'installed' } as const, 'the new app is installed on the phone'],
+    [{ result: 'download', sentToPhone: true } as const, 'The phone was sent the download link'],
+    [{ result: 'download', sentToPhone: false } as const, 'No phone was connected to send the download link to'],
+    [{ result: 'failed', message: 'No paired iPhone.' } as const, 'failed. The install script said: No paired iPhone.'],
+  ])('install_phone_app tells how it went (%o) as news, told once the user is back', async (outcome, words) => {
+    let finish: (result: PhoneInstallResult) => void = () => {}
+    const h = harness({
+      phoneInstall: () => new Promise((resolve) => { finish = resolve }),
+      replies: [
+        (turn) => {
+          expect(turn.prompt).toContain('THE USER SAYS: install the iPhone app')
+          return reply([{ from: 'control', text: 'Installing the iPhone app.' }], [{ tool: 'install_phone_app' }])
+        },
+        (turn) => {
+          // Let go of: still quiet while it builds.
+          expect(turn.prompt).toContain('THE USER IS AWAY')
+          expect(turn.prompt).toContain(words)
+          return reply([])
+        },
+        (turn) => {
+          expect(turn.prompt).toContain(HEARD_AGAIN)
+          expect(turn.prompt).toContain('THE USER IS BACK')
+          expect(turn.prompt).toContain(words)
+          return reply([{ from: 'control', text: 'The install is done.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('install the iPhone app', 'spoken')
+    await flush()
+    expect(h.wire).toEqual(['let go', 'install phone app'])
+    expect(h.record).toContainEqual({ role: 'assistant', content: 'STARTED INSTALLING THE IPHONE APP' })
+    // Minutes later.
+    expect(h.turns).toHaveLength(1)
+    finish(outcome)
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    h.receptionist.setListener(h.listener)
+    await flush()
+    expect(h.turns).toHaveLength(3)
+    expect(said(h).join(' ')).toContain('The install is done.')
+  })
+
+  it('tells the model install_phone_app has started, and that its result comes later', async () => {
+    const h = harness({
+      replies: [
+        reply([], [{ tool: 'install_phone_app' }]),
+        (turn) => {
+          expect(turn.prompt).toContain(HEARD_AGAIN)
+          expect(turn.prompt).toContain('install_phone_app is building the iPhone app on the Mac, which takes a few minutes, and you will be told how it went')
+          return reply([{ from: 'control', text: 'Still building.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('install the iPhone app', 'spoken')
+    await flush()
+    h.receptionist.setListener(h.listener)
+    void h.receptionist.hear('is it done?', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
   })
 
   it('cuts off a reply when Control moves to another device, and carries on there from where it was cut', async () => {

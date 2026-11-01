@@ -7,7 +7,7 @@ import { SessionBusy, type RecordedMessage, type SavedSession, type SessionAnswe
 import { parseRecordBytes, spokenPart, transcriptPage, type RecordFile, type Speakers } from './transcript'
 import type { Compaction } from './compaction'
 import type { ConsumedHow } from './consumption'
-import type { SpacetermStatus } from './spaceterm-status'
+import { parseStatus } from './spaceterm-status'
 import type { HandleNames } from './transcript-names'
 import type { ControlImage, ControlTrace, ControlTranscriptEntry } from '../../shared/protocol'
 
@@ -103,11 +103,12 @@ export const REAL_RECEPTIONIST_SESSION = {
   load(): SavedSession | undefined {
     try {
       const parsed = JSON.parse(fs.readFileSync(RECEPTIONIST_SESSION, 'utf8')) as Partial<SavedSession>
+      const toldStatus = parseStatus(parsed.toldStatus)
       return typeof parsed.sessionId === 'string' && typeof parsed.promptHash === 'string'
         ? {
             sessionId: parsed.sessionId, promptHash: parsed.promptHash,
             ...(typeof parsed.compactsAt === 'number' ? { compactsAt: parsed.compactsAt } : {}),
-            ...(isStatus(parsed.toldStatus) ? { toldStatus: parsed.toldStatus } : {}),
+            ...(toldStatus ? { toldStatus } : {}),
           }
         : undefined
     } catch {
@@ -125,12 +126,6 @@ export const REAL_RECEPTIONIST_SESSION = {
       serverLog(`[receptionist] failed to save session: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
-}
-
-function isStatus(value: unknown): value is SpacetermStatus {
-  if (typeof value !== 'object' || value === null) return false
-  const status = value as Partial<SpacetermStatus>
-  return typeof status.restartPending === 'boolean' && typeof status.phoneInstallPending === 'boolean'
 }
 
 /** Enough of the record's end for `recent`: a few dozen messages. */

@@ -100,9 +100,17 @@ if (!token) {
     mobileEvents.setSender((events) => client.mobileEvents(events))
     // Whether this app needs installing again, for Control to say: on every
     // connect, since a restarted server has forgotten, and on every change.
-    client.onLifecycle('connect', () => client.appBehind(useClientStalenessStore.getState().native))
-    if (client.isConnected()) client.appBehind(useClientStalenessStore.getState().native)
-    useClientStalenessStore.subscribe((s, prev) => { if (s.native !== prev.native) client.appBehind(s.native) })
+    // The page too, so that Control is told what the rocket menu shows.
+    const reportBehind = () => client.appBehind(useClientStalenessStore.getState())
+    client.onLifecycle('connect', reportBehind)
+    if (client.isConnected()) reportBehind()
+    useClientStalenessStore.subscribe((s, prev) => { if (s.native !== prev.native || s.web !== prev.web) reportBehind() })
+    // Control installed the app, and the phone is away from the Mac's network:
+    // iOS takes the link, asks, and installs the download over this app.
+    client.on('mobile-app-install-link', ({ installUrl }) => {
+      window.api.log('[update] install: Control sent the over-the-air download')
+      window.location.href = installUrl
+    })
     recordMobileEvent('server', { connected: true })
     client.onLifecycle('disconnect', () => recordMobileEvent('server', { connected: false }))
     client.onLifecycle('connect', () => {

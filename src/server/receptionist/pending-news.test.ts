@@ -34,7 +34,7 @@ describe('PendingNews', () => {
     news.push(ended('a'))
     news.take({})
     news.push(ended('b'))
-    expect(new PendingNews({ store }).all().map(e => e.agent)).toEqual(['a', 'b'])
+    expect(new PendingNews({ store }).all().map(e => 'agent' in e ? e.agent : e.kind)).toEqual(['a', 'b'])
   })
 
   it('forgets news once the turn that took it is over', () => {
@@ -56,7 +56,7 @@ describe('PendingNews', () => {
     news.requeue(news.take(first), first)
     news.take(second)
     news.told(first)
-    expect(new PendingNews({ store }).all().map(e => e.agent)).toEqual(['a'])
+    expect(new PendingNews({ store }).all().map(e => 'agent' in e ? e.agent : e.kind)).toEqual(['a'])
   })
 
   it('leaves the words of a turn never finished for the next server, until a turn takes them', () => {
@@ -109,8 +109,8 @@ describe('PendingNews', () => {
     const news = new PendingNews({ store })
     news.push(ended('a'))
     news.push(ended('b'))
-    news.drop(event => event.agent === 'a')
-    expect(new PendingNews({ store }).all().map(e => e.agent)).toEqual(['b'])
+    news.drop(event => 'agent' in event && event.agent === 'a')
+    expect(new PendingNews({ store }).all().map(e => 'agent' in e ? e.agent : e.kind)).toEqual(['b'])
   })
 
   it('starts with no news from a corrupt file, and skips what is not news', () => {

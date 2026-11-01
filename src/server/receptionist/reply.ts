@@ -49,6 +49,8 @@ export type ToolCall = (
   | { tool: 'force_user_camera'; target: string }
   | { tool: 'restart_server' }
   | { tool: 'refresh_clients' }
+  /** Build the iPhone app on the Mac and install it on the phone; its result comes later, as news. */
+  | { tool: 'install_phone_app' }
   | { tool: 'backlog_add'; item: string }
   /** Mark the agent read once the user has heard this reply: see deferred-reads.ts. */
   | { tool: 'mark_read'; agent: string }
@@ -61,12 +63,14 @@ export interface Reply {
   tools: ToolCall[]
 }
 
-const LET_GO_TOOLS = ['restart_server', 'refresh_clients'] as const
+const LET_GO_TOOLS = ['restart_server', 'refresh_clients', 'install_phone_app'] as const
 export type LetGoTool = typeof LET_GO_TOOLS[number]
 
 /**
  * Tools after which nobody hears Control: restart_server and refresh_clients,
- * which take every client away. Each lets go of Control the moment it runs.
+ * which take every client away, and install_phone_app, which replaces the
+ * phone's app — as the toolbar's buttons for each let go of Control first
+ * (updateActionsStore.ts). Each lets go of Control the moment it runs.
  * They take the user's page away, not the user: the words that came with one
  * are said first, and it runs once they have been heard.
  */
@@ -128,6 +132,7 @@ export function actionHeadline(call: ToolCall): string {
     case 'force_user_camera': return `TOOK YOU TO ${call.target}`
     case 'restart_server': return 'RESTARTED THE SERVER'
     case 'refresh_clients': return 'REFRESHED EVERY PAGE'
+    case 'install_phone_app': return 'STARTED INSTALLING THE IPHONE APP'
     default: return showToolCall(call)
   }
 }
@@ -178,7 +183,7 @@ function parseSayPart(value: unknown): SayPart {
 const TOOL_NAMES: Record<ToolCall['tool'], true> = {
   read: true, ask_agent: true, monitor: true, send: true, interrupt: true, answer_permission: true, archive_agent: true, unarchive_agent: true,
   spawn: true, rename_agent: true, recall: true, list_agents: true, list_nodes: true, agent_details: true, find_agent: true, nearby: true, force_user_camera: true,
-  restart_server: true, refresh_clients: true,
+  restart_server: true, refresh_clients: true, install_phone_app: true,
   backlog_add: true, backlog_next: true, mark_read: true,
 }
 const TOOL_LIST = Object.keys(TOOL_NAMES).join(', ')

@@ -847,6 +847,13 @@ install, so it installs only on phones the team's profile lists — one paired
 as above already is. Each build has a new secret, and nothing is served
 without it, since the app carries this Mac's pairing tokens.
 
+Control can do the same install when asked (its `install_phone_app`): the
+server runs it, and away from the Mac's network sends every connected phone
+the link to open (`mobile-app-install-link`). The phone also tells the server
+what its rocket counts — app behind, page behind (`app-behind`) — so Control's
+SPACETERM STATUS says what the rocket shows, by the same rule
+(`src/shared/pending-updates.ts`).
+
 ## The user's position, for agents
 
 An agent's `get_user_location` (or `spaceterm-cli location`) asks the server,

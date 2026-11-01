@@ -148,6 +148,20 @@ describe('ServerClient', () => {
     t.receive({ type: 'node-removed', nodeId: 'n' })
     expect(later).toHaveBeenCalled()
   })
+
+  it('says what is behind, app and page, for Control to be told what the rocket menu shows', () => {
+    const { t, client } = connected()
+    client.appBehind({ native: false, web: true })
+    expect(t.last('app-behind').msg).toEqual({ type: 'app-behind', deviceId: 'phone-1', behind: false, web: true })
+  })
+
+  it('hands Control’s download link to whoever listens for it', () => {
+    const { t, client } = connected()
+    const open = vi.fn()
+    client.on('mobile-app-install-link', ({ installUrl }) => open(installUrl))
+    t.receive({ type: 'mobile-app-install-link', installUrl: 'itms-services://?action=download-manifest&url=x' })
+    expect(open).toHaveBeenCalledWith('itms-services://?action=download-manifest&url=x')
+  })
 })
 
 describe('createApi', () => {
