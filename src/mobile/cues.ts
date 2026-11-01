@@ -23,7 +23,10 @@
  * dropping into a long low note, for "Control, shutdown"; and `notWakeWord`,
  * a sad slide down from G5, as speech that needed "Control" turns out not to
  * start with it and is thrown away. While it decides whether such speech
- * starts with "Control", a beep repeats (`playPendingTone`).
+ * starts with "Control", a beep repeats (`playPendingTone`). `dictationKept`,
+ * a quick high sparkle — G6 and C7, twice — follows `dictationEnd` when the
+ * words began with "dictate": kept, not sent to Control — on the Mac's
+ * clipboard, or on the phone for its Action button to copy.
  *
  * `heardUnattached`, a short odd little tune, plays the same way when the
  * microphone button's words reached Control while nobody holds it: taken,
@@ -47,7 +50,7 @@ import { recordMobileEvent } from './mobile-events'
 import { echoNotes, playEchoTone } from '@/lib/thinking-cue'
 import { nativeCues, nativeSpeech } from './native-microphone'
 
-export type Cue = 'error' | 'nothingToSay' | 'handsFreeReady' | 'conversationClosed' | 'dictationStart' | 'dictationEnd' | 'controlShutdown' | 'notWakeWord' | 'heardUnattached'
+export type Cue = 'error' | 'nothingToSay' | 'handsFreeReady' | 'conversationClosed' | 'dictationStart' | 'dictationEnd' | 'controlShutdown' | 'notWakeWord' | 'heardUnattached' | 'dictationKept'
 
 /**
  * Hands-free's tones (`playHandsFreeCue`), beside its haptics: ready to
@@ -58,7 +61,7 @@ export type Cue = 'error' | 'nothingToSay' | 'handsFreeReady' | 'conversationClo
  * October 2026, to be heard whatever Off / Read / Hear is set to and whatever the
  * Ring/Silent switch says.
  */
-export type HandsFreeCue = 'handsFreeReady' | 'dictationStart' | 'dictationEnd' | 'conversationClosed' | 'controlShutdown' | 'notWakeWord'
+export type HandsFreeCue = 'handsFreeReady' | 'dictationStart' | 'dictationEnd' | 'conversationClosed' | 'controlShutdown' | 'notWakeWord' | 'dictationKept'
 
 /** (frequency Hz, duration s) at natural speed; frequency 0 is a rest. */
 const SEGMENTS: Record<Cue, Array<[number, number]>> = {
@@ -72,11 +75,13 @@ const SEGMENTS: Record<Cue, Array<[number, number]>> = {
   // From the pending beep's G5, sliding sadly down a semitone at a time, then dropping to a long D5.
   notWakeWord: [[784, 0.16], [740, 0.16], [698, 0.16], [587, 0.56]],
   // G5, C#6, A#5 A#5, D#5 — pause — G#5, D#6.
+  // G6, C7, G6, C7, the last held: a sparkle, an octave above anything else here.
+  dictationKept: [[1568, 0.07], [0, 0.02], [2093, 0.07], [0, 0.02], [1568, 0.07], [0, 0.02], [2093, 0.2]],
   heardUnattached: [[784, 0.12], [0, 0.04], [1109, 0.12], [0, 0.04], [932, 0.08], [0, 0.03], [932, 0.08], [0, 0.04], [622, 0.22], [0, 0.10], [831, 0.12], [0, 0.04], [1245, 0.36]],
 }
 
 /** Each cue's volume. Voice Operator plays at 0.35; the phone's are quieter, being heard in an ear. */
-const GAINS: Record<Cue, number> = { error: 0.3, nothingToSay: 0.2, handsFreeReady: 0.2, conversationClosed: 0.2, dictationStart: 0.2, dictationEnd: 0.2, controlShutdown: 0.2, notWakeWord: 0.2, heardUnattached: 0.2 }
+const GAINS: Record<Cue, number> = { error: 0.3, nothingToSay: 0.2, handsFreeReady: 0.2, conversationClosed: 0.2, dictationStart: 0.2, dictationEnd: 0.2, controlShutdown: 0.2, notWakeWord: 0.2, heardUnattached: 0.2, dictationKept: 0.15 }
 
 /** Replies are Hear here: this phone holds Control, unmuted. The only time it makes a sound of its own. */
 export function cuesAudible(): boolean {

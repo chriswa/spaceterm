@@ -8,6 +8,9 @@ import type { NativeHandsFreeMessage } from './native-microphone'
  */
 function harness() {
   const listeners = new Set<(event: Record<string, unknown>, audio: boolean) => void>()
+  const keptListeners = new Set<(text: string) => void>()
+  const kept: string[] = []
+  let keeps = true
   const calls: string[] = []
   const tones: string[] = []
   const cues: string[] = []
@@ -21,6 +24,8 @@ function harness() {
       start: () => calls.push('start'),
       stop: () => calls.push('stop'),
       onEvent: (fn) => { listeners.add(fn); return () => listeners.delete(fn) },
+      onDictationKept: (fn) => { keptListeners.add(fn); return () => keptListeners.delete(fn) },
+      keep: (text) => { if (keeps) kept.push(text); return keeps },
     },
     log: () => {},
     handsFreeCue: (cue) => { tones.push(cue) },
@@ -37,7 +42,9 @@ function harness() {
   const state = (phase: string, extra: Record<string, unknown> = {}) =>
     vo({ type: 'state', phase, conversation: false, closesAt: null, checking: false, pending: false, ...extra })
   return {
-    uninstall, vo, state, calls, tones, cues, haptics, pending, cutIns: () => cutIns,
+    uninstall, vo, state, calls, tones, cues, haptics, pending, cutIns: () => cutIns, kept,
+    dictated: (text: string) => { for (const fn of keptListeners) fn(text) },
+    cannotKeep: () => { keeps = false },
     elapse: (ms: number) => { now += ms; for (const fn of tickers) fn() },
     now: () => now,
   }
@@ -47,6 +54,22 @@ let h: ReturnType<typeof harness> | undefined
 afterEach(() => { h?.uninstall(); h = undefined })
 
 describe('hands-free, following Voice Operator', () => {
+  it('keeps what was said after "dictate" as this device does, and sparkles', () => {
+    h = harness()
+    h.dictated('Haha, that sounds great.')
+    expect(h.kept).toEqual(['Haha, that sounds great.'])
+    expect(h.tones).toEqual(['dictationKept'])
+    expect(h.cues).toEqual([])
+  })
+
+  it('sounds the error where nothing keeps it, such as an app too old', () => {
+    h = harness()
+    h.cannotKeep()
+    h.dictated('See you at six')
+    expect(h.tones).toEqual([])
+    expect(h.cues).toEqual(['error'])
+  })
+
   it('switches Voice Operator on and off', () => {
     h = harness()
     setHandsFree(true)
@@ -229,6 +252,7 @@ describe('the phone\'s link: the SDK\'s lines carried through the server', () =>
         streamLine: (line) => toServer.push(line),
         closeStream: () => toServer.push('close'),
         onStream: (fn) => { streamListener = fn; return () => {} },
+        onDictationKept: () => () => {},
       },
       () => 'iPhone',
       (fn) => { connect = fn; return () => {} },

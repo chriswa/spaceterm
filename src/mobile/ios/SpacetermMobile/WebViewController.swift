@@ -12,6 +12,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     private lazy var microphone = NativeMicrophone(events: events)
     /// The phone's position, which the page asks for when an agent wants the user's.
     private lazy var location = NativeLocation(events: events)
+    /// The last "dictate …" said hands-free, kept for the Action button.
+    private lazy var dictation = NativeDictation(events: events)
 
     /// `SpacetermURLs` from Info.plist, written at build time by install.sh:
     /// one pairing URL per Mac, for a phone that is on one tailnet at a time.
@@ -59,6 +61,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             source: "window.spacetermCanQuit = true", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // Where the user is, for an agent that asked (native-location.ts).
         config.userContentController.add(location, name: "nativeLocation")
+        // Words said after "dictate", for the Action button to copy (native-dictation.ts).
+        config.userContentController.add(dictation, name: "nativeDictation")
 
         webView = WKWebView(frame: .zero, configuration: config)
         microphone.webView = webView

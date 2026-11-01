@@ -312,6 +312,8 @@ export interface HandsFreeApi {
   streamLine(line: string): void
   closeStream(): void
   onStream(callback: (message: { kind: 'line'; line: string } | { kind: 'closed' }) => void): () => void
+  /** Words said after "dictate" on this device, for it to keep: sent to one client of it. */
+  onDictationKept(callback: (text: string) => void): () => void
 }
 
 /**
@@ -580,6 +582,8 @@ export interface ElectronHost {
    * full rate with Spaceterm behind other windows.
    */
   microphoneHeld(held: boolean): void
+  /** Put text on the Mac's clipboard, focused or not: hands-free's "dictate …". */
+  writeClipboard(text: string): void
   /** This Mac's macOS version, such as `"26.0.1"`; null on any other system. */
   macOSVersion: string | null
 }

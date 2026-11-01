@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { routeHandsFreeWords, routeWords } from './receptionist-words'
+import { dictatedText, routeHandsFreeWords, routeWords } from './receptionist-words'
 
 describe('routeWords', () => {
   it('takes the fixed phrases without the model, and gives it everything else', () => {
@@ -35,5 +35,29 @@ describe('stop listening', () => {
     expect(routeHandsFreeWords({ text: 'Stop listening.', triggered: false }, false)).toBe('stop-listening')
     expect(routeHandsFreeWords({ text: 'stop listening', triggered: true }, false)).toBe('stop-listening')
     expect(routeHandsFreeWords({ text: 'Stop listening to Kevin.', triggered: false }, false)).toBe('hear')
+  })
+})
+
+describe('dictate', () => {
+  it('keeps what follows "dictate" for the device, with or without "Control", but not once told to stop talking', () => {
+    expect(routeHandsFreeWords({ text: 'Dictate, haha, that sounds great.', triggered: false }, false)).toBe('dictate')
+    expect(routeHandsFreeWords({ text: 'dictate see you at six', triggered: true }, false)).toBe('dictate')
+    expect(routeHandsFreeWords({ text: 'Dictate stop listening.', triggered: false }, false)).toBe('dictate')
+    expect(routeHandsFreeWords({ text: 'Dictate, haha.', triggered: false }, true)).toBe('overheard')
+    expect(routeHandsFreeWords({ text: 'Dictate, haha.', triggered: true }, true)).toBe('dictate')
+  })
+
+  it('only as the first word', () => {
+    expect(routeHandsFreeWords({ text: 'Can you dictate a note?', triggered: false }, false)).toBe('hear')
+    expect(routeHandsFreeWords({ text: 'Dictation is broken.', triggered: false }, false)).toBe('hear')
+    expect(routeWords('Dictate, haha.')).toBe('hear')
+  })
+
+  it('takes the word and its punctuation off, and capitalises what is left', () => {
+    expect(dictatedText('Dictate, haha, that sounds great.')).toBe('Haha, that sounds great.')
+    expect(dictatedText('dictate: See you at six')).toBe('See you at six')
+    expect(dictatedText('Dictate iPhone is charging.')).toBe('iPhone is charging.')
+    expect(dictatedText('Dictate.')).toBe('')
+    expect(dictatedText('Dictated it already.')).toBeUndefined()
   })
 })

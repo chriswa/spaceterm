@@ -2272,6 +2272,16 @@ export interface HandsFreeEventMessage {
   audio: boolean
 }
 
+/**
+ * What the user said after "dictate", hands-free on this device, for it to
+ * keep rather than Control: the Mac's clipboard, or the phone's last
+ * dictation, which its Action button copies. Sent to one client of the device.
+ */
+export interface DictationKeptMessage {
+  type: 'dictation-kept'
+  text: string
+}
+
 /** A line from Voice Operator for this phone's stream, or word that the stream closed. */
 export interface HandsFreeStreamMessage {
   type: 'hands-free-stream'
@@ -2336,6 +2346,7 @@ export type ServerMessage =
   | ControlImageResultMessage
   | ReceptionistTranscriptAppendedMessage
   | HandsFreeEventMessage
+  | DictationKeptMessage
   | HandsFreeStreamMessage
   | AgentNamesMessage
   | RestartFlagResultMessage

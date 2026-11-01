@@ -59,6 +59,7 @@ const host: ElectronHost = {
       listen('server-pipe:event', callback)
   },
   microphoneHeld: (held: boolean) => ipcRenderer.send('window:microphone-held', held),
+  writeClipboard: (text: string) => ipcRenderer.send('clipboard:write-text', text),
   macOSVersion: process.platform === 'darwin' ? process.getSystemVersion() : null
 }
 

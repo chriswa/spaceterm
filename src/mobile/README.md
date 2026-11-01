@@ -485,6 +485,7 @@ them, so the Ring/Silent switch does not silence them (`playHandsFreeCue`):
 | two notes down | they have been taken down and sent |
 | three soft steps down | Control's attention is no longer engaged — it lapsed, or you said "stop listening" or "stop talking"; "Control" is needed again |
 | an octave down, held low | "Let me turn this off" (or "Control, shutdown"): Control is away until you say "Control" again |
+| a high sparkle, two notes twice | "dictate …": the words were kept, not sent to Control — on the Mac's clipboard, or on the phone for the Action button |
 
 The microphone button leaves Control where it is — it does not bring Control
 to this phone; the transcript's holder badge says where it is. When nobody
@@ -611,6 +612,30 @@ Spaceterm is its client (`hands-free.ts`):
   every pause.
   `~/.spaceterm/mobile-events.jsonl` keeps this side's view: the phase, the
   cues, cut-ins, and how many characters went to Control.
+
+### "Dictate …": words for the clipboard, not for Control
+
+Words that start with "dictate" — said where any words reach Control, in the
+conversation window or after "Control" ("Control, dictate see you at six") —
+go nowhere near Control: the server keeps the rest on the device they were
+said on (`routeHandsFreeWords`, `dictatedText` in
+`src/server/receptionist-words.ts`; `dictation-kept`), and a sparkle says so.
+"Dictate" is no wake word: Voice Operator knows nothing of it, so with
+attention lapsed a bare "dictate …" is only speech without "Control".
+
+- **On the Mac** the first window puts them on the clipboard (Electron's,
+  which needs no focus).
+- **On the phone** iOS will not let the app set the clipboard from the
+  background — a write is dropped without an error (tried on the iPhone,
+  November 1 2026). The app keeps them (`NativeDictation.swift`), and copies
+  them at once only when it is in front. The Action button copies them:
+  Settings → Action Button → Shortcut → Spaceterm → **Copy Last Dictation**,
+  offered ready-made (`DictationIntents.swift`). Whether iOS lets that
+  action set the clipboard from the background is not known yet; its reply
+  says so. If it cannot, a two-step shortcut can: Spaceterm's **Get Last
+  Dictation**, then Shortcuts' own **Copy to Clipboard**. Pasting into the
+  field in front is beyond any shortcut: only a keyboard extension can type
+  into another app.
 
 ### On the Mac
 

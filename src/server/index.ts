@@ -17,7 +17,7 @@ import {
   resolveNonClaudeResumeId
 } from './resume-target'
 import { assertNever, unhandledVariant } from '../shared/exhaustive'
-import { routeHandsFreeWords, routeWords } from './receptionist-words'
+import { dictatedText, routeHandsFreeWords, routeWords } from './receptionist-words'
 import { AttentionKeeper, type AttentionMessage } from './hands-free-attention'
 import { hookPayloadAgentType, isForeignAgentHook } from './hook-agent'
 import { agentTypeOrDefault, type AgentType } from '../shared/agent-type'
@@ -572,6 +572,11 @@ function handsFreeWords(
       attention.dismiss()
       receptionist.heardNothing(words.interrupted)
       return
+    case 'dictate':
+      // Not for Control: the rest is kept on the device it was said on.
+      keepDictation(dictatedText(words.text) ?? '', holder)
+      receptionist.heardNothing(words.interrupted)
+      return
     case 'hear':
       // The wake word names Control: speaking to it brings it here.
       if (holder) holdReceptionistSpeaking(holder)
@@ -611,6 +616,28 @@ function stopReceptionistTalking(text: string, from: string | undefined, interru
 }
 
 const clientLabel = (client: { name?: string; id: string }) => `${client.name ?? 'client'} ${client.id.slice(0, 8)}`
+
+/**
+ * "Dictate …" said hands-free on `holder`: its words to that device, once —
+ * the first desktop window puts them on the Mac's clipboard, the phone keeps
+ * them for its Action button — which chimes (`dictation-kept`).
+ */
+function keepDictation(text: string, holder: ReceptionistHolder | undefined): void {
+  const from = holder?.label ?? 'a phone'
+  if (!text) {
+    serverLog(`[hands-free] "dictate" from ${from} with nothing after it: nothing to keep`)
+    return
+  }
+  const client = holder?.deviceId === DESKTOP_DEVICE.deviceId
+    ? [...clients].find((c) => c.name === DESKTOP_CLIENT_NAME)
+    : [...clients].find((c) => holder !== undefined && dictationOwner(c) === holder.deviceId && handsFreeStreams.has(c.id))
+  if (!client) {
+    serverLog(`[hands-free] ${text.length} chars dictated on ${from}, which is not connected: not kept`)
+    return
+  }
+  serverLog(`[hands-free] ${text.length} chars dictated on ${from}: kept by ${clientLabel(client)}`)
+  send(client.link, { type: 'dictation-kept', text })
+}
 
 /** The phone's "App update" badge builds and installs the iPhone app from here. */
 const mobileAppInstaller = new MobileAppInstaller(

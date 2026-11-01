@@ -4,6 +4,7 @@ import { playCue, playHandsFreeCue, playPendingTone, type Cue, type HandsFreeCue
 import { noteUserInterrupted } from './control-tones'
 import { nativeHandsFree, nativeHaptic, type HapticPattern } from './native-microphone'
 import { recordMobileEvent } from './mobile-events'
+import { keepNativeDictation } from './native-dictation'
 
 /**
  * Hands-free mode: start talking with "Control" and just keep going — "Control,
@@ -113,6 +114,10 @@ export interface HandsFreeLink {
   stop(): void
   /** Each of Voice Operator's messages about this device's session, as it sent it, and whether this client plays its sounds. */
   onEvent(fn: (event: Record<string, unknown>, audio: boolean) => void): () => void
+  /** Words said after "dictate" on this device, as the server hands them over: to one client, once. */
+  onDictationKept(fn: (text: string) => void): () => void
+  /** Keep them as this device does — the Mac's clipboard, the phone's last dictation. False where it cannot. */
+  keep(text: string): boolean
 }
 
 /** Everything outside this module it touches, so a test can supply its own. */
@@ -287,6 +292,15 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
     }
   })
 
+  // "Dictate …": kept here rather than sent to Control, and a sparkle says so.
+  const offKept = deps.link.onDictationKept((text) => {
+    const kept = deps.link.keep(text)
+    log(kept ? `kept ${text.length} chars dictated` : `could not keep ${text.length} chars dictated: nothing here keeps them (an app too old?)`)
+    record('dictation-kept', { chars: text.length, kept })
+    if (kept) deps.handsFreeCue('dictationKept')
+    else deps.playCue('error')
+  })
+
   setOn = (on) => {
     if (useHandsFree.getState().on === on) return
     useHandsFree.setState({ on })
@@ -297,6 +311,7 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
 
   return () => {
     offEvents()
+    offKept()
     stopTicking()
     setPending(false)
     setOn = () => {}
@@ -309,11 +324,19 @@ export function installHandsFree(deps: HandsFreeDeps): () => void {
  * The Mac's link: hands-free on the Mac's own microphone, switched through
  * the server, which holds Spaceterm's connection to Voice Operator.
  */
-export function macHandsFreeLink(api: Pick<HandsFreeApi, 'setMac' | 'onMacEvent'>): HandsFreeLink {
+export function macHandsFreeLink(
+  api: Pick<HandsFreeApi, 'setMac' | 'onMacEvent' | 'onDictationKept'>,
+  writeClipboard: (text: string) => void,
+): HandsFreeLink {
   return {
     start: () => api.setMac(true),
     stop: () => api.setMac(false),
     onEvent: (fn) => api.onMacEvent(fn),
+    onDictationKept: (fn) => api.onDictationKept(fn),
+    keep: (text) => {
+      writeClipboard(text)
+      return true
+    },
   }
 }
 
@@ -325,10 +348,11 @@ export function macHandsFreeLink(api: Pick<HandsFreeApi, 'setMac' | 'onMacEvent'
  * session on the new one.
  */
 export function phoneHandsFreeLink(
-  api: Pick<HandsFreeApi, 'openStream' | 'streamLine' | 'closeStream' | 'onStream'>,
+  api: Pick<HandsFreeApi, 'openStream' | 'streamLine' | 'closeStream' | 'onStream' | 'onDictationKept'>,
   device: () => string,
   onConnect: (fn: () => void) => () => void,
   native = nativeHandsFree,
+  keep = keepNativeDictation,
 ): HandsFreeLink & { dispose(): void } {
   let on = false
   let open = false
@@ -383,6 +407,8 @@ export function phoneHandsFreeLink(
       listeners.add(fn)
       return () => { listeners.delete(fn) }
     },
+    onDictationKept: (fn) => api.onDictationKept(fn),
+    keep,
     dispose() {
       clearTimeout(retry)
       offNative()

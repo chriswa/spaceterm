@@ -11,6 +11,7 @@ import { mobileEvents } from '../../../../mobile/mobile-events'
  * gives Control the words, and relays what it says to every window, which
  * follows it as the phone does (src/mobile/hands-free.ts): the button's
  * gauges, and the cues in the one window the server picks to play them.
+ * Words after "dictate" go on the Mac's clipboard instead, from one window.
  *
  * The record of what it heard is Voice Operator's; what is recorded here goes
  * to `~/.spaceterm/mobile-events.jsonl` beside the phone's, under the client's
@@ -34,7 +35,7 @@ export function handsFreeBlocker(macOSVersion: string | null): string | null {
 export function installDesktopHandsFree(client: Pick<ServerClient, 'mobileEvents' | 'onLifecycle'>): () => void {
   mobileEvents.setSender((events) => client.mobileEvents(events))
   const offConnect = client.onLifecycle('connect', () => mobileEvents.flush())
-  const offHandsFree = installHandsFree(realHandsFreeDeps(macHandsFreeLink(window.api.handsFree)))
+  const offHandsFree = installHandsFree(realHandsFreeDeps(macHandsFreeLink(window.api.handsFree, (text) => window.electronHost.writeClipboard(text))))
   // On across a server restart (which reloads this page) and the client relaunching.
   const offRemember = useHandsFree.subscribe((state, prev) => {
     if (state.on !== prev.on) rememberHandsFree(state.on, 'desktop')

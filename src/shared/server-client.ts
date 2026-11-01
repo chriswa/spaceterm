@@ -76,7 +76,7 @@ export type ServerEventType =
   | 'agent-meta-availability' | 'server-error'
   | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
   | 'receptionist-transcript-appended' | 'receptionist-unread' | 'receptionist-backlog' | 'receptionist-replaying' | 'receptionist-speaking'
-  | 'hands-free-event' | 'hands-free-stream'
+  | 'hands-free-event' | 'hands-free-stream' | 'dictation-kept'
   | 'location-request'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
@@ -307,6 +307,7 @@ export class ServerClient {
       case 'receptionist-speaking':
       case 'hands-free-event':
       case 'hands-free-stream':
+      case 'dictation-kept':
       case 'location-request':
         this.emit(msg)
         return

@@ -14,9 +14,11 @@ import { isControlShutdown, isControlStopTalking, isStopListening } from '../sha
  *   nothing more until "Control"; hands-free stays on.
  * - `stop-listening` — "stop listening": attention dismissed, replies as
  *   they were, and no words for Control.
+ * - `dictate` — "dictate …": not for Control at all; the rest is kept on the
+ *   device it was said on (`dictatedText`).
  * - `hear` — words for the model.
  */
-export type ReceptionistWordsRoute = 'overheard' | 'nothing' | 'away' | 'stop-talking' | 'stop-listening' | 'hear'
+export type ReceptionistWordsRoute = 'overheard' | 'nothing' | 'away' | 'stop-talking' | 'stop-listening' | 'dictate' | 'hear'
 
 /**
  * Words dictated hands-free, the wake word off. `triggered`: they began with
@@ -25,12 +27,28 @@ export type ReceptionistWordsRoute = 'overheard' | 'nothing' | 'away' | 'stop-ta
  */
 export function routeHandsFreeWords(words: { text: string; triggered: boolean }, hushed: boolean): ReceptionistWordsRoute {
   if (hushed && !words.triggered) return 'overheard'
+  if (dictatedText(words.text) !== undefined) return 'dictate'
   if (isStopListening(words.text)) return 'stop-listening'
   return routeWords(words.text)
 }
 
+/**
+ * What follows "dictate" at the start of words said hands-free, for the
+ * device to keep — the Mac's clipboard, the phone's last dictation for its
+ * Action button — or undefined when they do not start with it. "Dictate"
+ * is no wake word: it is heard only where any words would be, in the
+ * conversation window or after "Control". Its first letter is capitalised
+ * ("dictate, haha" is "Haha"), unless the word is cased oddly ("iPhone").
+ */
+export function dictatedText(text: string): string | undefined {
+  const match = /^dictate\b[\s,.!?:;…—–-]*(.*)$/is.exec(text.trim())
+  if (!match) return undefined
+  const rest = match[1].trim()
+  return /^\p{Ll}(?!\p{Lu})/u.test(rest) ? rest[0].toUpperCase() + rest.slice(1) : rest
+}
+
 /** A whole message to Control — typed, or a dictation sent from the microphone button. */
-export function routeWords(text: string): Exclude<ReceptionistWordsRoute, 'overheard' | 'stop-listening'> {
+export function routeWords(text: string): Exclude<ReceptionistWordsRoute, 'overheard' | 'stop-listening' | 'dictate'> {
   if (!text) return 'nothing'
   if (isControlShutdown(text)) return 'away'
   if (isControlStopTalking(text)) return 'stop-talking'

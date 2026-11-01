@@ -188,6 +188,7 @@ export class FakeBridge implements Api {
   private readonly transcriptAppended = new Set<(entries: ControlTranscriptEntry[]) => void>()
   private readonly handsFreeMac = new Set<(event: Record<string, unknown>, audio: boolean) => void>()
   private readonly handsFreeStream = new Set<(message: { kind: 'line'; line: string } | { kind: 'closed' }) => void>()
+  private readonly dictationKept = new Set<(text: string) => void>()
   private readonly systemMetrics = new Set<(sample: SystemMetricsSample) => void>()
   /** Mod envelope listeners, keyed by the modId they asked for. */
   private readonly modListeners = new Map<string, Set<(event: string, payload: unknown) => void>>()
@@ -300,6 +301,7 @@ export class FakeBridge implements Api {
     transcriptAppended: (entries: ControlTranscriptEntry[]): void => { for (const fn of this.transcriptAppended) fn(entries) },
     handsFreeMacEvent: (event: Record<string, unknown>, audio = true): void => { for (const fn of this.handsFreeMac) fn(event, audio) },
     handsFreeStream: (message: { kind: 'line'; line: string } | { kind: 'closed' }): void => { for (const fn of this.handsFreeStream) fn(message) },
+    dictationKept: (text: string): void => { for (const fn of this.dictationKept) fn(text) },
     systemMetrics: (sample: SystemMetricsSample): void => {
       for (const fn of this.systemMetrics) fn(sample)
     },
@@ -459,7 +461,8 @@ export class FakeBridge implements Api {
     openStream: () => this.record('handsFree.openStream'),
     streamLine: (line) => this.record('handsFree.streamLine', line),
     closeStream: () => this.record('handsFree.closeStream'),
-    onStream: (cb) => subscribe(this.handsFreeStream, cb)
+    onStream: (cb) => subscribe(this.handsFreeStream, cb),
+    onDictationKept: (cb) => subscribe(this.dictationKept, cb)
   }
 
   private readonly speechLinkListeners = new Set<Parameters<SpeechLinkApi['onLink']>[0]>()

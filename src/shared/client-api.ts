@@ -220,7 +220,8 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       openStream: () => client.handsFreeStreamOpen(),
       streamLine: (line) => client.handsFreeStreamLine(line),
       closeStream: () => client.handsFreeStreamClose(),
-      onStream: (cb) => on('hands-free-stream', (m) => cb(m.kind === 'line' && typeof m.line === 'string' ? { kind: 'line', line: m.line } : { kind: 'closed' }))
+      onStream: (cb) => on('hands-free-stream', (m) => cb(m.kind === 'line' && typeof m.line === 'string' ? { kind: 'line', line: m.line } : { kind: 'closed' })),
+      onDictationKept: (cb) => on('dictation-kept', (m) => cb(m.text))
     },
     speechLink: {
       open: () => client.speechLinkOpen(),

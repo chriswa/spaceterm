@@ -271,6 +271,11 @@ function setupIPC(): void {
     mainWindow?.webContents.setBackgroundThrottling(!headless && !held)
   })
 
+  // The renderer's navigator.clipboard needs the window focused; hands-free's "dictate …" comes while it is not.
+  ipcMain.on('clipboard:write-text', (_event, text: string) => {
+    clipboard.writeText(text)
+  })
+
   ipcMain.on('log', (_event, message: string) => {
     logger.log(message)
   })
