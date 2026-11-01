@@ -198,6 +198,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Spaceterm;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Spaceterm uses the microphone for dictating prompts.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Spaceterm tells your agents where you are when they ask for it.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Spaceterm tells your agents where you are when they ask for it, even while the app is in the background. It reads your location only when an agent asks.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;
@@ -227,6 +228,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Spaceterm;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Spaceterm uses the microphone for dictating prompts.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Spaceterm tells your agents where you are when they ask for it.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Spaceterm tells your agents where you are when they ask for it, even while the app is in the background. It reads your location only when an agent asks.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;

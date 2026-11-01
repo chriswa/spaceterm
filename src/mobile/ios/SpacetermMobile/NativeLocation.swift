@@ -1,4 +1,5 @@
 import CoreLocation
+import UIKit
 import WebKit
 
 /// The phone's position, for an agent that asked for the user's
@@ -9,7 +10,15 @@ import WebKit
 ///   app → page:  `spacetermNativeLocation.reply(id, {fix: {latitude, longitude, accuracyMeters, altitudeMeters?, timestamp}})`
 ///                or `spacetermNativeLocation.reply(id, {error})`
 ///
-/// Asks for "while using" permission the first time it is needed. Only a
+/// Asks for Always permission, in the foreground, the first time it is needed:
+/// iOS shows "while using" first and offers Always later, or asks to upgrade
+/// at once when "while using" is already granted. Always is what lets a
+/// request be answered in the background — hands-free with the screen locked,
+/// the app kept running by its audio — through the `location` background
+/// mode, with the blue location indicator shown while it looks. Updates run
+/// only from a request until its answer; nothing tracks the user between.
+/// With only "while using", a request in the background fails at once, saying
+/// to choose Always. Only a
 /// sample taken after the request is answered with: Core Location hands back
 /// its cached fix first, and a phone that has not moved can repeat it, so an
 /// older timestamp is waited past. No fresh sample in time — in the
@@ -35,7 +44,11 @@ final class NativeLocation: NSObject, WKScriptMessageHandler, CLLocationManagerD
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBest
+        manager.pausesLocationUpdatesAutomatically = false
+        manager.showsBackgroundLocationIndicator = true
     }
+
+    private var inForeground: Bool { UIApplication.shared.applicationState == .active }
 
     nonisolated func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         MainActor.assumeIsolated {
@@ -49,10 +62,22 @@ final class NativeLocation: NSObject, WKScriptMessageHandler, CLLocationManagerD
         waiting.append(id)
         switch manager.authorizationStatus {
         case .notDetermined:
-            manager.requestWhenInUseAuthorization()
+            guard inForeground else {
+                finish(error: "the Spaceterm app has not been given location permission yet; open it on the iPhone and the next request will ask")
+                return
+            }
+            manager.requestAlwaysAuthorization()
         case .denied, .restricted:
-            finish(error: "location permission is off for the Spaceterm app (Settings → Spaceterm → Location)")
+            finish(error: "location permission is off for the Spaceterm app (Settings → Spaceterm → Location → Always)")
             return
+        case .authorizedWhenInUse:
+            guard inForeground else {
+                finish(error: "the Spaceterm app may use location only while it is open, and it is in the background; set Settings → Spaceterm → Location → Always")
+                return
+            }
+            // iOS asks the upgrade question once ever; later calls do nothing.
+            manager.requestAlwaysAuthorization()
+            startLooking()
         default:
             startLooking()
         }
@@ -64,6 +89,8 @@ final class NativeLocation: NSObject, WKScriptMessageHandler, CLLocationManagerD
     private func startLooking() {
         guard lookingSince == nil else { return }
         lookingSince = Date()
+        // Needs the `location` background mode (Info.plist), or iOS traps.
+        manager.allowsBackgroundLocationUpdates = true
         manager.startUpdatingLocation()
     }
 
@@ -72,7 +99,7 @@ final class NativeLocation: NSObject, WKScriptMessageHandler, CLLocationManagerD
         let item = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, !self.waiting.isEmpty else { return }
-                self.finish(error: "the iPhone could not get a fresh position in time (it may be in the background or without a signal)")
+                self.finish(error: "the iPhone could not get a fresh position in time (perhaps no GPS or Wi-Fi signal where it is)")
             }
         }
         timeout = item
@@ -139,6 +166,7 @@ final class NativeLocation: NSObject, WKScriptMessageHandler, CLLocationManagerD
         timeout = nil
         if lookingSince != nil {
             manager.stopUpdatingLocation()
+            manager.allowsBackgroundLocationUpdates = false
             lookingSince = nil
         }
         let ids = waiting

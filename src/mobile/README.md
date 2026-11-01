@@ -835,7 +835,12 @@ looking holds the answer up to 20 s (`src/server/location-broker.ts`). Nothing
 is stored, and the server log says who was given it (`[location]`).
 
 On the phone it is the app's Core Location (`NativeLocation.swift`,
-`native-location.ts`): "while using" permission, asked the first time. Only a
+`native-location.ts`), asking for Always permission the first time, in the
+foreground. Always, with the `location` background mode, is what answers a
+request while the app is in the background (hands-free, screen locked); the
+blue location indicator shows while it looks, and updates run only from a
+request to its answer. With "while using" alone, a request in the background
+fails at once, saying to choose Always. Only a
 sample taken after the request counts; a cached one (a phone in the
 background, or one that has not moved) is waited past, and none in time is an
 error rather than a stale position. `native-location-*` lines in the event

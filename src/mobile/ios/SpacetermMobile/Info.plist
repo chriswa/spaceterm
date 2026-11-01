@@ -14,9 +14,13 @@
 	<!-- Hands-free mode keeps listening for "Control" with the screen locked,
 	     and while this phone holds Control the app stays awake to play its
 	     voice, microphone or not (NativeMicrophone.swift). -->
+	<!-- Location: an agent's request for the user's position can be answered
+	     while the app runs in the background, with Always permission
+	     (NativeLocation.swift). Only from a request to its answer. -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>location</string>
 	</array>
 	<key>CFBundleIcons</key>
 	<dict>
