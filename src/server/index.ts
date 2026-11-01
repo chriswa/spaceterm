@@ -17,7 +17,7 @@ import {
   resolveNonClaudeResumeId
 } from './resume-target'
 import { assertNever, unhandledVariant } from '../shared/exhaustive'
-import { isControlShutdown } from '../shared/control-shutdown'
+import { routeHandsFreeWords, routeWords } from './receptionist-words'
 import { hookPayloadAgentType, isForeignAgentHook } from './hook-agent'
 import { agentTypeOrDefault, type AgentType } from '../shared/agent-type'
 import { createAgentDrivers, driverFor, type AgentDriver, type AgentLaunchSpec } from './agent-drivers'
@@ -455,35 +455,59 @@ function actOnHandsFree(event: VoiceOperatorEvent, holder: ReceptionistHolder | 
     return
   }
   serverLog(`[hands-free] ${action.text.length} chars to Control from ${holder?.label ?? 'a phone'} (ended on ${String(event.reason)}${action.interrupted ? ', having cut it off' : ''})`)
-  handsFreeWords(action.text, action.interrupted, holder)
+  handsFreeWords(action, holder)
 }
+
+/**
+ * Control was told to stop talking ("stop talking", "stop conversation",
+ * "end conversation") and has not been spoken to with "Control" since:
+ * what is said in the conversation window without it is for someone else.
+ * Over as soon as any device holds Control again, however it came to.
+ */
+let receptionistHushed = false
 
 /**
  * Words dictated hands-free, the wake word off, for Control; empty when
  * nothing was caught for it, so that it stops waiting and carries on with
  * whatever the dictation stopped. `interrupted`: the dictation cut Control's
- * reply off.
+ * reply off. Speaking to Control hands-free brings it to `holder` speaking,
+ * not writing: the user is talking, so wants to hear the answer.
  */
-function handsFreeWords(text: string, interrupted: boolean, holder: ReceptionistHolder | undefined): void {
+function handsFreeWords(words: { text: string; interrupted: boolean; triggered: boolean }, holder: ReceptionistHolder | undefined): void {
   if (!receptionist) return
-  if (!text) {
-    // "Control." alone brings Control back from away, as words would — but
-    // only when nobody holds it: a misheard wake word with nothing after it
-    // must not take Control from another device.
-    if (holder && !stateManager.getReceptionistHolder()) {
-      serverLog(`[receptionist] "Control." alone from ${holder.label}: back from away`)
-      setReceptionistHolder(holder)
-    }
-    receptionist.heardNothing(interrupted)
-    return
+  const route = routeHandsFreeWords(words, receptionistHushed)
+  switch (route) {
+    case 'overheard':
+      serverLog(`[receptionist] ${words.text.length} chars from ${holder?.label ?? 'a phone'} without "Control" since "stop talking": not for Control`)
+      receptionist.heardNothing(words.interrupted)
+      return
+    case 'nothing':
+      // "Control." alone brings Control back from away, as words would — but
+      // only when nobody holds it: a misheard wake word with nothing after it
+      // must not take Control from another device.
+      if (holder && !stateManager.getReceptionistHolder()) {
+        serverLog(`[receptionist] "Control." alone from ${holder.label}: back from away`)
+        holdReceptionistSpeaking(holder)
+      }
+      receptionist.heardNothing(words.interrupted)
+      return
+    case 'away':
+      sendReceptionistAway(words.text, holder?.label, words.interrupted)
+      return
+    case 'stop-talking':
+      stopReceptionistTalking(words.text, holder?.label, words.interrupted)
+      return
+    case 'hear':
+      // The wake word names Control: speaking to it brings it here.
+      if (holder) holdReceptionistSpeaking(holder)
+      void receptionist.hear(words.text, 'spoken')
   }
-  if (isControlShutdown(text)) {
-    sendReceptionistAway(text, holder?.label, interrupted)
-    return
-  }
-  // The wake word names Control: speaking to it brings it here.
-  if (holder) setReceptionistHolder(holder)
-  void receptionist.hear(text, 'spoken')
+}
+
+/** Control to `holder`, unmuted there: hands-free speech is answered aloud. */
+function holdReceptionistSpeaking(holder: ReceptionistHolder): void {
+  setReceptionistMuted(holder.deviceId, false)
+  setReceptionistHolder(holder)
 }
 
 /**
@@ -496,6 +520,18 @@ function sendReceptionistAway(text: string, from: string | undefined, interrupte
   serverLog(`[receptionist] "${text}" from ${from ?? 'a client'}: away until "Control" again`)
   setReceptionistHolder(null)
   receptionist?.sentAway(interrupted)
+}
+
+/**
+ * "Stop talking", "stop conversation" or "end conversation"
+ * (control-shutdown.ts): away as `sendReceptionistAway` is — replies Off,
+ * the voice cut off with whatever was queued, no news spoken — with
+ * hands-free left on, and hushed: Control hears nothing more until the user
+ * says "Control", which brings it back speaking.
+ */
+function stopReceptionistTalking(text: string, from: string | undefined, interrupted: boolean): void {
+  sendReceptionistAway(text, from, interrupted)
+  receptionistHushed = true
 }
 
 /**
@@ -816,6 +852,7 @@ function receptionistHolderMessage(): ServerMessage {
  */
 function setReceptionistHolder(to: ReceptionistHolder | null): void {
   const holder = to && { deviceId: to.deviceId, label: to.label, ...(stateManager.isReceptionistMuted(to.deviceId) ? { muted: true as const } : {}) }
+  if (holder) receptionistHushed = false
   if (stateManager.setReceptionistHolder(holder)) {
     serverLog(`[receptionist] now held by ${holder?.label ?? 'nobody'}`)
     broadcastToAll(receptionistHolderMessage())
@@ -2272,14 +2309,15 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         remoteDictation.delivered(dictationOwner(client))
         break
       }
+      const route = routeWords(text)
       // A dictation for Control caught nothing for it: whatever its start stopped carries on.
-      if (!text) {
+      if (route === 'nothing') {
         receptionist.heardNothing(false)
         remoteDictation.delivered(dictationOwner(client))
         break
       }
-      if (isControlShutdown(text)) {
-        sendReceptionistAway(text, client.device?.label, false)
+      if (route === 'away' || route === 'stop-talking') {
+        (route === 'away' ? sendReceptionistAway : stopReceptionistTalking)(text, client.device?.label, false)
         remoteDictation.delivered(dictationOwner(client))
         break
       }

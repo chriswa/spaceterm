@@ -136,11 +136,18 @@ describe('VoiceOperatorHandsFree', () => {
 describe('handsFreeAction', () => {
   it('gives Control the words, the wake word off, and stops it on a cut-in', () => {
     expect(handsFreeAction({ type: 'transcript', text: 'Control, run the tests.', trigger: 'control', interrupted: false }))
-      .toEqual({ kind: 'words', text: 'run the tests.', interrupted: false })
+      .toEqual({ kind: 'words', text: 'run the tests.', interrupted: false, triggered: true })
     expect(handsFreeAction({ type: 'transcript', text: 'Control.', trigger: 'control', interrupted: true }))
-      .toEqual({ kind: 'words', text: '', interrupted: true })
+      .toEqual({ kind: 'words', text: '', interrupted: true, triggered: true })
     expect(handsFreeAction({ type: 'cut-in', msAgo: 312.4 })).toEqual({ kind: 'cut-in', msAgo: 312 })
     expect(handsFreeAction({ type: 'state', phase: 'listening' })).toBeUndefined()
+  })
+
+  it('says whether the words began with the wake word or were said in the conversation window without it', () => {
+    expect(handsFreeAction({ type: 'transcript', text: 'And the tests?', trigger: 'control', interrupted: false }))
+      .toEqual({ kind: 'words', text: 'And the tests?', interrupted: false, triggered: false })
+    expect(handsFreeAction({ type: 'transcript', text: '', trigger: 'control', interrupted: false }))
+      .toEqual({ kind: 'words', text: '', interrupted: false, triggered: false })
   })
 })
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isControlShutdown, wakeFreeShutdown } from './control-shutdown'
+import { isControlShutdown, isControlStopTalking, wakeFreeShutdown } from './control-shutdown'
 
 describe('isControlShutdown', () => {
   it('matches "Control, shutdown", however dictation writes it', () => {
@@ -49,6 +49,27 @@ describe('wakeFreeShutdown', () => {
   it('is nothing else — not "shutdown", which needs "Control" first', () => {
     for (const heard of ['', 'Let', 'Control.', 'Shutdown.', 'Control, let me turn this off.', 'Let me think', 'Let us turn', 'Let me turn this off now', 'Please let me']) {
       expect(wakeFreeShutdown(heard), heard).toBeUndefined()
+    }
+  })
+})
+
+describe('isControlStopTalking', () => {
+  it('matches "stop talking", "stop conversation" and "end conversation", with or without "Control"', () => {
+    for (const text of [
+      'Stop talking.', 'stop talking', 'Control, stop talking.', 'STOP TALKING!', 'Control — stop talking',
+      'Stop conversation.', 'Control, stop conversation', 'Stop the conversation.',
+      'End conversation.', 'Control, end conversation!', 'End the conversation.',
+    ]) {
+      expect(isControlStopTalking(text), text).toBe(true)
+    }
+  })
+
+  it('never matches inside a longer request, nor "stop listening" or a shutdown', () => {
+    for (const text of [
+      'Tell Kevin to stop talking.', 'Stop talking to Kevin.', 'End conversation with Ruth.', 'Stop.', 'Control.', '',
+      'Stop listening.', 'Control, shutdown.', 'Let me turn this off.', 'Conversation ended.',
+    ]) {
+      expect(isControlStopTalking(text), text).toBe(false)
     }
   })
 })

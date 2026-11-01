@@ -514,9 +514,9 @@ const EMPTY_INTERRUPTION = "The user cut you off, but nothing they said was caug
 const STOPPED_FOR_NOTHING = 'The user started talking while you were working on your reply, so you stopped; nothing they said was for you. Carry on from where you stopped.'
 /** The note for a turn stopped before it spoke so that what waited unread could be read aloud: see `readAloud`. */
 const READ_TO_MID_TURN = 'The user had their unread replies read aloud to them while you were working on your reply, so you stopped. Carry on from where you stopped.'
-/** Told with the next message after "let me turn this off" or "Control, shutdown": see `sentAway`. */
-const SENT_AWAY = 'The user said a fixed phrase that sends you away ("let me turn this off" or "Control, shutdown"), handled without you: someone near them needs their attention, ' +
-  'so they sent you away, as choosing Off does, until they next say "Control". It was not a request for you to act on.'
+/** Told with the next message after "let me turn this off", "Control, shutdown" or "stop talking": see `sentAway`. */
+const SENT_AWAY = 'The user said a fixed phrase that sends you away ("let me turn this off", "Control, shutdown", "stop talking", "stop conversation" or "end conversation"), handled without you: ' +
+  'they want you quiet, often because someone near them needs their attention, so they sent you away, as choosing Off does, until they next say "Control". It was not a request for you to act on.'
 /** Told instead when the phrase stopped a turn: see `resumeIfStopped`. */
 const SENT_AWAY_MID_TURN = `${SENT_AWAY} It stopped you; carry on from where you stopped, away.`
 /** What a turn stopped for the user is told as it carries on, by what stopped: see `resumeIfStopped`. */
@@ -822,7 +822,7 @@ export class Receptionist {
 
   /**
    * The user said or sent a phrase that sends Control away — "let me turn
-   * this off", "Control, shutdown" (control-shutdown.ts): the
+   * this off", "Control, shutdown", "stop talking" (control-shutdown.ts): the
    * caller has let go of Control, and the model is told why rather than given
    * the words. Whatever the user's talking stopped carries on, away — its
    * actions still taken, its words for when they are back — as it would after

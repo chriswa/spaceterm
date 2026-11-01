@@ -39,6 +39,26 @@ export function wakeFreeShutdown(heard: string): 'whole' | 'start' | undefined {
   return words.length >= 2 && sameWords(words, LET_ME_TURN_THIS_OFF.slice(0, words.length)) ? 'start' : undefined
 }
 
+/** The phrases that turn Control's replies off and leave hands-free listening for "Control": see `isControlStopTalking`. */
+export const STOP_TALKING_PHRASES = [['stop', 'talking'], ['stop', 'conversation'], ['end', 'conversation']]
+
+/**
+ * "Stop talking", "stop conversation" or "end conversation" — all three the
+ * same: Control's replies go Off at once, without asking the model, its voice
+ * stops with anything queued, and it hears nothing more until the user next
+ * says "Control", which brings it back speaking on that device. Unlike
+ * `isControlShutdown`, hands-free stays on: it is the user telling Control to
+ * be quiet, not putting the phone away. "The conversation" counts as
+ * "conversation". Matched as `isControlShutdown` is: the whole of what was
+ * said or sent, with or without "Control" first.
+ */
+export function isControlStopTalking(text: string): boolean {
+  const words = phraseWords(text)
+  if (words[0] === 'control') words.shift()
+  if (words[1] === 'the') words.splice(1, 1)
+  return STOP_TALKING_PHRASES.some((phrase) => sameWords(words, phrase))
+}
+
 /** Lowercased words, punctuation dropped, "lemme" as dictation sometimes writes "let me". */
 function phraseWords(text: string): string[] {
   return text.toLowerCase().replace(/[^\p{L}\s]/gu, ' ').split(/\s+/).filter(Boolean).flatMap((w) => w === 'lemme' ? ['let', 'me'] : [w])

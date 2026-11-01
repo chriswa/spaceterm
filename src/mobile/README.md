@@ -568,6 +568,18 @@ Spaceterm is its client (`hands-free.ts`):
   15 s. **"Stop listening"** (or "Control, stop listening") closes it at once,
   as if the 15 s had run out, and Control gets no words; hands-free stays on,
   and the sad tune stays quiet until you say "Control" again.
+- **"Stop talking"** — or "stop conversation", or "end conversation", with or
+  without "Control" first — turns Control's replies Off at once (from Hear,
+  Read or Off), cutting its voice off with anything queued, so no reply or
+  agent news is spoken. Hands-free stays on, and Control hears nothing said
+  without "Control" until you say it again, so you can talk to people in the
+  room; the server drops those words (`receptionist-words.ts`). Voice
+  Operator's window is not closed by it, so its dictation tones can still
+  sound for them until the window runs out. The next "Control, …" is heard,
+  and brings Control back to that device on Hear.
+- **Speaking to Control hands-free answers aloud**: words heard hands-free
+  bring Control to that device on Hear, unmuting it there if it was on Read.
+  A message sent from the microphone button or typed leaves Read as it was.
 - **Interrupting Control.** Anyone speaking over Control's voice turns it
   down at once; once Voice Operator says it was for Control, it is cut off
   (`cut-in`), counted to when you began talking. If nothing is caught after

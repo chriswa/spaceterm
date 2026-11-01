@@ -193,8 +193,12 @@ export class VoiceOperatorHandsFree {
 
 /** What the server does with one of Voice Operator's messages, for Control. */
 export type HandsFreeAction =
-  /** The words said, the wake word off; empty when nothing was caught for Control. */
-  | { kind: 'words'; text: string; interrupted: boolean }
+  /**
+   * The words said, the wake word off; empty when nothing was caught for
+   * Control. `triggered`: they began with the wake word, rather than being
+   * said in the conversation window without it.
+   */
+  | { kind: 'words'; text: string; interrupted: boolean; triggered: boolean }
   /** The user began talking over Control `msAgo` ago, and it was for Control. */
   | { kind: 'cut-in'; msAgo: number }
 
@@ -202,7 +206,9 @@ export type HandsFreeAction =
 export function handsFreeAction(event: VoiceOperatorEvent): HandsFreeAction | undefined {
   if (event.type === 'transcript') {
     const trigger = typeof event.trigger === 'string' ? event.trigger : TRIGGER_WORD
-    return { kind: 'words', text: cleanHandsFreeText(String(event.text ?? ''), trigger), interrupted: event.interrupted === true }
+    const said = String(event.text ?? '').trim()
+    const text = cleanHandsFreeText(said, trigger)
+    return { kind: 'words', text, interrupted: event.interrupted === true, triggered: text !== said }
   }
   if (event.type === 'cut-in') return { kind: 'cut-in', msAgo: typeof event.msAgo === 'number' ? Math.round(event.msAgo) : 0 }
   return undefined
