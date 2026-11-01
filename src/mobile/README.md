@@ -847,6 +847,16 @@ install, so it installs only on phones the team's profile lists — one paired
 as above already is. Each build has a new secret, and nothing is served
 without it, since the app carries this Mac's pairing tokens.
 
+What iOS fetches says how the install is going, and the phone hears it in
+fixed words spoken straight through Voice Operator, not by Control
+(`src/server/install-announcer.ts`): the manifest means iOS's dialog is up
+("tap Install"); the app itself means Install was pressed. iOS installs the
+download only once the running app has ended, and this one keeps running for
+its microphone, so after saying it is closing the server sends
+`mobile-app-quit` and the app ends itself (`NativeEvents.swift`, `app-quit` in
+the event record). An app cannot relaunch itself: the words say to open it
+again from the home screen.
+
 Control can do the same install when asked (its `install_phone_app`): the
 server runs it, and away from the Mac's network sends every connected phone
 the link to open (`mobile-app-install-link`). The phone also tells the server

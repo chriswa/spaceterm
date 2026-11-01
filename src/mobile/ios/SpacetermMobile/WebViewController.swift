@@ -52,8 +52,11 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         // `window.webkit.messageHandlers.nativeMicrophone` is also how the
         // page knows it can hold a microphone without AirPods.
         config.userContentController.add(microphone, name: "nativeMicrophone")
-        // The page's word that the server has the app's events, so it can forget them.
+        // The page's word that the server has the app's events, so it can forget
+        // them — and, for an install from a download, to end the app.
         config.userContentController.add(events, name: "nativeEvents")
+        config.userContentController.addUserScript(WKUserScript(
+            source: "window.spacetermCanQuit = true", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // Where the user is, for an agent that asked (native-location.ts).
         config.userContentController.add(location, name: "nativeLocation")
 

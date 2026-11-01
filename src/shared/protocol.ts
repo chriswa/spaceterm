@@ -1512,6 +1512,15 @@ export interface MobileAppInstallLinkMessage {
 }
 
 /**
+ * Unsolicited, to a phone installing the app as a download: Install was
+ * pressed, and iOS installs it only once this app has ended — so end it. Sent
+ * after the phone has been told so aloud (`src/server/install-announcer.ts`).
+ */
+export interface MobileAppQuitMessage {
+  type: 'mobile-app-quit'
+}
+
+/**
  * Unsolicited broadcast: the server now serves a new build of the mobile web
  * app. A phone checks whether that leaves its page behind
  * (src/mobile/update-check.ts) rather than waiting for its next look.
@@ -2338,6 +2347,7 @@ export type ServerMessage =
   | MobileAppInstallResultMessage
   | MobileBuildChangedMessage
   | MobileAppInstallLinkMessage
+  | MobileAppQuitMessage
   | ReloadPageMessage
   | ServerRestartingMessage
   | LocationRequestMessage

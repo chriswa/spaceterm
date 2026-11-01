@@ -37,6 +37,7 @@ describe('MobileAppInstaller, for a phone away from the Mac', () => {
   /** A script whose phone is out of reach, and whose download builds as `download` says. */
   function awayInstaller(download: { code: number; output: string } | ((secret: string) => { code: number; output: string })) {
     const calls: string[][] = []
+    const stages: string[] = []
     const installer = new MobileAppInstaller({
       downloadDir: '/download',
       run: async (args) => {
@@ -44,9 +45,34 @@ describe('MobileAppInstaller, for a phone away from the Mac', () => {
         if (args[0] !== '--over-the-air') return { code: 2, output: "Chris's iPhone isn't reachable from this Mac.\n" }
         return typeof download === 'function' ? download(args[1]) : download
       },
-    })
-    return { installer, calls }
+    }, (stage) => stages.push(stage))
+    return { installer, calls, stages }
   }
+
+  it('tells what the phone fetches: the dialog is up, then Install was pressed — once each a download', async () => {
+    const secrets: string[] = []
+    const { installer, stages } = awayInstaller((s) => {
+      secrets.push(s)
+      return { code: 0, output: MANIFEST.replace('SECRET', s) }
+    })
+    await installer.install()
+    const fetch = (file: string) => installer.downloadFile(`/install/${secrets.at(-1)}/${file}`)
+    fetch('manifest.plist')
+    expect(stages).toEqual(['asking'])
+    fetch('icon.png')
+    fetch('SpacetermMobile.ipa')
+    fetch('SpacetermMobile.ipa')
+    fetch('manifest.plist')
+    expect(stages).toEqual(['asking', 'installing'])
+    // A guess at the path is no stage.
+    installer.downloadFile('/install/wrong/SpacetermMobile.ipa')
+    expect(stages).toEqual(['asking', 'installing'])
+
+    // The next download starts over.
+    await installer.install()
+    fetch('manifest.plist')
+    expect(stages).toEqual(['asking', 'installing', 'asking'])
+  })
 
   it('builds a download and answers with the link that installs it', async () => {
     let secret = ''

@@ -28,7 +28,7 @@ import { useDictationSession } from './dictation-session'
 import { thinkingCueScope } from '@/lib/thinking-cue'
 import { phoneDevice } from './device'
 import { mobileEvents, recordMobileEvent } from './mobile-events'
-import { installLifecycleEvents, installNativeEventBridge } from './lifecycle-events'
+import { installLifecycleEvents, installNativeEventBridge, quitApp } from './lifecycle-events'
 import { recoverCameraAfterKill } from './crash-camera'
 import '@/styles/index.css'
 import './mobile.css'
@@ -110,6 +110,13 @@ if (!token) {
     client.on('mobile-app-install-link', ({ installUrl }) => {
       window.api.log('[update] install: Control sent the over-the-air download')
       window.location.href = installUrl
+    })
+    // Install was pressed on that download, and has been said aloud: iOS
+    // installs it only once this app has ended (src/server/install-announcer.ts).
+    client.on('mobile-app-quit', () => {
+      window.api.log(quitApp('install')
+        ? '[update] install: Install was pressed; ending the app so iOS installs the download'
+        : '[update] install: Install was pressed, but this app cannot end itself; the user closes it')
     })
     recordMobileEvent('server', { connected: true })
     client.onLifecycle('disconnect', () => recordMobileEvent('server', { connected: false }))

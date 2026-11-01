@@ -50,6 +50,7 @@ import { UsageTracker } from './usage-tracker'
 import { SystemStatsWatcher } from './system-stats'
 import { SpeechLinks } from './voice-operator-speech'
 import { MobileAppInstaller, realMobileInstallDeps } from './mobile-install'
+import { announceInstallStage, type DownloadStage } from './install-announcer'
 import { readAgentMemoryBytes } from './agent-memory'
 import type { ClientLink } from './client-link'
 import { startWebGateway, loadOrCreateWebToken, DEFAULT_WEB_PORT } from './web-gateway'
@@ -542,7 +543,10 @@ const dictationOwner = (client: { device?: ClientDevice; id: string }) => client
 const clientLabel = (client: { name?: string; id: string }) => `${client.name ?? 'client'} ${client.id.slice(0, 8)}`
 
 /** The phone's "App update" badge builds and installs the iPhone app from here. */
-const mobileAppInstaller = new MobileAppInstaller(realMobileInstallDeps(path.resolve(__dirname, '..', '..')))
+const mobileAppInstaller = new MobileAppInstaller(
+  realMobileInstallDeps(path.resolve(__dirname, '..', '..')),
+  (stage) => announceDownloadStage(stage),
+)
 
 /** Voice Operator's local API: speech on the Mac and on the phone, and the rest. */
 const speechVoiceOperator = new VoiceOperator()
@@ -820,8 +824,43 @@ async function installPhoneAppForControl(): Promise<PhoneInstallResult> {
   const phones = [...clients].filter((client) =>
     client.name === MOBILE_CLIENT_NAME && (client.protocolVersion ?? 0) >= INSTALL_LINK_PROTOCOL_VERSION)
   for (const phone of phones) send(phone.link, { type: 'mobile-app-install-link', installUrl: outcome.installUrl })
+  offerDownload(phones)
   serverLog(`[mobile-install] Sent the download link to ${phones.length} phone(s), for Control`)
   return { result: 'download', sentToPhone: phones.length > 0 }
+}
+
+/**
+ * The devices the current over-the-air download was offered to: they hear how
+ * it goes, and end their app once Install is pressed (install-announcer.ts).
+ * By device rather than connection, for a phone that reconnects meanwhile.
+ */
+let downloadOfferedTo = new Set<string>()
+
+function offerDownload(phones: ClientConnection[]): void {
+  downloadOfferedTo = new Set(phones.map((phone) => phone.device?.id ?? phone.id))
+}
+
+/** Ending its app once Install is pressed on a download (`mobile-app-quit`) was new in v32. */
+const APP_QUIT_PROTOCOL_VERSION = 32
+
+/** iOS has shown its install dialog, or Install was pressed: say so on the phones, and end the app. */
+function announceDownloadStage(stage: DownloadStage): void {
+  const byDevice = new Map<string, ClientConnection>()
+  for (const client of clients) {
+    const key = client.device?.id ?? client.id
+    if (downloadOfferedTo.has(key)) byDevice.set(key, client)
+  }
+  const phones = [...byDevice.values()].map((client) => ({
+    label: client.device?.label ?? client.id,
+    speech: phoneSpeech(client),
+    quit: () => {
+      if ((client.protocolVersion ?? 0) < APP_QUIT_PROTOCOL_VERSION) return false
+      send(client.link, { type: 'mobile-app-quit' })
+      return true
+    },
+  }))
+  if (!phones.length) serverLog(`[mobile-install] ${stage}, but no phone it was offered to is connected`)
+  void announceInstallStage(stage, phones, { log: serverLog })
 }
 
 /** The connections from the device holding Control, newest last. */
@@ -2124,13 +2163,16 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'mobile-app-install': {
-      void mobileAppInstaller.install().then((outcome) => send(client.link, {
-        type: 'mobile-app-install-result',
-        seq: msg.seq,
-        ok: outcome.ok,
-        ...(outcome.ok ? {} : { message: outcome.message }),
-        ...('installUrl' in outcome ? { installUrl: outcome.installUrl } : {}),
-      }))
+      void mobileAppInstaller.install().then((outcome) => {
+        if ('installUrl' in outcome) offerDownload([client])
+        send(client.link, {
+          type: 'mobile-app-install-result',
+          seq: msg.seq,
+          ok: outcome.ok,
+          ...(outcome.ok ? {} : { message: outcome.message }),
+          ...('installUrl' in outcome ? { installUrl: outcome.installUrl } : {}),
+        })
+      })
       break
     }
 

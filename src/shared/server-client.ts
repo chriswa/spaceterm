@@ -72,7 +72,7 @@ export type ServerEventType =
   | 'peer-connected' | 'peer-disconnected' | 'peer-camera-bounds'
   | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'restart-required' | 'usage-report'
   | 'system-stats'
-  | 'speech-link' | 'mobile-build-changed' | 'mobile-app-install-link' | 'reload-page' | 'server-restarting'
+  | 'speech-link' | 'mobile-build-changed' | 'mobile-app-install-link' | 'mobile-app-quit' | 'reload-page' | 'server-restarting'
   | 'agent-meta-availability' | 'server-error'
   | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
   | 'receptionist-transcript-appended' | 'receptionist-unread' | 'receptionist-backlog' | 'receptionist-replaying' | 'receptionist-speaking'
@@ -291,6 +291,7 @@ export class ServerClient {
       case 'speech-link':
       case 'mobile-build-changed':
       case 'mobile-app-install-link':
+      case 'mobile-app-quit':
       case 'reload-page':
       case 'server-restarting':
       case 'agent-meta-availability':

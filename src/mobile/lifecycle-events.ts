@@ -37,6 +37,8 @@ declare global {
   interface Window {
     /** What the iPhone app calls with its own events; returns true once taken. */
     spacetermNativeEvents?: { push(events: NativeEvent[]): boolean }
+    /** Set by an app that ends itself when asked (`quitApp`); one built before could not. */
+    spacetermCanQuit?: boolean
   }
 }
 
@@ -70,6 +72,18 @@ function writeNumber(key: string, value: number): void {
  * are acknowledged again: the last acknowledgement may have died with the
  * page that sent it.
  */
+/**
+ * End the app (NativeEvents.swift, `quit`): iOS installs a downloaded app only
+ * once the running one has ended. False outside the app, or in one built
+ * before it could.
+ */
+export function quitApp(reason: string): boolean {
+  const post = window.webkit?.messageHandlers?.nativeEvents
+  if (!post || !window.spacetermCanQuit) return false
+  post.postMessage({ action: 'quit', reason })
+  return true
+}
+
 export function installNativeEventBridge(): void {
   const post = window.webkit?.messageHandlers?.nativeEvents
   const ack = (through: number) => post?.postMessage({ action: 'ack', through })

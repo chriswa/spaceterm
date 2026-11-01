@@ -141,11 +141,27 @@ final class NativeEvents: NSObject, WKScriptMessageHandler {
         let body = message.body as? [String: Any]
         let through = (body?["through"] as? NSNumber)?.intValue
         MainActor.assumeIsolated {
+            if body?["action"] as? String == "quit" {
+                quit(reason: body?["reason"] as? String ?? "")
+                return
+            }
             guard body?["action"] as? String == "ack", let through else { return }
             let before = queue.count
             queue.removeAll { Self.seq($0) <= through }
             if queue.count != before { save() }
         }
+    }
+
+    /// End the app, when the page asks: iOS installs a downloaded app only
+    /// once the running one has ended, and this one keeps running in the
+    /// background for its microphone. Recorded first — the event waits in its
+    /// file for the next launch's page — and the run marked as ended on purpose.
+    private func quit(reason: String) {
+        record("app-quit", ["reason": reason])
+        setRunState("quit")
+        markAlive()
+        UserDefaults.standard.synchronize()
+        exit(0)
     }
 
     private static func seq(_ event: [String: Any]) -> Int {

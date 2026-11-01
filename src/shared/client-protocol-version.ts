@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 31
+export const CLIENT_PROTOCOL_VERSION = 32
 
 /**
  * Oldest client protocol this build still serves.
@@ -140,5 +140,9 @@ export const CLIENT_PROTOCOL_VERSION = 31
  * Control is never told a refresh is waiting; and it is never sent the
  * download link when Control installs the app (`mobile-app-install-link`). It
  * loses nothing else.
+ *
+ * v31 cannot end its app once Install is pressed on a download
+ * (`mobile-app-quit`), so it is never asked; the user closes it. It loses
+ * nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

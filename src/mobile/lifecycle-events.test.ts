@@ -55,3 +55,24 @@ describe('the app’s events', () => {
     expect(first.posted).toEqual([{ action: 'ack', through: 2 }])
   })
 })
+
+describe('quitApp', () => {
+  it('asks the app to end itself, only where the app says it can', async () => {
+    const { posted } = await setup()
+    const { quitApp } = await import('./lifecycle-events')
+    delete window.spacetermCanQuit
+    expect(quitApp('install')).toBe(false)
+    expect(posted).toEqual([])
+    window.spacetermCanQuit = true
+    expect(quitApp('install')).toBe(true)
+    expect(posted).toEqual([{ action: 'quit', reason: 'install' }])
+    delete window.spacetermCanQuit
+  })
+
+  it('is not there in a browser', async () => {
+    const { quitApp } = await import('./lifecycle-events')
+    window.spacetermCanQuit = true
+    expect(quitApp('install')).toBe(false)
+    delete window.spacetermCanQuit
+  })
+})

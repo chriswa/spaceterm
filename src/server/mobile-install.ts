@@ -2,6 +2,7 @@ import { spawn } from 'child_process'
 import { randomBytes } from 'crypto'
 import * as path from 'path'
 import { serverLog } from './server-log'
+import type { DownloadStage } from './install-announcer'
 
 /**
  * Build and install the iPhone app on the paired phone, when the phone asks —
@@ -18,6 +19,7 @@ import { serverLog } from './server-log'
  * download instead, served by the web gateway under a fresh secret
  * (`downloadFile`), and answers with the `itms-services:` link that has iOS
  * fetch and install it. The phone opens the link; iOS asks before installing.
+ * What iOS fetches says how that is going (`onStage`; install-announcer.ts).
  */
 
 export type InstallOutcome =
@@ -31,6 +33,15 @@ const PHONE_UNREACHABLE = 2
 
 /** What the download is made of, as install.sh --over-the-air leaves it. */
 const DOWNLOAD_FILES = ['manifest.plist', 'SpacetermMobile.ipa', 'icon.png'] as const
+
+/**
+ * What a fetch of each file says of the phone: iOS fetches the manifest to
+ * draw its install dialog, and the app only once Install is pressed.
+ */
+const STAGE_OF: Partial<Record<(typeof DOWNLOAD_FILES)[number], DownloadStage>> = {
+  'manifest.plist': 'asking',
+  'SpacetermMobile.ipa': 'installing',
+}
 
 export interface MobileInstallDeps {
   /** Run the install script with these arguments; resolves with its exit status and combined output. */
@@ -77,8 +88,14 @@ export class MobileAppInstaller {
    * to anyone who has not been handed the link; each build has a new secret.
    */
   private downloadSecret: string | null = null
+  /** The current download's stages already passed: iOS fetches some files more than once. */
+  private readonly stagesSeen = new Set<DownloadStage>()
 
-  constructor(private readonly deps: MobileInstallDeps) {}
+  constructor(
+    private readonly deps: MobileInstallDeps,
+    /** Told once per download as the phone reaches each stage. */
+    private readonly onStage: (stage: DownloadStage) => void = () => {},
+  ) {}
 
   /** Install, or join the install already under way: one build at a time. */
   install(): Promise<InstallOutcome> {
@@ -94,7 +111,14 @@ export class MobileAppInstaller {
     const match = /^\/install\/([^/]+)\/([^/?]+)$/.exec(urlPath.split('?')[0])
     if (!match || !this.downloadSecret || match[1] !== this.downloadSecret) return null
     const name = DOWNLOAD_FILES.find((f) => f === match[2])
-    return name ? path.join(this.deps.downloadDir, name) : null
+    if (!name) return null
+    const stage = STAGE_OF[name]
+    if (stage && !this.stagesSeen.has(stage)) {
+      this.stagesSeen.add(stage)
+      serverLog(`[mobile-install] The phone fetched the ${name}: ${stage}`)
+      this.onStage(stage)
+    }
+    return path.join(this.deps.downloadDir, name)
   }
 
   private async runOnce(): Promise<InstallOutcome> {
@@ -127,6 +151,7 @@ export class MobileAppInstaller {
       return { ok: false, message: failureMessage(output) }
     }
     this.downloadSecret = secret
+    this.stagesSeen.clear()
     serverLog(`[mobile-install] Built a download in ${seconds}s; the phone installs it from the link`)
     return {
       ok: false,
