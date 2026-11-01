@@ -835,9 +835,11 @@ looking holds the answer up to 20 s (`src/server/location-broker.ts`). Nothing
 is stored, and the server log says who was given it (`[location]`).
 
 On the phone it is the app's Core Location (`NativeLocation.swift`,
-`native-location.ts`): "while using" permission, asked the first time, and in
-the background the last fix iOS has (under half an hour old), with its age.
-`native-location-*` lines in the event record show each request. In Safari,
+`native-location.ts`): "while using" permission, asked the first time. Only a
+sample taken after the request counts; a cached one (a phone in the
+background, or one that has not moved) is waited past, and none in time is an
+error rather than a stale position. `native-location-*` lines in the event
+record show each request. In Safari,
 or an app built before this, it is the browser's `navigator.geolocation`.
 
 ## Deliberately not done (yet)

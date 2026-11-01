@@ -3,17 +3,18 @@ import WebKit
 
 /// The phone's position, for an agent that asked for the user's
 /// (src/mobile/native-location.ts). Core Location rather than the web view's
-/// `navigator.geolocation`, which asks again on every page load and has no
-/// last-known fix to fall back on in the background.
+/// `navigator.geolocation`, which asks again on every page load.
 ///
 ///   page → app:  `{id}`
 ///   app → page:  `spacetermNativeLocation.reply(id, {fix: {latitude, longitude, accuracyMeters, altitudeMeters?, timestamp}})`
 ///                or `spacetermNativeLocation.reply(id, {error})`
 ///
-/// Asks for "while using" permission the first time it is needed. A request
-/// made while the app is in the background (hands-free with the screen
-/// locked) usually cannot get a fresh fix, so it falls back on the last one
-/// iOS has, whose `timestamp` says how old it is.
+/// Asks for "while using" permission the first time it is needed. Only a
+/// sample taken after the request is answered with: Core Location hands back
+/// its cached fix first, and a phone that has not moved can repeat it, so an
+/// older timestamp is waited past. No fresh sample in time — in the
+/// background, say, with the screen locked — is an error, never the last
+/// known position: an agent told a stale place as current would be misled.
 @MainActor
 final class NativeLocation: NSObject, WKScriptMessageHandler, CLLocationManagerDelegate {
     weak var webView: WKWebView?
@@ -24,8 +25,10 @@ final class NativeLocation: NSObject, WKScriptMessageHandler, CLLocationManagerD
     private var timeout: DispatchWorkItem?
     /// Under the page's own limit (NATIVE_TIMEOUT_MS), so it hears why.
     private static let timeoutSeconds = 14.0
-    /// A last-known fix older than this is not offered when a fresh one fails.
-    private static let staleSeconds = 30.0 * 60
+    /// When the current look began; a sample stamped before it is not fresh.
+    private var lookingSince: Date?
+    /// Clock slack between a sample's stamp and the request.
+    private static let freshnessSlackSeconds = 1.0
 
     init(events: NativeEvents) {
         self.events = events
@@ -51,9 +54,17 @@ final class NativeLocation: NSObject, WKScriptMessageHandler, CLLocationManagerD
             finish(error: "location permission is off for the Spaceterm app (Settings → Spaceterm → Location)")
             return
         default:
-            manager.requestLocation()
+            startLooking()
         }
         armTimeout()
+    }
+
+    /// Continuous updates rather than `requestLocation`, which delivers one
+    /// sample — possibly the cached one — and stops.
+    private func startLooking() {
+        guard lookingSince == nil else { return }
+        lookingSince = Date()
+        manager.startUpdatingLocation()
     }
 
     private func armTimeout() {
@@ -61,7 +72,7 @@ final class NativeLocation: NSObject, WKScriptMessageHandler, CLLocationManagerD
         let item = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, !self.waiting.isEmpty else { return }
-                self.finishWithLastKnown(or: "the iPhone could not find its position in time")
+                self.finish(error: "the iPhone could not get a fresh position in time (it may be in the background or without a signal)")
             }
         }
         timeout = item
@@ -74,30 +85,35 @@ final class NativeLocation: NSObject, WKScriptMessageHandler, CLLocationManagerD
             switch manager.authorizationStatus {
             case .notDetermined: return
             case .denied, .restricted: finish(error: "location permission was denied on the iPhone")
-            default: manager.requestLocation()
+            default: startLooking()
             }
         }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last else { return }
-        MainActor.assumeIsolated { finish(fix: location) }
+        MainActor.assumeIsolated {
+            guard let since = lookingSince else { return }
+            let earliest = since.addingTimeInterval(-Self.freshnessSlackSeconds)
+            guard let fresh = locations.last(where: { $0.timestamp >= earliest && $0.horizontalAccuracy >= 0 }) else {
+                if let stale = locations.last {
+                    events.record("native-location-stale-sample", ["age": -stale.timestamp.timeIntervalSinceNow])
+                }
+                return
+            }
+            finish(fix: fresh)
+        }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         let reason = error.localizedDescription
+        // Core Location's word that it has nothing yet and is still trying.
+        let stillTrying = (error as? CLError)?.code == .locationUnknown
         MainActor.assumeIsolated {
-            events.record("native-location-failed", ["error": reason])
-            finishWithLastKnown(or: "the iPhone could not find its position: \(reason)")
-        }
-    }
-
-    /// The last fix iOS has, when there is a recent one; otherwise the error.
-    private func finishWithLastKnown(or error: String) {
-        if let last = manager.location, -last.timestamp.timeIntervalSinceNow < Self.staleSeconds {
-            finish(fix: last)
-        } else {
-            finish(error: error)
+            if stillTrying {
+                events.record("native-location-still-looking", ["error": reason])
+                return
+            }
+            finish(error: "the iPhone could not find its position: \(reason)")
         }
     }
 
@@ -121,6 +137,10 @@ final class NativeLocation: NSObject, WKScriptMessageHandler, CLLocationManagerD
     private func reply(_ answer: [String: Any]) {
         timeout?.cancel()
         timeout = nil
+        if lookingSince != nil {
+            manager.stopUpdatingLocation()
+            lookingSince = nil
+        }
         let ids = waiting
         waiting.removeAll()
         guard let data = try? JSONSerialization.data(withJSONObject: answer),

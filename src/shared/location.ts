@@ -20,8 +20,19 @@ export interface LocationFix {
 
 /** How long a client spends finding a fix before it answers with why it could not. */
 export const CLIENT_LOCATION_TIMEOUT_MS = 15_000
-/** A reading this recent is good enough, which spares the GPS a cold start. */
-export const LOCATION_MAX_AGE_MS = 60_000
+/** Clock slack allowed between a reading's stamp and the request it answers. */
+const FRESHNESS_SLACK_MS = 1_000
+
+/**
+ * Whether a reading was taken for this request rather than cached before it.
+ * A stale position passed off as current would mislead an agent, so a
+ * reading that fails this is an error, not an answer.
+ */
+export function isFreshFix(fix: LocationFix, askedAt: number): boolean {
+  return fix.timestamp >= askedAt - FRESHNESS_SLACK_MS
+}
+
+const STALE_ERROR = 'this device could only give a cached position, not a fresh one'
 
 export function isLocationFix(value: unknown): value is LocationFix {
   if (typeof value !== 'object' || value === null) return false
@@ -53,7 +64,7 @@ export interface GeolocationLike {
 const GEOLOCATION_ERRORS: Record<number, string> = {
   1: 'location permission was denied on this device',
   2: 'this device could not determine its position',
-  3: 'this device took too long to find its position',
+  3: 'this device could not get a fresh position in time',
 }
 
 /**
@@ -61,19 +72,25 @@ const GEOLOCATION_ERRORS: Record<number, string> = {
  * iPhone app's web view on an app too old to answer natively. Rejects with a
  * reason worded for the user.
  */
-export function readGeolocation(geolocation: GeolocationLike | undefined): Promise<LocationFix> {
+export function readGeolocation(geolocation: GeolocationLike | undefined, now: () => number = Date.now): Promise<LocationFix> {
   if (!geolocation) return Promise.reject(new Error('this device has no location service'))
+  const askedAt = now()
   return new Promise((resolve, reject) => {
     geolocation.getCurrentPosition(
-      (position) => resolve({
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-        accuracyMeters: position.coords.accuracy,
-        ...(position.coords.altitude === null ? {} : { altitudeMeters: position.coords.altitude }),
-        timestamp: position.timestamp,
-      }),
+      (position) => {
+        const fix: LocationFix = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracyMeters: position.coords.accuracy,
+          ...(position.coords.altitude === null ? {} : { altitudeMeters: position.coords.altitude }),
+          timestamp: position.timestamp,
+        }
+        if (isFreshFix(fix, askedAt)) resolve(fix)
+        else reject(new Error(STALE_ERROR))
+      },
       (error) => reject(new Error(GEOLOCATION_ERRORS[error.code] ?? (error.message || 'location failed'))),
-      { enableHighAccuracy: true, timeout: CLIENT_LOCATION_TIMEOUT_MS, maximumAge: LOCATION_MAX_AGE_MS },
+      // No cached reading: only one taken now will do.
+      { enableHighAccuracy: true, timeout: CLIENT_LOCATION_TIMEOUT_MS, maximumAge: 0 },
     )
   })
 }
