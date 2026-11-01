@@ -2,9 +2,13 @@
 # Build the Spaceterm iPhone app and install it on your paired iPhone.
 #
 #   npm run mobile:ios
+#   install.sh --over-the-air <secret>
 #
 # Works over Wi-Fi once the phone has been paired with Xcode once (see
-# src/mobile/README.md). The app is a wrapper around the web app the server
+# src/mobile/README.md). --over-the-air is for a phone that is not on the
+# Mac's network: it builds the app as a download the Spaceterm server offers at
+# https://<this Mac>/install/<secret>/, for the phone to install itself
+# (src/server/mobile-install.ts), and prints that download's manifest URL last. The app is a wrapper around the web app the server
 # serves, so most changes need no rebuild here — only changes to this folder.
 #
 # SPACETERM_IOS_DEVICE=<name or identifier> picks a device when several are paired.
@@ -58,6 +62,60 @@ fi
 # This Mac's pairing URL, then any other Mac's from ~/.spaceterm/other-macs:
 # the app tries them all and keeps whichever answers first.
 urls="$(cd "$repo" && npx tsx src/cli/mobile-link.ts --urls)"
+# What this app is built from, so the page can tell when a newer one exists
+# (native-version.mjs; the web build publishes the current one).
+native_version="$(node "$here/native-version.mjs")"
+
+if [ "${1:-}" = "--over-the-air" ]; then
+  secret="${2:?--over-the-air needs the secret the download is served under}"
+  # This Mac's own pairing URL comes first; the download is served beside it.
+  own="${urls%% *}"
+  base="${own%%#*}install/$secret"
+  out="$here/build/over-the-air"
+  archive="$here/build/SpacetermMobile.xcarchive"
+  rm -rf "$out" "$archive"
+  mkdir -p "$out"
+  echo "Building a download of the app…"
+  xcodebuild \
+    -project "$here/SpacetermMobile.xcodeproj" \
+    -scheme SpacetermMobile \
+    -sdk iphoneos \
+    -configuration Release \
+    -archivePath "$archive" \
+    -allowProvisioningUpdates \
+    -allowProvisioningDeviceRegistration \
+    -xcconfig "$config" \
+    SPACETERM_URLS="$urls" \
+    SPACETERM_NATIVE_VERSION="$native_version" \
+    archive 2>&1 | grep -E "error:|ARCHIVE (SUCCEEDED|FAILED)" || true
+  [ -d "$archive" ] || { echo "Build or signing failed; see the errors above."; exit 1; }
+  # Signed for development, as the cable install is: an install from a link
+  # takes it on any phone the team's profile lists, which Xcode's automatic
+  # signing keeps up to date. (Ad hoc would need a distribution certificate,
+  # and the account's latest program agreement accepted.) The manifest wants
+  # both images, though the phone only shows one while it downloads.
+  cat > "$out/export.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>method</key><string>debugging</string>
+  <key>manifest</key><dict>
+    <key>appURL</key><string>$base/SpacetermMobile.ipa</string>
+    <key>displayImageURL</key><string>$base/icon.png</string>
+    <key>fullSizeImageURL</key><string>$base/icon.png</string>
+  </dict>
+</dict></plist>
+PLIST
+  xcodebuild -exportArchive \
+    -archivePath "$archive" \
+    -exportPath "$out" \
+    -exportOptionsPlist "$out/export.plist" \
+    -allowProvisioningUpdates 2>&1 | grep -E "error:|EXPORT (SUCCEEDED|FAILED)" || true
+  [ -f "$out/SpacetermMobile.ipa" ] && [ -f "$out/manifest.plist" ] || { echo "Exporting the app failed; see the errors above."; exit 1; }
+  cp "$archive/Products/Applications/SpacetermMobile.app/AppIcon60x60@2x.png" "$out/icon.png"
+  echo "$base/manifest.plist"
+  exit 0
+fi
 
 devices_json="$(mktemp)"
 trap 'rm -f "$devices_json"' EXIT
@@ -92,8 +150,10 @@ if [ -z "${device_id:-}" ]; then
   exit 1
 fi
 # Paired but out of reach — another network, Wi-Fi off, powered down. The
-# install would fail anyway, after a whole build; say so now, plainly. (The
-# phone's update badge shows this script's last line.)
+# install would fail anyway, after a whole build; say so now, plainly, and
+# with its own status: the server takes 2 as its cue to offer the phone a
+# download instead (--over-the-air). (The phone's update badge shows this
+# script's last line.)
 if [ "${device_tunnel:-}" = "unavailable" ]; then
   echo "${device_name} isn't reachable from this Mac. Join the Mac's Wi-Fi (or plug it in) and try again."
   exit 2
@@ -111,9 +171,6 @@ echo "Building for ${device_name}…"
 # Automatic signing registers the paired phone with the team if it is new.
 # A previous run's signed app must not pass for this one's.
 rm -rf "$here/build/Release-iphoneos"
-# What this app is built from, so the page can tell when a newer one exists
-# (native-version.mjs; the web build publishes the current one).
-native_version="$(node "$here/native-version.mjs")"
 xcodebuild \
   -project "$here/SpacetermMobile.xcodeproj" \
   -target SpacetermMobile \

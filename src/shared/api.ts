@@ -503,9 +503,11 @@ export interface Api {
   restartSpaceterm(): Promise<void>
   /**
    * Build the iPhone app on the Mac and install it on the paired phone. On
-   * success the new app replaces this one, so mostly only failures come back.
+   * success the new app replaces this one, so mostly only failures come back
+   * — and, for a phone away from the Mac's network, `installUrl`: a link that
+   * installs the app as a download (src/server/mobile-install.ts).
    */
-  installMobileApp(): Promise<{ ok: boolean; message?: string }>
+  installMobileApp(): Promise<{ ok: boolean; message?: string; installUrl?: string }>
   writeDebugLog(content: string): Promise<string>
   openExternal(url: string): Promise<void>
   tts: TtsApi

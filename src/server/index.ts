@@ -2106,6 +2106,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         seq: msg.seq,
         ok: outcome.ok,
         ...(outcome.ok ? {} : { message: outcome.message }),
+        ...('installUrl' in outcome ? { installUrl: outcome.installUrl } : {}),
       }))
       break
     }
@@ -4153,6 +4154,7 @@ async function startServer(): Promise<void> {
       staticRoot: mobileOut,
       token: loadOrCreateWebToken(SOCKET_DIR),
       accept: acceptClient,
+      download: (urlPath) => mobileAppInstaller.downloadFile(urlPath),
       log: serverLog
     })
   }

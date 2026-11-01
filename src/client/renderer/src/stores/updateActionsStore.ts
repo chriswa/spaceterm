@@ -67,6 +67,13 @@ export const useUpdateActionsStore = create<UpdateActionsState>((set, get) => {
         const outcome = await window.api.installMobileApp()
         if (outcome.ok) return
         showToast(outcome.message ?? 'The install failed.')
+        // Away from the Mac's network: iOS takes the link, asks, and installs
+        // the download over this app — or the user declines, and this page
+        // carries on, so it is not left blocked either way.
+        if (outcome.installUrl) {
+          window.api.log('[update] install: opening the over-the-air download')
+          window.location.href = outcome.installUrl
+        }
       } catch (err) {
         showToast(`The install failed: ${err instanceof Error ? err.message : String(err)}`)
       }

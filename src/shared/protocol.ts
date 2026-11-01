@@ -1488,6 +1488,12 @@ export interface MobileAppInstallResultMessage {
   seq: number
   ok: boolean
   message?: string
+  /**
+   * The phone is away from the Mac's network, so the app was built as a
+   * download instead: an `itms-services:` link for the phone to open, which
+   * has iOS ask, then install it.
+   */
+  installUrl?: string
 }
 
 /**

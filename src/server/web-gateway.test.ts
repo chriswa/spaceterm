@@ -23,6 +23,7 @@ beforeAll(async () => {
   fs.writeFileSync(path.join(root, 'assets', 'app.js'), 'console.log(1)')
   fs.writeFileSync(path.join(root, 'build.json'), '{"web":"x"}')
   fs.writeFileSync(path.join(os.tmpdir(), 'web-gateway-secret.txt'), 'secret')
+  fs.writeFileSync(path.join(os.tmpdir(), 'web-gateway-manifest.plist'), '<plist/>')
   server = startWebGateway({
     port: 0,
     staticRoot: root,
@@ -31,6 +32,7 @@ beforeAll(async () => {
       lastLink = link
       return { feed: (data) => received.push(data), close: () => { closes++ } }
     },
+    download: (urlPath) => (urlPath === '/install/s3cret/manifest.plist' ? path.join(root, '..', 'web-gateway-manifest.plist') : null),
     log: () => undefined
   })
   await new Promise<void>((resolve) => server.once('listening', () => resolve()))
@@ -90,6 +92,16 @@ describe('the app', () => {
     const version = await fetch(`http://${base}/build.json`)
     expect(version.headers.get('cache-control')).toBe('no-cache')
     expect(await version.json()).toEqual({ web: 'x' })
+  })
+
+  it('serves the iPhone app download where the installer says, and never caches it', async () => {
+    const manifest = await fetch(`http://${base}/install/s3cret/manifest.plist`)
+    expect(manifest.status).toBe(200)
+    expect(manifest.headers.get('content-type')).toMatch(/xml/)
+    expect(manifest.headers.get('cache-control')).toBe('no-store')
+    expect(await manifest.text()).toBe('<plist/>')
+    // Not one of the download's: just the app, as any unknown path is.
+    expect(await (await fetch(`http://${base}/install/guess/manifest.plist`)).text()).toContain('<title>app</title>')
   })
 
   it('never serves a file outside its root', () => {

@@ -862,11 +862,11 @@ export class ServerClient {
   }
 
   /** Build and install the iPhone app from the Mac. Resolves when it fails, or — rarely seen — succeeds. */
-  async installMobileApp(): Promise<{ ok: boolean; message?: string }> {
+  async installMobileApp(): Promise<{ ok: boolean; message?: string; installUrl?: string }> {
     this.log('[mobile-install] asking the Mac to build and install the app')
     const resp = await this.request({ type: 'mobile-app-install' })
     if (resp.type !== 'mobile-app-install-result') return unexpected(resp)
-    return { ok: resp.ok, message: resp.message }
+    return { ok: resp.ok, message: resp.message, installUrl: resp.installUrl }
   }
 
   speechLinkOpen(): void {

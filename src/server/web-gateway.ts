@@ -42,6 +42,12 @@ export interface WebGatewayOptions {
   token: string
   /** Admit a connection as a client — the same function the Unix socket uses. */
   accept(link: ClientLink): { feed(data: string): void; close(): void }
+  /**
+   * A file served outside the app, for a path that names one, or null — the
+   * iPhone app's over-the-air download (mobile-install.ts), which carries its
+   * own secret in the path.
+   */
+  download?(urlPath: string): string | null
   log(message: string): void
 }
 
@@ -55,7 +61,9 @@ const CONTENT_TYPES: Record<string, string> = {
   '.png': 'image/png',
   '.woff2': 'font/woff2',
   '.ttf': 'font/ttf',
-  '.wasm': 'application/wasm'
+  '.wasm': 'application/wasm',
+  '.plist': 'text/xml; charset=utf-8',
+  '.ipa': 'application/octet-stream'
 }
 
 /** Read the gateway token, minting one on first use. Owner-only, like the sockets beside it. */
@@ -112,9 +120,14 @@ export function resolveStatic(root: string, urlPath: string): string | null {
   return path.join(root, 'index.html')
 }
 
-function serveStatic(root: string, req: http.IncomingMessage, res: http.ServerResponse): void {
+function serveStatic(root: string, req: http.IncomingMessage, res: http.ServerResponse, options: WebGatewayOptions): void {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405).end()
+    return
+  }
+  const download = options.download?.(req.url ?? '/')
+  if (download) {
+    serveDownload(download, req, res, options)
     return
   }
   const file = resolveStatic(root, req.url ?? '/')
@@ -139,9 +152,29 @@ function serveStatic(root: string, req: http.IncomingMessage, res: http.ServerRe
   else fs.createReadStream(file).pipe(res)
 }
 
+function serveDownload(file: string, req: http.IncomingMessage, res: http.ServerResponse, options: WebGatewayOptions): void {
+  let size: number
+  try {
+    size = fs.statSync(file).size
+  } catch {
+    res.writeHead(404).end()
+    return
+  }
+  options.log(`[web-gateway] Serving the download's ${path.basename(file)}`)
+  res.writeHead(200, {
+    'content-type': CONTENT_TYPES[path.extname(file)] ?? 'application/octet-stream',
+    'content-length': size,
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer'
+  })
+  if (req.method === 'HEAD') res.end()
+  else fs.createReadStream(file).pipe(res)
+}
+
 export function startWebGateway(options: WebGatewayOptions): http.Server {
   const root = path.resolve(options.staticRoot)
-  const server = http.createServer((req, res) => serveStatic(root, req, res))
+  const server = http.createServer((req, res) => serveStatic(root, req, res, options))
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: { threshold: 256 } })
 
   server.on('upgrade', (req, socket, head) => {

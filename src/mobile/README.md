@@ -837,6 +837,16 @@ turn on Developer Mode. After that it installs over Wi-Fi. It builds against
 the SDK rather than a device destination, so the multi-gigabyte iOS platform
 download is not needed.
 
+Away from the Mac's network — on Tailscale alone — Xcode cannot reach the
+phone, so the toolbar's install button gets the app as a download instead:
+`install.sh --over-the-air` archives and exports it, the web gateway serves it
+under `/install/<secret>/`, and the phone opens the `itms-services:` link the
+server answers with; iOS asks, then installs it over the running app
+(`src/server/mobile-install.ts`). It is signed for development, like the cable
+install, so it installs only on phones the team's profile lists — one paired
+as above already is. Each build has a new secret, and nothing is served
+without it, since the app carries this Mac's pairing tokens.
+
 ## The user's position, for agents
 
 An agent's `get_user_location` (or `spaceterm-cli location`) asks the server,

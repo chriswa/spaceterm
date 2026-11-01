@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 29
+export const CLIENT_PROTOCOL_VERSION = 30
 
 /**
  * Oldest client protocol this build still serves.
@@ -131,5 +131,9 @@ export const CLIENT_PROTOCOL_VERSION = 29
  *
  * v28 cannot read its device's position (`location-request`), so it is never
  * asked; it loses nothing else.
+ *
+ * v29 ignores `installUrl` in `mobile-app-install-result`, so a phone away
+ * from the Mac's network is only told it could install from a download; it
+ * loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2
