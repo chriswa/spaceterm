@@ -634,7 +634,8 @@ attention lapsed a bare "dictate …" is only speech without "Control".
   once only when it is in front. The Action button copies them, with a
   shortcut shaped like Wispr Flow's "Quick Dictation to Clipboard": the
   app's **Get Last Dictation** (`DictationIntents.swift`), Shortcuts' own
-  **Copy to Clipboard**, and a notification of what was copied. Nobody
+  **Copy to Clipboard**, and nothing shown — the Dynamic Island says it
+  ran; a notification of what was copied was in the way. Nobody
   builds it: the toolbar sheet's Action button button (far right) has the
   Mac write it and sign it (`shortcuts sign`,
   `src/server/action-button-shortcut.ts`); the app fetches it and puts up

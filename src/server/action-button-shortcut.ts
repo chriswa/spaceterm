@@ -10,11 +10,12 @@ import * as path from 'path'
  *
  * iOS lets no app set the clipboard from the background, an App Intent run
  * by the Action button included (tried November 1 2026). A shortcut's own
- * Copy to Clipboard can. So the shortcut is two steps and a notification —
- * the app's Get Last Dictation (DictationIntents.swift), Copy to Clipboard,
- * and a notification saying what was copied — the shape of Wispr Flow's
- * "Quick Dictation to Clipboard", whose `.shortcut` this one's format is
- * copied from. Wispr hands out an iCloud link it built by hand; this one is
+ * Copy to Clipboard can. So the shortcut is two steps — the app's Get Last
+ * Dictation (DictationIntents.swift), then Copy to Clipboard — the shape of
+ * Wispr Flow's "Quick Dictation to Clipboard", whose `.shortcut` this one's
+ * format is copied from. Nothing is shown or played: a notification of what
+ * was copied stayed up too long and was in the way, and the Dynamic Island
+ * already shows the shortcut running (asked for November 1 2026). Wispr hands out an iCloud link it built by hand; this one is
  * written here, the app's bundle id and team from `Local.xcconfig`, and
  * signed with `shortcuts sign --mode anyone`, without which iOS refuses to
  * import it.
@@ -45,9 +46,8 @@ type Plist = string | number | boolean | Plist[] | { [key: string]: Plist }
 /** Fixed, so the same app always makes the same file, and it is signed once. */
 const GET_UUID = '5E3A8C1D-7B2F-4E61-9C0A-D4F1B6A2E901'
 const COPY_UUID = '5E3A8C1D-7B2F-4E61-9C0A-D4F1B6A2E902'
-const NOTIFY_UUID = '5E3A8C1D-7B2F-4E61-9C0A-D4F1B6A2E903'
 
-/** The shortcut, as the plist Shortcuts reads: Get Last Dictation → Copy to Clipboard → a notification. */
+/** The shortcut, as the plist Shortcuts reads: Get Last Dictation → Copy to Clipboard. */
 export function dictationShortcut(app: PhoneApp): Plist {
   const lastDictation = { OutputName: 'Last Dictation', OutputUUID: GET_UUID, Type: 'ActionOutput' }
   return {
@@ -65,18 +65,6 @@ export function dictationShortcut(app: PhoneApp): Plist {
         WFWorkflowActionParameters: {
           UUID: COPY_UUID,
           WFInput: { Value: lastDictation, WFSerializationType: 'WFTextTokenAttachment' },
-        },
-      },
-      {
-        WFWorkflowActionIdentifier: 'is.workflow.actions.notification',
-        WFWorkflowActionParameters: {
-          UUID: NOTIFY_UUID,
-          WFNotificationActionTitle: 'Copied',
-          WFNotificationActionSound: false,
-          WFNotificationActionBody: {
-            Value: { attachmentsByRange: { '{0, 1}': lastDictation }, string: '￼' },
-            WFSerializationType: 'WFTextTokenString',
-          },
         },
       },
     ],

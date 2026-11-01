@@ -34,17 +34,15 @@ describe('phoneAppFromXcconfig', () => {
 })
 
 describe('the shortcut', () => {
-  it("gets the app's last dictation, copies it, and shows it", () => {
+  it("gets the app's last dictation and copies it, nothing more", () => {
     const shortcut = dictationShortcut({ bundleId: 'com.example.spaceterm', teamId: 'TEAM' }) as { WFWorkflowActions: Array<{ WFWorkflowActionIdentifier: string; WFWorkflowActionParameters: Record<string, unknown> }> }
     const actions = shortcut.WFWorkflowActions
     expect(actions.map((a) => a.WFWorkflowActionIdentifier)).toEqual([
-      'com.example.spaceterm.GetLastDictationIntent', 'is.workflow.actions.setclipboard', 'is.workflow.actions.notification',
+      'com.example.spaceterm.GetLastDictationIntent', 'is.workflow.actions.setclipboard',
     ])
     expect(actions[0].WFWorkflowActionParameters.AppIntentDescriptor).toMatchObject({ BundleIdentifier: 'com.example.spaceterm', TeamIdentifier: 'TEAM' })
-    // Both later steps use the first one's output.
-    const uuid = actions[0].WFWorkflowActionParameters.UUID
-    expect(JSON.stringify(actions[1])).toContain(String(uuid))
-    expect(JSON.stringify(actions[2])).toContain(String(uuid))
+    // The copy takes the first step's output.
+    expect(JSON.stringify(actions[1])).toContain(String(actions[0].WFWorkflowActionParameters.UUID))
   })
 
   it('is written as an XML property list, escaped', () => {
