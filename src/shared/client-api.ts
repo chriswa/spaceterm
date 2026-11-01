@@ -192,6 +192,8 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
     },
     log: (message) => platform.log(message),
     installMobileApp: () => client.installMobileApp(),
+    actionButtonShortcut: () => client.actionButtonShortcut(),
+    actionButtonShortcutFetched: () => client.actionButtonShortcutFetched(),
     async restartSpaceterm() {
       platform.log('[restart] Restart Spaceterm requested')
       await client.restartServer()

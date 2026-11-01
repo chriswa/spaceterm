@@ -329,6 +329,7 @@ export class ServerClient {
       case 'restart-flag-result':
       case 'usage-report-result':
       case 'mobile-app-install-result':
+      case 'action-button-shortcut-result':
       case 'listed':
       case 'attached':
       case 'detached':
@@ -870,6 +871,20 @@ export class ServerClient {
     const resp = await this.request({ type: 'mobile-app-install' })
     if (resp.type !== 'mobile-app-install-result') return unexpected(resp)
     return { ok: resp.ok, message: resp.message, installUrl: resp.installUrl }
+  }
+
+  /** The iPhone's Action button shortcut, made and signed on the Mac: its path on the web gateway, or why not. */
+  async actionButtonShortcut(): Promise<{ ok: boolean; urlPath?: string; message?: string }> {
+    const resp = await this.request({ type: 'action-button-shortcut' })
+    if (resp.type !== 'action-button-shortcut-result') return unexpected(resp)
+    return { ok: resp.ok, urlPath: resp.urlPath, message: resp.message }
+  }
+
+  /** Whether Shortcuts fetched the Action button shortcut since it was last asked for. */
+  async actionButtonShortcutFetched(): Promise<boolean> {
+    const resp = await this.request({ type: 'action-button-shortcut', check: true })
+    if (resp.type !== 'action-button-shortcut-result') return unexpected(resp)
+    return resp.fetched === true
   }
 
   speechLinkOpen(): void {

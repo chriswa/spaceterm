@@ -935,6 +935,18 @@ export interface MobileAppInstallMessage {
 }
 
 /**
+ * The iPhone's Action button shortcut for hands-free's "dictate …": made and
+ * signed on this Mac if need be, and its path on the web gateway returned —
+ * or, with `check`, whether Shortcuts has fetched it since it was last asked
+ * for. See `src/server/action-button-shortcut.ts`.
+ */
+export interface ActionButtonShortcutMessage {
+  type: 'action-button-shortcut'
+  seq: number
+  check?: boolean
+}
+
+/**
  * A phone's speaker connection to Voice Operator, relayed by the server: the
  * page is a speaker on Voice Operator's client socket (its DESIGN.md, "Speech
  * on a device"), and plays the speech Voice Operator makes for it. Open, then
@@ -1414,6 +1426,7 @@ export type ClientMessage =
   | SpeechLinkLineMessage
   | SpeechLinkCloseMessage
   | MobileAppInstallMessage
+  | ActionButtonShortcutMessage
   | SpeakToggleMessage
   | SpeakStopMessage
   | SaveViewportMessage
@@ -1498,6 +1511,18 @@ export interface MobileAppInstallResultMessage {
    * has iOS ask, then install it.
    */
   installUrl?: string
+}
+
+/** Reply to {@link ActionButtonShortcutMessage}. */
+export interface ActionButtonShortcutResultMessage {
+  type: 'action-button-shortcut-result'
+  seq: number
+  ok: boolean
+  /** Where the web gateway serves the signed shortcut. */
+  urlPath?: string
+  message?: string
+  /** For `check`: Shortcuts fetched it since it was last asked for. */
+  fetched?: boolean
 }
 
 /**
@@ -2356,6 +2381,7 @@ export type ServerMessage =
   | SystemStatsMessage
   | SpeechLinkMessage
   | MobileAppInstallResultMessage
+  | ActionButtonShortcutResultMessage
   | MobileBuildChangedMessage
   | MobileAppInstallLinkMessage
   | MobileAppQuitMessage

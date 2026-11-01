@@ -1,32 +1,14 @@
 import AppIntents
 
-/// The Action button's way to the last "dictate …" (NativeDictation.swift).
+/// The Action button's way to the last "dictate …" (NativeDictation.swift):
+/// the first step of the shortcut the Mac makes and signs, which copies it
+/// with Shortcuts' own Copy to Clipboard and shows what it copied
+/// (src/server/action-button-shortcut.ts). The step is found by this type's
+/// name, `GetLastDictationIntent`: renaming it breaks shortcuts already added.
 ///
-/// - **Copy Last Dictation** puts it on the clipboard itself, and is offered
-///   ready-made (`SpacetermShortcuts`), so the Action button can be set to it
-///   with no shortcut built by hand. Whether iOS lets an action run in the
-///   background set the clipboard is not known yet: its reply says which
-///   happened, so the first press finds out.
-/// - **Get Last Dictation** only hands it on, for a shortcut that copies it
-///   with Shortcuts' own Copy to Clipboard — which works from the background.
-
-struct CopyLastDictationIntent: AppIntent {
-    static let title: LocalizedStringResource = "Copy Last Dictation"
-    static let description = IntentDescription("Puts the last thing you said after “dictate”, hands-free in Spaceterm, on the clipboard.")
-    static let openAppWhenRun = false
-
-    @MainActor
-    func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
-        guard let text = LastDictation.text else {
-            return .result(value: "", dialog: "Nothing dictated yet.")
-        }
-        guard LastDictation.copy(text) else {
-            return .result(value: text, dialog: "iOS would not let Spaceterm copy it from the background. Use Get Last Dictation, then Copy to Clipboard, instead.")
-        }
-        return .result(value: text, dialog: "Copied.")
-    }
-}
-
+/// The app cannot copy it itself: an action that set the clipboard from here,
+/// run by the Action button, was refused by iOS as any background write is
+/// (November 1 2026), so it is gone.
 struct GetLastDictationIntent: AppIntent {
     static let title: LocalizedStringResource = "Get Last Dictation"
     static let description = IntentDescription("The last thing you said after “dictate”, hands-free in Spaceterm. Follow it with Copy to Clipboard.")
@@ -40,17 +22,4 @@ struct GetLastDictationIntent: AppIntent {
 
 struct NothingDictated: Error, CustomLocalizedStringResourceConvertible {
     var localizedStringResource: LocalizedStringResource { "Nothing dictated yet." }
-}
-
-/// Offered without building anything: in the Shortcuts app under Spaceterm,
-/// and in Settings → Action Button → Shortcut.
-struct SpacetermShortcuts: AppShortcutsProvider {
-    static var appShortcuts: [AppShortcut] {
-        AppShortcut(
-            intent: CopyLastDictationIntent(),
-            phrases: ["Copy my last \(.applicationName) dictation"],
-            shortTitle: "Copy Last Dictation",
-            systemImageName: "doc.on.clipboard"
-        )
-    }
 }

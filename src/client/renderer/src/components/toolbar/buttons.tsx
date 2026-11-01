@@ -17,6 +17,7 @@ import { useAgentMemory } from '../../hooks/useAgentMemory'
 import { formatBytes } from '../../lib/format-bytes'
 import { useToolbarMenu } from './useToolbarMenu'
 import { showToast } from '../../lib/toast'
+import { realActionButtonSetupDeps, setUpActionButton } from '../../../../../mobile/action-button-setup'
 import { useDimStaleStore } from '../../stores/dimStaleStore'
 import { isSupersampleActive, realDevicePixelRatio } from '../../lib/supersample'
 import {
@@ -33,7 +34,7 @@ import { restartUnderway, useUpdateActionsStore } from '../../stores/updateActio
 import { useNodeStore } from '../../stores/nodeStore'
 import { restartableAgentSurfaces } from '../../lib/rolling-restart'
 import { useRollingRestartStore } from '../../stores/rollingRestartStore'
-import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FitToMonitorIcon, LockIcon, BellIcon, AutoStampIcon, DustpanIcon, DimIcon, KeycastIcon, GaugeIcon, ChipIcon, CaretIcon, FramesIcon, ReloadClientIcon, InstallAppIcon } from './icons'
+import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FitToMonitorIcon, LockIcon, BellIcon, AutoStampIcon, DustpanIcon, DimIcon, KeycastIcon, GaugeIcon, ChipIcon, CaretIcon, FramesIcon, ReloadClientIcon, InstallAppIcon, ActionButtonIcon } from './icons'
 
 /**
  * The toolbar's buttons.
@@ -576,6 +577,28 @@ export function InstallAppButton() {
   )
 }
 
+/**
+ * The iPhone's Action button, set up to copy the last "dictate …": the Mac
+ * signs a shortcut, and Shortcuts asks to add it (mobile/action-button-setup.ts).
+ */
+export function ActionButtonSetupButton() {
+  const [busy, setBusy] = useState(false)
+  return (
+    <button
+      className={'toolbar__btn' + (busy ? ' toolbar__btn--active' : '')}
+      onClick={() => {
+        setBusy(true)
+        void setUpActionButton(realActionButtonSetupDeps()).finally(() => setBusy(false))
+      }}
+      disabled={busy}
+      aria-label="Set up the Action button"
+      data-tooltip="Action button — copy your last “dictate …”"
+      data-tooltip-no-flip
+    >
+      <ActionButtonIcon />
+    </button>
+  )
+}
 
 export function KeycastToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
   return (

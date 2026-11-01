@@ -9,9 +9,10 @@ import WebKit
 /// iOS lets no app set the clipboard from the background: a write from a
 /// backgrounded app is dropped without an error, and `changeCount` reads 0
 /// (tried on an iPhone 17, iOS 26, November 1 2026, with the audio engine
-/// running). So the words are kept here, and a shortcut puts them on the
-/// clipboard (DictationIntents.swift). In front, the app copies them at once
-/// as well.
+/// running), and from an App Intent the Action button runs. So the words are
+/// kept here, and a shortcut the Mac signs puts them on the clipboard with
+/// Shortcuts' own Copy to Clipboard (DictationIntents.swift). In front, the
+/// app copies them at once as well.
 @MainActor
 final class NativeDictation: NSObject, WKScriptMessageHandler {
     private let events: NativeEvents
@@ -32,8 +33,8 @@ final class NativeDictation: NSObject, WKScriptMessageHandler {
     }
 }
 
-/// Where the last dictation is kept: the app's defaults, which a shortcut's
-/// action reads with the app in the background, or not running at all.
+/// Where the last dictation is kept: the app's defaults, which the shortcut's
+/// Get Last Dictation reads with the app in the background, or not running at all.
 enum LastDictation {
     private static let key = "spaceterm.lastDictation"
 
@@ -47,6 +48,7 @@ enum LastDictation {
 
     /// Put `text` on the clipboard, and say whether iOS let it: from the
     /// background the write is dropped and the change count does not move.
+    /// Only ever tried in front.
     @MainActor
     static func copy(_ text: String) -> Bool {
         let before = UIPasteboard.general.changeCount

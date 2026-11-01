@@ -17,6 +17,7 @@ import {
   FpsMetric,
   HelpButton,
   InstallAppButton,
+  ActionButtonSetupButton,
   KeycastToggle,
   NotificationSoundToggle,
   AutoStampToggle,
@@ -158,6 +159,7 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
   { id: 'auto-stamp', slot: 'buttons', kind: 'standalone', render: () => <AutoStampToggle /> },
   { id: 'copy-cleanup', slot: 'buttons', kind: 'standalone', render: () => <CopyCleanupToggle /> },
   { id: 'dim-stale', slot: 'buttons', kind: 'standalone', render: () => <DimStaleToggle /> },
+  { id: 'action-button', slot: 'buttons', kind: 'standalone', mobileOnly: true, render: () => <ActionButtonSetupButton /> },
 
   { id: 'fps', slot: 'status', kind: 'standalone', render: () => <FpsMetric /> },
   { id: 'supersample', slot: 'status', kind: 'standalone', desktopOnly: true, render: () => <SupersampleMetric /> },

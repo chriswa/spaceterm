@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 32
+export const CLIENT_PROTOCOL_VERSION = 33
 
 /**
  * Oldest client protocol this build still serves.
@@ -144,5 +144,9 @@ export const CLIENT_PROTOCOL_VERSION = 32
  * v31 cannot end its app once Install is pressed on a download
  * (`mobile-app-quit`), so it is never asked; the user closes it. It loses
  * nothing else.
+ *
+ * v32 cannot keep what is said after "dictate" hands-free
+ * (`dictation-kept`), so it is never sent it, and the words are lost; nor set
+ * up the Action button (`action-button-shortcut`). It loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

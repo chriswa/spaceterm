@@ -228,3 +228,14 @@ export function InstallAppIcon() {
     </svg>
   )
 }
+
+export function ActionButtonIcon() {
+  // A phone with its Action button lit on the left edge, and a page beside it: copy what was dictated.
+  return (
+    <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      <rect x="3.5" y="1.5" width="9" height="13" rx="1.75" />
+      <path d="M1.75 4.25v2.5" strokeWidth="1.8" />
+      <path d="M6 6h4M6 8.5h4M6 11h2.5" />
+    </svg>
+  )
+}

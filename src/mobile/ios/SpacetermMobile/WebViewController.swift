@@ -138,7 +138,9 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
 
     // MARK: - Navigation
 
-    /// Spaceterm's own pages stay here; anything else opens in the browser.
+    /// Spaceterm's own pages stay here; anything else opens in the browser, or
+    /// the app its scheme names — `x-safari-https:` on a Spaceterm address
+    /// included, which is Safari asked for by name (action-button-setup.ts).
     /// `spaceterm://retry` is the problem page's way back: another race.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -146,7 +148,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         if url.scheme == Self.retryScheme {
             decisionHandler(.cancel)
             load()
-        } else if url.scheme == "about" || isSpaceterm(url.host) {
+        } else if url.scheme == "about" || (url.scheme == "http" || url.scheme == "https") && isSpaceterm(url.host) {
             decisionHandler(.allow)
         } else {
             UIApplication.shared.open(url)

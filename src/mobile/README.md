@@ -628,16 +628,21 @@ attention lapsed a bare "dictate …" is only speech without "Control".
 - **On the Mac** the first window puts them on the clipboard (Electron's,
   which needs no focus).
 - **On the phone** iOS will not let the app set the clipboard from the
-  background — a write is dropped without an error (tried on the iPhone,
-  November 1 2026). The app keeps them (`NativeDictation.swift`), and copies
-  them at once only when it is in front. The Action button copies them:
-  Settings → Action Button → Shortcut → Spaceterm → **Copy Last Dictation**,
-  offered ready-made (`DictationIntents.swift`). Whether iOS lets that
-  action set the clipboard from the background is not known yet; its reply
-  says so. If it cannot, a two-step shortcut can: Spaceterm's **Get Last
-  Dictation**, then Shortcuts' own **Copy to Clipboard**. Pasting into the
-  field in front is beyond any shortcut: only a keyboard extension can type
-  into another app.
+  background — a write is dropped without an error, from the app and from an
+  App Intent the Action button runs alike (tried on the iPhone, November 1
+  2026). The app keeps them (`NativeDictation.swift`), and copies them at
+  once only when it is in front. The Action button copies them, with a
+  shortcut shaped like Wispr Flow's "Quick Dictation to Clipboard": the
+  app's **Get Last Dictation** (`DictationIntents.swift`), Shortcuts' own
+  **Copy to Clipboard**, and a notification of what was copied. Nobody
+  builds it: the toolbar sheet's Action button button (far right) has the
+  Mac write it and sign it (`shortcuts sign`,
+  `src/server/action-button-shortcut.ts`), and opens Shortcuts' import link
+  to it — Add Shortcut — or, if Shortcuts never fetched it, opens it in
+  Safari (`action-button-setup.ts`). Choosing it in Settings → Action Button
+  is left to the user, as iOS lets no app do it. Pasting into the field in
+  front is beyond any shortcut: only a keyboard extension can type into
+  another app.
 
 ### On the Mac
 

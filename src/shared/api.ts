@@ -510,6 +510,14 @@ export interface Api {
    * installs the app as a download (src/server/mobile-install.ts).
    */
   installMobileApp(): Promise<{ ok: boolean; message?: string; installUrl?: string }>
+  /**
+   * The iPhone's Action button shortcut for hands-free's "dictate …", made
+   * and signed on the Mac: where this server serves it, or why it could not
+   * (src/server/action-button-shortcut.ts).
+   */
+  actionButtonShortcut(): Promise<{ ok: boolean; urlPath?: string; message?: string }>
+  /** Whether Shortcuts fetched it since it was last asked for: its import link worked. */
+  actionButtonShortcutFetched(): Promise<boolean>
   writeDebugLog(content: string): Promise<string>
   openExternal(url: string): Promise<void>
   tts: TtsApi

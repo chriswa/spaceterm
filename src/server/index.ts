@@ -50,6 +50,7 @@ import { HandsFreePresence, REAL_CONNECT, VoiceOperatorHandsFree, handsFreeActio
 import { UsageTracker } from './usage-tracker'
 import { SystemStatsWatcher } from './system-stats'
 import { SpeechLinks } from './voice-operator-speech'
+import { ActionButtonShortcut, realActionButtonShortcutDeps } from './action-button-shortcut'
 import { MobileAppInstaller, realMobileInstallDeps } from './mobile-install'
 import { announceInstallStage, type DownloadStage } from './install-announcer'
 import { readAgentMemoryBytes } from './agent-memory'
@@ -617,6 +618,9 @@ function stopReceptionistTalking(text: string, from: string | undefined, interru
 
 const clientLabel = (client: { name?: string; id: string }) => `${client.name ?? 'client'} ${client.id.slice(0, 8)}`
 
+/** Keeping a "dictate …" (`dictation-kept`) was new in v33. */
+const DICTATION_KEPT_PROTOCOL_VERSION = 33
+
 /**
  * "Dictate …" said hands-free on `holder`: its words to that device, once —
  * the first desktop window puts them on the Mac's clipboard, the phone keeps
@@ -635,9 +639,19 @@ function keepDictation(text: string, holder: ReceptionistHolder | undefined): vo
     serverLog(`[hands-free] ${text.length} chars dictated on ${from}, which is not connected: not kept`)
     return
   }
+  if ((client.protocolVersion ?? 0) < DICTATION_KEPT_PROTOCOL_VERSION) {
+    serverLog(`[hands-free] ${text.length} chars dictated on ${from}, whose page is too old to keep them: not kept`)
+    return
+  }
   serverLog(`[hands-free] ${text.length} chars dictated on ${from}: kept by ${clientLabel(client)}`)
   send(client.link, { type: 'dictation-kept', text })
 }
+
+/** The iPhone's Action button shortcut for "dictate …", signed here (action-button-shortcut.ts). */
+const actionButtonShortcut = new ActionButtonShortcut(
+  realActionButtonShortcutDeps(path.resolve(__dirname, '..', '..'), path.join(SOCKET_DIR, 'action-button')),
+  serverLog,
+)
 
 /** The phone's "App update" badge builds and installs the iPhone app from here. */
 const mobileAppInstaller = new MobileAppInstaller(
@@ -2268,6 +2282,21 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           ok: outcome.ok,
           ...(outcome.ok ? {} : { message: outcome.message }),
           ...('installUrl' in outcome ? { installUrl: outcome.installUrl } : {}),
+        })
+      })
+      break
+    }
+
+    case 'action-button-shortcut': {
+      if (msg.check) {
+        send(client.link, { type: 'action-button-shortcut-result', seq: msg.seq, ok: true, fetched: actionButtonShortcut.fetchedSinceAsked() })
+        break
+      }
+      void actionButtonShortcut.prepare().catch((err: unknown) => ({ ok: false as const, message: `The Mac could not make the shortcut: ${err instanceof Error ? err.message : String(err)}` })).then((outcome) => {
+        send(client.link, {
+          type: 'action-button-shortcut-result',
+          seq: msg.seq,
+          ...(outcome.ok ? { ok: true, urlPath: outcome.urlPath } : { ok: false, message: outcome.message }),
         })
       })
       break
@@ -4320,7 +4349,7 @@ async function startServer(): Promise<void> {
       staticRoot: mobileOut,
       token: loadOrCreateWebToken(SOCKET_DIR),
       accept: acceptClient,
-      download: (urlPath) => mobileAppInstaller.downloadFile(urlPath),
+      download: (urlPath) => mobileAppInstaller.downloadFile(urlPath) ?? actionButtonShortcut.downloadFile(urlPath),
       log: serverLog
     })
   }
