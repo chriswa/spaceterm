@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 28
+export const CLIENT_PROTOCOL_VERSION = 29
 
 /**
  * Oldest client protocol this build still serves.
@@ -128,5 +128,8 @@ export const CLIENT_PROTOCOL_VERSION = 28
  *
  * v27 ignores `items` in `receptionist-backlog`, so its backlog badge only
  * counts; it loses nothing else.
+ *
+ * v28 cannot read its device's position (`location-request`), so it is never
+ * asked; it loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

@@ -12,6 +12,7 @@ import { ancestorsOf } from '../shared/node-ancestry'
 import { unhandledVariant } from '../shared/exhaustive'
 import { checkProtocolVersion } from '../shared/protocol-handshake'
 import type { ModCapability } from '../shared/mod-manifest'
+import type { Located } from './location-broker'
 import { CUSTOM_EVENT_PREFIX, MAX_EVENT_PAYLOAD_BYTES, isCustomEventId } from '../shared/automation'
 
 /** What this build serves on the scripts socket. */
@@ -111,6 +112,12 @@ export interface ScriptHost {
    * for it. `null` means unscoped — see `ConnectionIdentity`.
    */
   capabilitiesFor(modId: string): readonly ModCapability[] | null
+  /**
+   * The user's position, read on the client device they are most likely
+   * holding. Rejects with a reason worded for the user. `askedBy` names the
+   * caller for the log.
+   */
+  getLocation(askedBy: string): Promise<Located>
   /** Fire a custom event at every automation card listening for it. Returns how many were. */
   fireEvent(eventId: string, payload: unknown): number
   log(line: string): void
@@ -135,6 +142,7 @@ const REQUIRED_CAPABILITY: { readonly [T in ScriptMessage['type']]: ModCapabilit
   'script-unread': 'mark-unread',
   'script-fork-claude': 'fork-session',
   'script-fire-event': 'fire-events',
+  'script-get-location': 'read-location',
 }
 
 interface ScriptSubscriber {
@@ -361,6 +369,16 @@ export class ScriptApi {
           return
         }
         reply({ type: 'script-fire-event-result', seq: msg.seq, matched: this.host.fireEvent(msg.eventId, msg.payload) })
+        return
+      }
+
+      case 'script-get-location': {
+        const nodeId = msg.surfaceId ? this.host.getNodeIdForSession(msg.surfaceId) : undefined
+        const askedBy = (nodeId && this.host.getAgentName(nodeId)) ?? (nodeId ? `surface ${nodeId.slice(0, 8)}` : 'a script')
+        this.host.getLocation(askedBy).then(
+          ({ device, fix }) => reply({ type: 'script-get-location-result', seq: msg.seq, location: { ...fix, device } }),
+          (err: unknown) => reply({ type: 'script-get-location-result', seq: msg.seq, error: err instanceof Error ? err.message : String(err) })
+        )
         return
       }
 

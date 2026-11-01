@@ -20,6 +20,20 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
   let canvasPaused = false
   client.onLifecycle('connect', () => { if (canvasPaused) client.pauseCanvas(true) })
 
+  // An agent asked for the user's position (`get_user_location`): the server
+  // asks every client, and this one answers from its host's location service.
+  client.on('location-request', ({ requestId }) => {
+    platform.log('[location] The server asked for this device\'s position')
+    platform.currentLocation().then(
+      (fix) => client.replyLocation(requestId, { fix }),
+      (err: unknown) => {
+        const error = err instanceof Error ? err.message : String(err)
+        platform.log(`[location] No position to give: ${error}`)
+        client.replyLocation(requestId, { error })
+      }
+    )
+  })
+
   /**
    * Per-session listeners, keyed so a canvas of fifty cards does not run
    * fifty filters on every output chunk and snapshot.

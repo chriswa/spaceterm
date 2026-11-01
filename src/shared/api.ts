@@ -38,6 +38,7 @@ import type { UndoEntry } from './undo-types'
 import type { NodeId, PtySessionId } from './ids'
 import type { UsageSnapshot } from './usage-report'
 import type { SystemStatsSnapshot } from './system-stats'
+import type { LocationFix } from './location'
 
 export type { CameraBounds, ClaudeSessionEntry, CreateOptions, SessionInfo }
 /** What Control is doing; see `ReceptionistStatusMessage`. */
@@ -543,6 +544,11 @@ export interface PlatformApi {
    * `spaceterm-surface://` deep links. The server resolves them.
    */
   onFocusRequest(callback: (id: string) => void): () => void
+  /**
+   * This device's position, for an agent that asked for the user's
+   * (`location-request`). Rejects with a reason worded for the user.
+   */
+  currentLocation(): Promise<LocationFix>
   perf: PerfApi
   window: Omit<WindowApi, 'onFocusNode'>
   /** Agent memory is measured by the server, not the host; see `createApi`. */

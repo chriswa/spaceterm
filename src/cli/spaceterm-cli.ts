@@ -12,6 +12,7 @@
  *   spaceterm-cli capabilities [--json]                  # what optional integrations are present
  *   spaceterm-cli show-images <path> [--caption c] ... [--summary s]  # pictures in Control's transcript
  *   spaceterm-cli fire <custom_event-id> [json-payload]  # trigger automation cards listening for it
+ *   spaceterm-cli location                               # the user's position, from their phone or Mac
  *
  * Environment:
  *   SPACETERM_NODE_ID   — set automatically in PTY sessions
@@ -150,6 +151,20 @@ async function fire(eventId: string, payloadText: string | undefined): Promise<v
   if (reply.error) fatal(reply.error)
   process.stdout.write(JSON.stringify({ matched: reply.matched }) + '\n')
   if (reply.matched === 0) fatal(`no automation card is listening for ${eventId}`)
+}
+
+/**
+ * The `get_user_location` MCP tool, for an agent without it (Codex): the
+ * position as JSON, or the reason each device had none.
+ */
+async function location(): Promise<void> {
+  const surfaceId = process.env.SPACETERM_SURFACE_ID
+  const reply = await oneshot(
+    { type: 'script-get-location', seq: 1, ...(surfaceId ? { surfaceId } : {}) },
+    'script-get-location-result'
+  )
+  if (reply.error) fatal(reply.error)
+  process.stdout.write(JSON.stringify(reply.location) + '\n')
 }
 
 /**
@@ -292,6 +307,7 @@ function printUsage(): void {
   spaceterm-cli show-images <path> [--caption c] ... [--summary s]
                                                            Show the user pictures in Control's transcript
   spaceterm-cli fire <custom_event-id> [json-payload]       Trigger automation cards listening for the event
+  spaceterm-cli location                                   The user's position, read on their phone or Mac
 
 Events: ${SCRIPT_EVENTS.join(', ')}
 `)
@@ -340,6 +356,10 @@ switch (command) {
   case 'fire':
     if (!args[1]) { printUsage(); process.exit(1) }
     fire(args[1], args[2]).catch((err) => fatal(err.message))
+    break
+
+  case 'location':
+    location().catch((err) => fatal(err.message))
     break
 
   case 'subscribe': {

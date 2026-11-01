@@ -825,6 +825,21 @@ turn on Developer Mode. After that it installs over Wi-Fi. It builds against
 the SDK rather than a device destination, so the multi-gigabyte iOS platform
 download is not needed.
 
+## The user's position, for agents
+
+An agent's `get_user_location` (or `spaceterm-cli location`) asks the server,
+which asks every connected client at once (`location-request`) and keeps the
+answer from the device the user is most likely holding: the one holding
+Control, then whichever screen moved last; a better-ranked device still
+looking holds the answer up to 20 s (`src/server/location-broker.ts`). Nothing
+is stored, and the server log says who was given it (`[location]`).
+
+On the phone it is the app's Core Location (`NativeLocation.swift`,
+`native-location.ts`): "while using" permission, asked the first time, and in
+the background the last fix iOS has (under half an hour old), with its age.
+`native-location-*` lines in the event record show each request. In Safari,
+or an app built before this, it is the browser's `navigator.geolocation`.
+
 ## Deliberately not done (yet)
 
 - Text size is a hard-coded constant (`SCALE` in TerminalView.tsx, 0.94 —

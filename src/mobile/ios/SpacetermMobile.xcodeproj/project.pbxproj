@@ -197,6 +197,7 @@
 				INFOPLIST_FILE = SpacetermMobile/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Spaceterm;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Spaceterm uses the microphone for dictating prompts.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Spaceterm tells your agents where you are when they ask for it.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;
@@ -225,6 +226,7 @@
 				INFOPLIST_FILE = SpacetermMobile/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Spaceterm;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Spaceterm uses the microphone for dictating prompts.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Spaceterm tells your agents where you are when they ask for it.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;

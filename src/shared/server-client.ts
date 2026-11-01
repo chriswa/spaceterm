@@ -1,5 +1,6 @@
 import { CLIENT_PROTOCOL_VERSION } from './client-protocol-version'
 import type { UsageSnapshot } from './usage-report'
+import type { LocationFix } from './location'
 import type { AgentSearchMode, ClientDevice, ControlTranscriptEntry, MobileEventRecord, ReceptionistHoldAction } from './protocol'
 import type {
   ClientMessage,
@@ -76,6 +77,7 @@ export type ServerEventType =
   | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
   | 'receptionist-transcript-appended' | 'receptionist-unread' | 'receptionist-backlog' | 'receptionist-replaying' | 'receptionist-speaking'
   | 'hands-free-event' | 'hands-free-stream'
+  | 'location-request'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
 
@@ -303,6 +305,7 @@ export class ServerClient {
       case 'receptionist-speaking':
       case 'hands-free-event':
       case 'hands-free-stream':
+      case 'location-request':
         this.emit(msg)
         return
 
@@ -743,6 +746,11 @@ export class ServerClient {
   /** Not remembered across a reconnect: the caller sends it again on 'connect'. */
   watchSystemStats(watching: boolean): void {
     this.fireAndForget({ type: 'system-stats-watch', watching })
+  }
+
+  /** This device's answer to the server's `location-request`. */
+  replyLocation(requestId: string, answer: { fix: LocationFix } | { error: string }): void {
+    this.fireAndForget({ type: 'location-reply', requestId, ...answer })
   }
 
   /** Not remembered across a reconnect: the caller sends it again on 'connect'. */

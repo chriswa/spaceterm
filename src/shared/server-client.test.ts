@@ -158,6 +158,7 @@ describe('createApi', () => {
     restartClient: vi.fn(),
     raiseWindow: vi.fn(),
     onFocusRequest: () => () => undefined,
+    currentLocation: async () => ({ latitude: 49.28, longitude: -123.12, accuracyMeters: 5, timestamp: 1 }),
     perf: { startTrace: async () => undefined, stopTrace: async () => '' },
     window: { fitToWorkArea: async () => undefined, onVisibilityChanged: () => () => undefined, onFocusChanged: () => () => undefined },
     system: {
@@ -181,6 +182,22 @@ describe('createApi', () => {
     offB()
     t.receive({ type: 'data', sessionId: 'b', data: 'for b' })
     expect(b).not.toHaveBeenCalled()
+  })
+
+  it('answers the server’s location request from the host, or with why it cannot', async () => {
+    const { t, client } = connected()
+    createApi(client, platform)
+    t.receive({ type: 'location-request', requestId: 'r1' })
+    await vi.waitFor(() => expect(t.sent.find((m) => m.type === 'location-reply')).toEqual({
+      type: 'location-reply', requestId: 'r1', fix: { latitude: 49.28, longitude: -123.12, accuracyMeters: 5, timestamp: 1 },
+    }))
+
+    const refusing = connected()
+    createApi(refusing.client, { ...platform, currentLocation: () => Promise.reject(new Error('location permission was denied on this device')) })
+    refusing.t.receive({ type: 'location-request', requestId: 'r2' })
+    await vi.waitFor(() => expect(refusing.t.sent.find((m) => m.type === 'location-reply')).toEqual({
+      type: 'location-reply', requestId: 'r2', error: 'location permission was denied on this device',
+    }))
   })
 
   it('raises the window before navigating to a focus request', () => {

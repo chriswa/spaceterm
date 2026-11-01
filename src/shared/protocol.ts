@@ -173,6 +173,11 @@ export interface CanvasPauseMessage {
   paused: boolean
 }
 
+/** This device's answer to `location-request`: a fix, or why there is none. */
+export type LocationReplyMessage =
+  | { type: 'location-reply'; requestId: string; fix: LocationFix }
+  | { type: 'location-reply'; requestId: string; error: string }
+
 export interface AttachMessage {
   type: 'attach'
   seq: number
@@ -1347,6 +1352,7 @@ export type ClientMessage =
   | UsageReportQueryMessage
   | SystemStatsWatchMessage
   | CanvasPauseMessage
+  | LocationReplyMessage
   | AttachMessage
   | DetachMessage
   | DestroyMessage
@@ -1509,6 +1515,17 @@ export interface ServerRestartingMessage {
   type: 'server-restarting'
 }
 
+/**
+ * An agent asked for the user's position (`script-get-location`): read this
+ * device's and answer with `location-reply`. Sent to every client on v29 or
+ * later at once; the server keeps the answer from the device the user is
+ * most likely holding. See src/server/location-broker.ts.
+ */
+export interface LocationRequestMessage {
+  type: 'location-request'
+  requestId: string
+}
+
 /** To watching clients only: the system monitor, or null when mini-stats is not running (PUSH). */
 export interface SystemStatsMessage {
   type: 'system-stats'
@@ -1570,6 +1587,7 @@ import type { AutomationPatch } from './automation'
 import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 import type { UsageSnapshot } from './usage-report'
 import type { SystemStatsSnapshot } from './system-stats'
+import type { LocationFix } from './location'
 
 export interface SyncStateMessage {
   type: 'sync-state'
@@ -2075,6 +2093,18 @@ export interface ScriptResolveHandoffMessage {
   surfaceId: PtySessionId
 }
 
+/**
+ * The user's position, read on the client device they are most likely holding
+ * (`get_user_location`). Answered within `LOCATION_DEADLINE_MS` of the server,
+ * with a fix or with each device's reason for having none.
+ */
+export interface ScriptGetLocationMessage {
+  type: 'script-get-location'
+  seq: number
+  /** The asking agent's SPACETERM_SURFACE_ID, for the server's log of who asked. */
+  surfaceId?: PtySessionId
+}
+
 export type ScriptMessage =
   | ScriptModEmitMessage
   | ScriptHelloMessage
@@ -2086,6 +2116,7 @@ export type ScriptMessage =
   | ScriptUnreadMessage
   | ScriptResolveHandoffMessage
   | ScriptFireEventMessage
+  | ScriptGetLocationMessage
 
 // --- Script socket responses ---
 
@@ -2156,6 +2187,14 @@ export interface ScriptFireEventResult {
   error?: string
 }
 
+export interface ScriptGetLocationResult {
+  type: 'script-get-location-result'
+  seq: number
+  /** Absent on error. `device` is the label of the client that read it ("iPhone", "Mac"). */
+  location?: LocationFix & { device: string }
+  error?: string
+}
+
 export type ScriptResponse =
   | ScriptModEmitResult
   | ScriptHelloResult
@@ -2166,6 +2205,7 @@ export type ScriptResponse =
   | ScriptForkClaudeResult
   | ScriptResolveHandoffResult
   | ScriptFireEventResult
+  | ScriptGetLocationResult
 
 export interface DictationStartedMessage {
   type: 'dictation-started'
@@ -2278,3 +2318,4 @@ export type ServerMessage =
   | MobileBuildChangedMessage
   | ReloadPageMessage
   | ServerRestartingMessage
+  | LocationRequestMessage

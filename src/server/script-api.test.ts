@@ -3,6 +3,7 @@ import { ScriptApi, type ScriptConnection, type ScriptHost, type TranscriptLocat
 import { SCRIPT_EVENTS, SCRIPT_PROTOCOL_VERSION, MIN_SCRIPT_PROTOCOL_VERSION } from '../shared/protocol'
 import type { ScriptMessage } from '../shared/protocol'
 import type { ModCapability } from '../shared/mod-manifest'
+import type { Located } from './location-broker'
 import type { NodeData, TerminalNodeData } from '../shared/state'
 import { asNodeId, asPtySessionId, ROOT_NODE_ID, type NodeId, type PtySessionId } from '../shared/ids'
 
@@ -102,6 +103,12 @@ class FakeHost implements ScriptHost {
   fireEvent(eventId: string, payload: unknown): number {
     this.firedEvents.push({ eventId, payload })
     return this.listeners
+  }
+  locateResult: Promise<Located> = new Promise(() => {})
+  readonly locationAskers: string[] = []
+  getLocation(askedBy: string): Promise<Located> {
+    this.locationAskers.push(askedBy)
+    return this.locateResult
   }
   log(line: string): void { this.logs.push(line) }
 }
@@ -520,6 +527,32 @@ describe('script-fire-event', () => {
     h.send({ type: 'script-fire-event', seq: 1, eventId: 'custom_x', payload: 'x'.repeat(70_000) })
     expect(h.host.firedEvents).toEqual([])
     expect(h.conn.only.error).toContain('payload')
+  })
+})
+
+describe('script-get-location', () => {
+  const fix = { latitude: 49.28, longitude: -123.12, accuracyMeters: 8, timestamp: 1000 }
+
+  it('replies with the fix and the device it came from, naming the asking agent in the log', async () => {
+    const h = harness((host) => {
+      host.add(terminal({ id: 'a', sessionId: sid('pty-a') }))
+      host.agentNames.set(nid('a'), 'Kevin')
+      host.locateResult = Promise.resolve({ device: 'iPhone', fix })
+    })
+    h.send({ type: 'script-get-location', seq: 3, surfaceId: sid('pty-a') })
+    await h.host.locateResult
+    expect(h.host.locationAskers).toEqual(['Kevin'])
+    expect(h.conn.only).toEqual({ type: 'script-get-location-result', seq: 3, location: { ...fix, device: 'iPhone' } })
+    expect(h.conn.closed).toBe(true)
+  })
+
+  it('passes on why no device could answer', async () => {
+    const h = harness((host) => { host.locateResult = Promise.reject(new Error('iPhone: denied')) })
+    h.send({ type: 'script-get-location', seq: 1 })
+    await h.host.locateResult.catch(() => {})
+    await Promise.resolve()
+    expect(h.host.locationAskers).toEqual(['a script'])
+    expect(h.conn.only).toEqual({ type: 'script-get-location-result', seq: 1, error: 'iPhone: denied' })
   })
 })
 

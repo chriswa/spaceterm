@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 // against the same declaration this file implements. Do not restate it here.
 import type { ElectronHost, ServerPipeEventKind } from '../../shared/api'
 import type { SystemMetricsSample } from '../../shared/system-metrics'
+import { readGeolocation, type GeolocationLike } from '../../shared/location'
 
 /**
  * Electron's half of `window.api`: the window, the machine, and a pipe to the
@@ -30,6 +31,9 @@ const host: ElectronHost = {
     restartClient: () => ipcRenderer.send('app:restart-client'),
     raiseWindow: () => ipcRenderer.send('window:raise'),
     onFocusRequest: (callback: (id: string) => void) => listen('window:focus-request', callback),
+    // Chromium's location service, which on macOS is Core Location: it needs
+    // the app to be granted Location Services in System Settings.
+    currentLocation: () => readGeolocation((globalThis as { navigator?: { geolocation?: GeolocationLike } }).navigator?.geolocation),
     perf: {
       startTrace: () => ipcRenderer.invoke('perf:trace-start'),
       stopTrace: (): Promise<string> => ipcRenderer.invoke('perf:trace-stop')

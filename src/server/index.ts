@@ -108,6 +108,8 @@ import { DirectSpeech } from './direct-speech'
 import { VoiceOperator, DISCOVERY_PATH as VOICE_OPERATOR_DISCOVERY_PATH, type SpeechBackend } from './voice-operator'
 import { VoiceOperatorSubscription } from './voice-operator-subscription'
 import { parseCodexEffort, parseStatusLineEffort } from '../shared/agent-effort'
+import { LocationBroker } from './location-broker'
+import { isLocationFix } from '../shared/location'
 
 /**
  * Claude Code reserves this many tokens as a buffer before triggering autocompact.
@@ -831,6 +833,31 @@ function setReceptionistMuted(deviceId: string, muted: boolean): void {
  * What the user is looking at, for the receptionist's `nearby` tool: the
  * screen of the device holding Control, else whichever screen moved last.
  */
+/** Reading the device's position (`location-request`) was new in v29. */
+const LOCATION_PROTOCOL_VERSION = 29
+
+/**
+ * The user's position for an agent, from whichever device they are holding:
+ * the one holding Control, then whichever screen moved last, as for
+ * `receptionistView`. See location-broker.ts for how the answers are weighed.
+ */
+const locationBroker = new LocationBroker({
+  candidates: () => {
+    const holder = stateManager.getReceptionistHolder()
+    return [...clients]
+      .filter((client): client is ClientConnection & { device: ClientDevice } =>
+        client.device !== undefined && (client.protocolVersion ?? 0) >= LOCATION_PROTOCOL_VERSION)
+      .sort((a, b) =>
+        Number(b.device.id === holder?.deviceId) - Number(a.device.id === holder?.deviceId) ||
+        (b.cameraBoundsAt ?? 0) - (a.cameraBoundsAt ?? 0))
+      .map((client) => ({ clientId: client.id, device: client.device.label }))
+  },
+  ask: (clientId, requestId) => {
+    const client = [...clients].find((c) => c.id === clientId)
+    if (client) send(client.link, { type: 'location-request', requestId })
+  },
+})
+
 function receptionistView(): { view: CameraBounds; nodes: NearbyNode[] } | undefined {
   const spokenFrom = holderClients().filter(client => client.cameraBounds).at(-1)
   const lastMoved = [...clients]
@@ -1279,6 +1306,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
       updateHandsFreeClients()
       speechLinks.close(client.id)
       updateReceptionistListener()
+      locationBroker.disconnected(client.id)
       for (const [nodeId, owner] of terminalBorrowers) {
         if (owner === client.id) returnBorrowedSize(nodeId, 'borrower disconnected')
       }
@@ -1361,6 +1389,15 @@ const scriptApi = new ScriptApi({
   emitMod: (modId, event, payload) => broadcastToAll({ type: 'mod', modId, event, payload }),
   capabilitiesFor: (modId) => modRegistry.capabilitiesFor(modId),
   fireEvent: (eventId, payload) => automationRunner?.fireEvent(eventId, payload, Date.now()) ?? 0,
+  getLocation(askedBy) {
+    const located = locationBroker.locate()
+    // Said every time, so the log shows who has had the user's position.
+    located.then(
+      ({ device, fix }) => serverLog(`[location] ${askedBy} was given ${device}'s position (±${Math.round(fix.accuracyMeters)} m)`),
+      (err: unknown) => serverLog(`[location] ${askedBy} asked; ${err instanceof Error ? err.message : String(err)}`)
+    )
+    return located
+  },
 
   shipIt: shipToSession,
 
@@ -1891,6 +1928,16 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
           const snap = snapshotManager.currentSnapshot(sessionId)
           if (snap) send(client.link, snap)
         }
+      }
+      break
+    }
+
+    case 'location-reply': {
+      if ('fix' in msg) {
+        if (isLocationFix(msg.fix)) locationBroker.answer(client.id, msg.requestId, { ok: true, fix: msg.fix })
+        else locationBroker.answer(client.id, msg.requestId, { ok: false, error: 'it sent a malformed position' })
+      } else {
+        locationBroker.answer(client.id, msg.requestId, { ok: false, error: String(msg.error) })
       }
       break
     }

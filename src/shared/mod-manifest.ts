@@ -38,6 +38,8 @@ export const MOD_CAPABILITIES = [
   'emit-mod',
   /** Receive spaceterm's event stream. */
   'subscribe-events',
+  /** Read the user's position from a client device. */
+  'read-location',
   /** Fire custom events at automation cards, which start agents. */
   'fire-events',
 ] as const

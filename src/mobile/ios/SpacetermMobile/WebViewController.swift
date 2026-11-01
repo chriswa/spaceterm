@@ -10,6 +10,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     private let events = NativeEvents()
     /// The app's own microphone, which the page asks for: hands-free mode.
     private lazy var microphone = NativeMicrophone(events: events)
+    /// The phone's position, which the page asks for when an agent wants the user's.
+    private lazy var location = NativeLocation(events: events)
 
     /// `SpacetermURLs` from Info.plist, written at build time by install.sh:
     /// one pairing URL per Mac, for a phone that is on one tailnet at a time.
@@ -52,9 +54,12 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.userContentController.add(microphone, name: "nativeMicrophone")
         // The page's word that the server has the app's events, so it can forget them.
         config.userContentController.add(events, name: "nativeEvents")
+        // Where the user is, for an agent that asked (native-location.ts).
+        config.userContentController.add(location, name: "nativeLocation")
 
         webView = WKWebView(frame: .zero, configuration: config)
         microphone.webView = webView
+        location.webView = webView
         events.webView = webView
         webView.uiDelegate = self
         webView.navigationDelegate = self
