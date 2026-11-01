@@ -936,14 +936,12 @@ export interface MobileAppInstallMessage {
 
 /**
  * The iPhone's Action button shortcut for hands-free's "dictate …": made and
- * signed on this Mac if need be, and its path on the web gateway returned —
- * or, with `check`, whether Shortcuts has fetched it since it was last asked
- * for. See `src/server/action-button-shortcut.ts`.
+ * signed on this Mac if need be, and its path on the web gateway returned.
+ * See `src/server/action-button-shortcut.ts`.
  */
 export interface ActionButtonShortcutMessage {
   type: 'action-button-shortcut'
   seq: number
-  check?: boolean
 }
 
 /**
@@ -1521,8 +1519,6 @@ export interface ActionButtonShortcutResultMessage {
   /** Where the web gateway serves the signed shortcut. */
   urlPath?: string
   message?: string
-  /** For `check`: Shortcuts fetched it since it was last asked for. */
-  fetched?: boolean
 }
 
 /**

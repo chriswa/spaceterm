@@ -545,7 +545,6 @@ export class FakeBridge implements Api {
   installMobileApp = (): Promise<{ ok: boolean; message?: string }> => this.reply('installMobileApp', { ok: true })
   actionButtonShortcut = (): Promise<{ ok: boolean; urlPath?: string; message?: string }> =>
     this.reply('actionButtonShortcut', { ok: true, urlPath: '/action-button/secret/Copy-Last-Dictation.shortcut' })
-  actionButtonShortcutFetched = (): Promise<boolean> => this.reply('actionButtonShortcutFetched', true)
   writeDebugLog = (content: string): Promise<string> =>
     this.reply('writeDebugLog', '/tmp/fake-debug.log', content)
   openExternal = (url: string): Promise<void> => this.reply('openExternal', undefined, url)

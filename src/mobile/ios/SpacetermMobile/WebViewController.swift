@@ -14,6 +14,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     private lazy var location = NativeLocation(events: events)
     /// The last "dictate …" said hands-free, kept for the Action button.
     private lazy var dictation = NativeDictation(events: events)
+    /// The Action button's shortcut, offered to Shortcuts to add.
+    private lazy var shortcutImport = NativeShortcutImport(events: events)
 
     /// `SpacetermURLs` from Info.plist, written at build time by install.sh:
     /// one pairing URL per Mac, for a phone that is on one tailnet at a time.
@@ -63,10 +65,14 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.userContentController.add(location, name: "nativeLocation")
         // Words said after "dictate", for the Action button to copy (native-dictation.ts).
         config.userContentController.add(dictation, name: "nativeDictation")
+        // A shortcut the Mac signed, opened in Shortcuts (action-button-setup.ts).
+        config.userContentController.add(shortcutImport, name: "nativeShortcut")
 
         webView = WKWebView(frame: .zero, configuration: config)
         microphone.webView = webView
         location.webView = webView
+        shortcutImport.webView = webView
+        shortcutImport.presenter = self
         events.webView = webView
         webView.uiDelegate = self
         webView.navigationDelegate = self
@@ -139,8 +145,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     // MARK: - Navigation
 
     /// Spaceterm's own pages stay here; anything else opens in the browser, or
-    /// the app its scheme names — `x-safari-https:` on a Spaceterm address
-    /// included, which is Safari asked for by name (action-button-setup.ts).
+    /// the app its scheme names — even with a Spaceterm address in it.
     /// `spaceterm://retry` is the problem page's way back: another race.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {

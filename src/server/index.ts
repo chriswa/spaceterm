@@ -2288,10 +2288,6 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'action-button-shortcut': {
-      if (msg.check) {
-        send(client.link, { type: 'action-button-shortcut-result', seq: msg.seq, ok: true, fetched: actionButtonShortcut.fetchedSinceAsked() })
-        break
-      }
       void actionButtonShortcut.prepare().catch((err: unknown) => ({ ok: false as const, message: `The Mac could not make the shortcut: ${err instanceof Error ? err.message : String(err)}` })).then((outcome) => {
         send(client.link, {
           type: 'action-button-shortcut-result',

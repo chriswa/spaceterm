@@ -13,7 +13,6 @@ function harness({ xcconfig = XCCONFIG as string | undefined, problem = undefine
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'action-button-'))
   dirs.push(dir)
   const signed: string[] = []
-  let now = 1000
   const deps: ActionButtonShortcutDeps = {
     readXcconfig: () => xcconfig,
     sign: async (input, output) => {
@@ -23,9 +22,8 @@ function harness({ xcconfig = XCCONFIG as string | undefined, problem = undefine
       return undefined
     },
     dir,
-    now: () => now,
   }
-  return { shortcut: new ActionButtonShortcut(deps, () => {}), signed, tick: () => { now += 1 } }
+  return { shortcut: new ActionButtonShortcut(deps, () => {}), signed }
 }
 
 describe('phoneAppFromXcconfig', () => {
@@ -71,19 +69,6 @@ describe('ActionButtonShortcut', () => {
     expect(h.shortcut.downloadFile(first.urlPath)).toMatch(/\.shortcut$/)
     expect(h.shortcut.downloadFile(first.urlPath.replace(/action-button\/[^/]+/, 'action-button/guess'))).toBeNull()
     expect(h.shortcut.downloadFile('/install/x/manifest.plist')).toBeNull()
-  })
-
-  it('knows whether it was fetched since it was last asked for', async () => {
-    const h = harness()
-    const outcome = await h.shortcut.prepare()
-    if (!outcome.ok) throw new Error(outcome.message)
-    expect(h.shortcut.fetchedSinceAsked()).toBe(false)
-    h.tick()
-    h.shortcut.downloadFile(outcome.urlPath)
-    expect(h.shortcut.fetchedSinceAsked()).toBe(true)
-    h.tick()
-    await h.shortcut.prepare()
-    expect(h.shortcut.fetchedSinceAsked()).toBe(false)
   })
 
   it('says why when there is no app to call, or signing fails', async () => {

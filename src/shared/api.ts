@@ -516,8 +516,6 @@ export interface Api {
    * (src/server/action-button-shortcut.ts).
    */
   actionButtonShortcut(): Promise<{ ok: boolean; urlPath?: string; message?: string }>
-  /** Whether Shortcuts fetched it since it was last asked for: its import link worked. */
-  actionButtonShortcutFetched(): Promise<boolean>
   writeDebugLog(content: string): Promise<string>
   openExternal(url: string): Promise<void>
   tts: TtsApi

@@ -20,9 +20,8 @@ import * as path from 'path'
  * import it.
  *
  * Served by the web gateway under a secret made at startup (`downloadFile`),
- * since Shortcuts fetches it without the page's token. Whether it has been
- * fetched since the phone asked (`fetchedSinceAsked`) tells the phone whether
- * Shortcuts' import link worked, or it should try Safari.
+ * for the iPhone app to fetch and hand to Shortcuts (NativeShortcutImport.swift).
+ * Shortcuts' own import link cannot take it: it accepts only iCloud links.
  */
 
 export const SHORTCUT_NAME = 'Copy Last Dictation'
@@ -122,7 +121,6 @@ export interface ActionButtonShortcutDeps {
   sign(input: string, output: string): Promise<string | undefined>
   /** Where the signed shortcut is kept, one per version of it. */
   dir: string
-  now(): number
 }
 
 export function realActionButtonShortcutDeps(repoRoot: string, dir: string): ActionButtonShortcutDeps {
@@ -139,7 +137,6 @@ export function realActionButtonShortcutDeps(repoRoot: string, dir: string): Act
       child.on('exit', (code) => resolve(code === 0 && fs.existsSync(output) ? undefined : said.trim() || `shortcuts sign exited ${code}`))
     }),
     dir,
-    now: () => Date.now(),
   }
 }
 
@@ -150,8 +147,6 @@ const FILE_NAME = `${SHORTCUT_NAME.replace(/ /g, '-')}.shortcut`
 export class ActionButtonShortcut {
   private readonly secret = randomBytes(16).toString('hex')
   private signed: string | undefined
-  private fetchedAt = -Infinity
-  private askedAt = Infinity
 
   constructor(private readonly deps: ActionButtonShortcutDeps, private readonly log: (message: string) => void) {}
 
@@ -173,21 +168,14 @@ export class ActionButtonShortcut {
       if (problem) return { ok: false, message: `The Mac could not sign the shortcut: ${problem}` }
     }
     this.signed = signed
-    this.askedAt = this.deps.now()
     return { ok: true, urlPath: `/action-button/${this.secret}/${FILE_NAME}` }
   }
 
-  /** The web gateway's file for `urlPath`, if it is the shortcut; a fetch is noted. */
+  /** The web gateway's file for `urlPath`, if it is the shortcut; a fetch is logged. */
   downloadFile(urlPath: string): string | null {
     const match = /^\/action-button\/([^/]+)\/([^/?]+)$/.exec(urlPath.split('?')[0])
     if (!match || match[1] !== this.secret || match[2] !== FILE_NAME || !this.signed) return null
-    this.fetchedAt = this.deps.now()
     this.log('[action-button] the shortcut was fetched')
     return this.signed
-  }
-
-  /** Whether the shortcut has been fetched since it was last asked for: the import link worked. */
-  fetchedSinceAsked(): boolean {
-    return this.fetchedAt >= this.askedAt
   }
 }

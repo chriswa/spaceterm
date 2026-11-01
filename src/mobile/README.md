@@ -637,10 +637,13 @@ attention lapsed a bare "dictate …" is only speech without "Control".
   **Copy to Clipboard**, and a notification of what was copied. Nobody
   builds it: the toolbar sheet's Action button button (far right) has the
   Mac write it and sign it (`shortcuts sign`,
-  `src/server/action-button-shortcut.ts`), and opens Shortcuts' import link
-  to it — Add Shortcut — or, if Shortcuts never fetched it, opens it in
-  Safari (`action-button-setup.ts`). Choosing it in Settings → Action Button
-  is left to the user, as iOS lets no app do it. Pasting into the field in
+  `src/server/action-button-shortcut.ts`); the app fetches it and puts up
+  iOS's Open In sheet, where Shortcuts opens it — tap Shortcuts, then Add
+  Shortcut (`NativeShortcutImport.swift`, `action-button-setup.ts`).
+  Shortcuts' `import-shortcut` link is no use here: it refuses any URL but an
+  iCloud link as invalid, without fetching it, and Safari only offers a
+  download. Choosing it in Settings → Action Button is left to the user, as
+  iOS lets no app do it. Pasting into the field in
   front is beyond any shortcut: only a keyboard extension can type into
   another app.
 

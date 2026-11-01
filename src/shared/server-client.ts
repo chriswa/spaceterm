@@ -880,13 +880,6 @@ export class ServerClient {
     return { ok: resp.ok, urlPath: resp.urlPath, message: resp.message }
   }
 
-  /** Whether Shortcuts fetched the Action button shortcut since it was last asked for. */
-  async actionButtonShortcutFetched(): Promise<boolean> {
-    const resp = await this.request({ type: 'action-button-shortcut', check: true })
-    if (resp.type !== 'action-button-shortcut-result') return unexpected(resp)
-    return resp.fetched === true
-  }
-
   speechLinkOpen(): void {
     this.fireAndForget({ type: 'speech-link-open' })
   }
