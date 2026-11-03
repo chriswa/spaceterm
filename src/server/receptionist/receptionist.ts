@@ -2848,7 +2848,7 @@ export class Receptionist {
     if (afterInterrupt) await this.deps.sleep(INTERRUPT_SETTLE_MS)
     this.deps.send(nodeId, message)
     this.watch(nodeId, 'after-work', 'Control sent it a message')
-    // Named now if it has none: "Sent to Kevin" is about to be said anyway.
+    // Named now if it has none: "Told Kevin" is about to be said anyway.
     const name = this.named(nodeId, handles)?.name ?? 'an agent'
     this.deps.log({ event: 'sent', nodeId, name, message })
     // Into the full record, so `recall` can answer "what did I tell Kevin?".
@@ -3303,7 +3303,7 @@ export class Receptionist {
     // and the restart ran first and silenced it.
     const afterWords: ToolCall[] = spoken.length ? actions.filter(letsGo) : []
     // Done before a word is said, and reported by the words: the user never
-    // waits through "Sent to Kevin" for the send. Talking over the words
+    // waits through "Told Kevin" for the send. Talking over the words
     // undoes nothing, which is why Control asks first when it is unsure.
     await this.runActions(actions.filter(call => !afterWords.includes(call)))
     // Read after the actions' awaits: muting while they ran writes this reply.
@@ -3682,7 +3682,7 @@ function acknowledgeSends(reply: Reply): Reply {
   if (reply.say.length) return reply
   const recipients = [...new Set(reply.tools.flatMap(call => call.tool === 'send' ? [call.agent] : []))]
   if (!recipients.length) return reply
-  return { ...reply, say: [{ from: 'control', text: `Sent to ${recipients.map(handle => `{${handle}}`).join(' and ')}.` }] }
+  return { ...reply, say: [{ from: 'control', text: `Told ${recipients.map(handle => `{${handle}}`).join(' and ')}.` }] }
 }
 
 /** What a side question cost, in tokens: the cached context it read, and what it paid for afresh. */

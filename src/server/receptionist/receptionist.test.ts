@@ -2136,11 +2136,11 @@ describe('Receptionist', () => {
     expect(h.wire).toEqual([`escape ${SALLY_ID}`, `send ${SALLY_ID} Please disregard my last message; it was sent to you by mistake.`])
   })
 
-  it('says "Sent to" when the model sent something and said nothing', async () => {
+  it('says "Told" when the model sent something and said nothing', async () => {
     const h = harness({ replies: [reply([], [{ tool: 'send', agent: KEVIN, message: 'Commit, please.' }])] })
     await h.receptionist.hear('tell Kevin to commit', 'spoken')
     await flush()
-    expect(h.spoken[0].content).toEqual([{ text: 'Sent to Kevin.', voice: RECEPTIONIST_VOICE }])
+    expect(h.spoken[0].content).toEqual([{ text: 'Told Kevin.', voice: RECEPTIONIST_VOICE }])
   })
 
   it('starts a new agent in a directory, and watches for its first answer', async () => {
