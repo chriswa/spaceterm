@@ -155,6 +155,11 @@ describe('splitTurnBody', () => {
     expect(splitTurnBody(body)?.heard).toBe(heard)
   })
 
+  it('tells the model an item off the backlog may be new to the user', () => {
+    const body = renderTurnBody([], undefined, undefined, undefined, 0, [], 'Rita has ended.')
+    expect(body).toMatch(/Rita has ended\.\nThe user may never have heard of it/)
+  })
+
   it('finds nothing in a turn the user did not speak in', () => {
     expect(splitTurnBody(renderTurnBody([{ kind: 'agent-ended', agent: 'x', archived: true, lastSaid: '', cache: {} }], undefined))).toBeUndefined()
   })
