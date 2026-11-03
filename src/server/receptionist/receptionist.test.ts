@@ -130,6 +130,10 @@ function harness(opts: {
   compactsAt?: number
   /** The compaction the daemon reports to each message continuing a session, and the model's window; by default none. */
   compaction?: { report: Compaction; contextWindow: number }
+  /** The session's context after each answer, in tokens; by default unknown. */
+  contextTokens?: number | ((turn: SessionTurn) => number)
+  /** How a compaction asked for goes; by default it compacts to 3,000 tokens at once. */
+  compact?: (sessionId: string) => Promise<Compaction>
   /** Messages the model fails to answer, as when its safeguards flag one. */
   failWhen?: (turn: SessionTurn) => boolean
   /** How many messages find the session busy with a turn some earlier server left behind. */
@@ -222,6 +226,8 @@ function harness(opts: {
   const consumedMarks: Array<{ of: number; part: number; from: number; to: number; how: string }> = []
   const notDone: string[] = []
   const traces: ControlTrace[] = []
+  /** Each compaction asked for, by session, and how many messages had been sent when it was. */
+  const compactions: Array<{ sessionId: string; afterTurns: number }> = []
   const shownImages: Array<{ from: string; images: ControlImage[]; summary?: string }> = []
   /** How far the voice had got, each time it moved on, and undefined each time nothing was spoken. */
   const speaking: Array<{ of: number; parts: number[] } | undefined> = []
@@ -273,6 +279,7 @@ function harness(opts: {
         return {
           text, sessionId: turn.sessionId ?? `session-${++sessions}`,
           ...(opts.compactsAt !== undefined ? { compactsAt: opts.compactsAt } : {}),
+          ...(opts.contextTokens !== undefined ? { contextTokens: typeof opts.contextTokens === 'number' ? opts.contextTokens : opts.contextTokens(turn) } : {}),
           ...(opts.compaction && turn.sessionId ? { compaction: opts.compaction.report, contextWindow: opts.compaction.contextWindow } : {}),
         }
       })().finally(() => { if (busy === turn) busy = undefined })
@@ -379,10 +386,17 @@ function harness(opts: {
     sleep: opts.sleep ?? (async () => {}),
     voiceTick: opts.voiceTick ?? (() => new Promise(() => {})),
     voiceOperatorDiscovered: () => true,
+    compactSession: (sessionId) => {
+      compactions.push({ sessionId, afterTurns: turns.length })
+      return opts.compact?.(sessionId) ?? Promise.resolve({
+        trigger: 'size', finishedBeforeMs: 0, durationMs: 30_000, tokensBefore: 45_000, tokensAfter: 3_000,
+        thresholdTokens: 40_000, costUsd: 0.05, cachedTokens: 9_000, uncachedTokens: 36_000,
+      })
+    },
     spacetermStatus: opts.status ?? (() => ({ restartPending: false, phoneInstallPending: false, reloadPending: false, device: 'Mac' })),
   }, { listener: { id: 'here', speech: opts.speech ?? speech }, onPhase: () => {}, onError: () => {}, onSpeaking: (now) => speaking.push(now) })
   return {
-    receptionist, listener: { id: 'here', speech }, backlog, turns, aborted, spoken, focused, sideQuestions, endedQuestions, assigned, wire, notices, record, heardMarks, consumedMarks, notDone, traces, speaking, shownImages,
+    receptionist, listener: { id: 'here', speech }, backlog, turns, aborted, spoken, focused, sideQuestions, endedQuestions, assigned, wire, notices, record, heardMarks, consumedMarks, notDone, traces, speaking, shownImages, compactions,
     get session() { return session },
     get overlapped() { return overlapped },
     setState(nodeId: NodeId, state: ClaudeState) {
@@ -579,21 +593,106 @@ describe('Receptionist', () => {
     expect(traces[0].detail).toContain('repeated to it word for word')
   })
 
-  it('says it is compacting its memory when a message will wait behind a compaction, once for each', async () => {
-    const run = async (compactsAt: number) => {
+  describe('compaction for size', () => {
+    const texts = (h: { spoken: Array<{ content: SpeechContent }> }): string[] =>
+      h.spoken.map(entry => (entry.content as Array<{ text: string }>).map(part => part.text).join(' '))
+
+    it('compacts once the turn is over, saying so as it starts and ends, and the next message repeats the last exchanges', async () => {
       const h = harness({
-        compactsAt,
-        replies: [reply([{ from: 'control', text: 'Kevin is on it.' }]), reply([{ from: 'control', text: 'Sent.' }]), reply([{ from: 'control', text: 'Done.' }])],
+        contextTokens: turn => turn.sessionId ? 3_100 : 45_000,
+        replies: [reply([{ from: 'control', text: 'Kevin is on it.' }]), reply([{ from: 'control', text: 'Sent.' }])],
       })
-      for (const words of ['what is Kevin doing?', 'tell him to do that now', 'thanks']) {
-        await h.receptionist.hear(words, 'spoken')
-        await flush()
-      }
-      return h.spoken.map(entry => (entry.content as Array<{ text: string }>).map(part => part.text).join(' '))
-    }
-    expect(await run(Date.now() - 1_000)).toEqual(['Kevin is on it.', 'One moment, I\'m compacting my memory.', 'Sent.', 'Done.'])
-    // Long finished: the message does not wait, so there is nothing to say.
-    expect(await run(Date.now() - 5 * 60_000)).toEqual(['Kevin is on it.', 'Sent.', 'Done.'])
+      await h.receptionist.hear('what is Kevin doing?', 'spoken')
+      await flush()
+      expect(h.compactions).toEqual([{ sessionId: 'session-1', afterTurns: 1 }])
+      expect(texts(h)).toEqual(['Kevin is on it.', 'Compaction starting.', 'Compaction complete.'])
+      expect(h.traces.filter(trace => trace.what === 'compacted').map(trace => trace.text))
+        .toEqual([expect.stringMatching(/^Memory compacted \(over the size threshold\): 45\.0k → 3\.0k tokens/)])
+      await h.receptionist.hear('tell him to do that now', 'spoken')
+      await flush()
+      expect(h.turns[1].prompt).toMatch(/^EARLIER CONVERSATION[^]*THE USER SAYS: what is Kevin doing\?/)
+      // Shown once, when it ran, not again by the message that first reaches the compacted session.
+      expect(h.traces.filter(trace => trace.what === 'compacted')).toHaveLength(1)
+    })
+
+    it('holds every message back until the compaction is done', async () => {
+      let finish: (c: Compaction) => void = () => {}
+      const h = harness({
+        contextTokens: turn => turn.sessionId ? 3_100 : 45_000,
+        compact: () => new Promise(resolve => { finish = resolve }),
+        replies: [reply([{ from: 'control', text: 'Kevin is on it.' }]), reply([{ from: 'control', text: 'Sent.' }])],
+      })
+      await h.receptionist.hear('what is Kevin doing?', 'spoken')
+      await flush()
+      const second = h.receptionist.hear('tell him to do that now', 'spoken')
+      await flush()
+      expect(h.turns).toHaveLength(1)
+      finish({
+        trigger: 'size', finishedBeforeMs: 0, durationMs: 30_000, tokensBefore: 45_000, tokensAfter: 3_000,
+        thresholdTokens: 40_000, costUsd: 0.05, cachedTokens: 9_000, uncachedTokens: 36_000,
+      })
+      await second
+      await flush()
+      expect(h.turns).toHaveLength(2)
+      expect(texts(h)).toEqual(['Kevin is on it.', 'Compaction starting.', 'Compaction complete.', 'Sent.'])
+      // Small again: nothing more to compact.
+      expect(h.compactions).toHaveLength(1)
+    })
+
+    it('never compacts between the steps of a turn', async () => {
+      const h = harness({
+        contextTokens: 45_000,
+        replies: [reply([], [{ tool: 'list_agents' }]), reply([{ from: 'control', text: 'Two agents.' }])],
+      })
+      await h.receptionist.hear('who is there?', 'spoken')
+      await flush()
+      expect(h.compactions).toEqual([{ sessionId: 'session-1', afterTurns: 2 }])
+    })
+
+    it('waits for an agent\'s answer to be told before compacting, so the user hears it all before any wait', async () => {
+      let answerSide: ((result: SideQuestionResult) => void) | undefined
+      const h = harness({
+        contextTokens: 45_000,
+        askAgent: () => new Promise((resolve) => { answerSide = resolve }),
+        replies: [
+          reply([{ from: 'control', text: 'Asked.' }], [{ tool: 'ask_agent', agent: KEVIN, question: 'How big is the tank?' }]),
+          reply([{ from: KEVIN, text: 'Forty-two litres.' }, { from: 'control', text: 'Want it bigger?' }]),
+        ],
+      })
+      await h.receptionist.hear('ask Kevin how big the tank is', 'spoken')
+      await flush()
+      expect(h.compactions).toEqual([])
+      answerSide?.({ ok: true, text: '42 litres.', usage: {} })
+      await flush()
+      expect(h.compactions).toEqual([{ sessionId: 'session-1', afterTurns: 2 }])
+      expect(texts(h)).toEqual(['Asked.', 'Kevin here. Forty-two litres. Want it bigger?', 'Compaction starting.', 'Compaction complete.'])
+    })
+
+    it('leaves a session under the threshold alone', async () => {
+      const h = harness({ contextTokens: 39_000, replies: [reply([{ from: 'control', text: 'Kevin is on it.' }])] })
+      await h.receptionist.hear('what is Kevin doing?', 'spoken')
+      await flush()
+      expect(h.compactions).toEqual([])
+      expect(texts(h)).toEqual(['Kevin is on it.'])
+    })
+
+    it('says a failed compaction failed, and does not try again straight away', async () => {
+      const h = harness({
+        contextTokens: 45_000,
+        compact: () => Promise.reject(new Error('daemon returned 404 Not Found')),
+        replies: [reply([{ from: 'control', text: 'Kevin is on it.' }]), reply([{ from: 'control', text: 'Sent.' }])],
+      })
+      await h.receptionist.hear('what is Kevin doing?', 'spoken')
+      await flush()
+      await h.receptionist.hear('tell him to do that now', 'spoken')
+      await flush()
+      expect(h.compactions).toHaveLength(1)
+      expect(texts(h)).toEqual(['Kevin is on it.', 'Compaction starting.', 'Compaction failed.', 'Sent.'])
+      expect(h.traces.filter(trace => trace.what === 'compacted').map(trace => trace.text))
+        .toEqual([expect.stringMatching(/^Memory compaction failed \(over the size threshold\) at 45\.0k tokens/)])
+      // Kept whole: the session still has every word.
+      expect(h.turns[1].prompt).toMatch(/^THE USER SAYS: tell him to do that now/)
+    })
   })
 
   describe('Spaceterm status', () => {

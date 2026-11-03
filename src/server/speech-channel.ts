@@ -208,6 +208,9 @@ export class SpeechChannel {
    */
   get phase(): SpeechPhase { return this.currentPhase }
 
+  /** The attempt that owns the channel, if any: one with words of its own to add say them after its others. */
+  get current(): Attempt | undefined { return this.attempt }
+
   /**
    * Whether the channel is producing something, and so has something to
    * interrupt.

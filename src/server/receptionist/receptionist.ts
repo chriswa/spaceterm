@@ -37,7 +37,7 @@ import { FORGOTTEN_MS, type BackBurner } from './back-burner'
 import type { EndedAgent, EndedAgents } from './ended-agents'
 import type { Asking, PendingNews } from './pending-news'
 import { RESTARTED_MID_REPLY, type CarryOver } from './carry-over'
-import { compactionTrace, type Compaction } from './compaction'
+import { COMPACT_ABOVE_TOKENS, compactionTrace, type Compaction } from './compaction'
 import { describeBlock, isBlocked } from './blocked'
 import {
   cacheWords, capMessage, endedAskable, endedCacheWords, NO_SIDE_QUESTIONS, readAgent, renderAgentDetails, renderRoster, STATE_WORDS, type RosterAgent,
@@ -175,6 +175,12 @@ export interface ReceptionistDeps {
    * turn where it is, and the answer comes back at once with `aborted` set.
    */
   askModel(turn: SessionTurn, signal: AbortSignal, abort?: AbortSignal): Promise<SessionAnswer>
+  /**
+   * Compact Control's session now, resolving once it is done with how it
+   * went; a failure is reported in its `error`. Rejects with `SessionBusy`
+   * while the session is answering a message.
+   */
+  compactSession(sessionId: string, signal: AbortSignal): Promise<Compaction>
   /** Rank the live agents against a description, with Jev. */
   findAgents(query: string, agents: readonly RosterAgent[]): Promise<AgentRanking>
   /** Every live Claude Code surface, freshly read. */
@@ -489,10 +495,14 @@ export const VOICE_FOLLOW_MS = 150
 /** How long a cut waits for the voice to say where interim words stopped, before going by the last it heard. */
 export const INTERIM_CUT_WAIT_MS = 1500
 const TURN_FAILED_SPEECH = 'Sorry, I lost my train of thought. Could you say that again?'
-/** Said while a message waits behind a compaction, which takes up to a minute: see `announceCompaction`. */
-const COMPACTING_SPEECH = 'One moment, I\'m compacting my memory.'
-/** How long a compaction may still be running after it comes due: they take 15 to 55 seconds. */
-export const COMPACTION_MAY_RUN_MS = 60_000
+/** Said as a compaction for size starts and ends: see `compactIfLarge`. */
+const COMPACTION_STARTING = 'Compaction starting.'
+const COMPACTION_COMPLETE = 'Compaction complete.'
+const COMPACTION_FAILED = 'Compaction failed.'
+/** A compaction takes 15 to 55 seconds; past this it is given up on, and the session kept whole. */
+const COMPACT_TIMEOUT_MS = 5 * 60_000
+/** How long after a failed compaction before the next is tried: each one blocks Control while it runs. */
+const COMPACT_RETRY_MS = 10 * 60_000
 /** How many servers may ask one side question before it is given up on: see `resumeQuestions`. */
 export const MAX_QUESTION_TRIES = 3
 /**
@@ -595,8 +605,12 @@ export class Receptionist {
   private handover: string | undefined
   /** The compaction last shown in the transcript (its `compactsAt`), so a message sent again does not show it twice. */
   private compactionShown?: number
-  /** The compaction last announced aloud (its `compactsAt`), so a message sent again does not say so twice. */
-  private compactionAnnounced?: number
+  /** The session's context and the model's window, as its last answer said: what `compactIfLarge` goes by. */
+  private context: { tokens?: number; window?: number } = {}
+  /** A compaction for size is queued or running: see `compactIfLarge`. */
+  private compacting = false
+  /** No compaction for size before this (epoch ms): the last one failed. */
+  private compactRetryAt = 0
   /** The last reply spoken, so an interruption can say how much of it was heard. */
   private lastSpoken?: SpokenPart[]
   /** Where `lastSpoken` is in the record, so an interruption can mark it there too. */
@@ -2035,7 +2049,90 @@ export class Receptionist {
       // Told, or failed past retelling: either way, no longer the next server's to tell.
       this.events.told(attempt)
       if (!monitoring) this.channel.settle(attempt)
+      this.compactIfLarge()
     }
+  }
+
+  /**
+   * Compact the session once everything the user will hear in answer to
+   * them has been queued, if it has grown past the threshold, so that it
+   * runs while they listen and no message waits for it. That is the end of a
+   * turn with nothing more on its way: an agent's answer to a side question,
+   * or news waiting to be told, is a turn still to come, which a compaction
+   * started now would hold back; the compaction waits for the end of that
+   * one instead. Queued as a message is, so nothing reaches the session
+   * until it is done, and nothing stops it: a message sent meanwhile waits
+   * its turn, and a stop silences only the words. Said as it starts and as
+   * it ends.
+   */
+  private compactIfLarge(): void {
+    if (this.compacting || !this.mayCompact()) return
+    this.compacting = true
+    const run = async (): Promise<void> => {
+      try {
+        // Read once its turn in the queue comes: a message ahead of it may have changed any of it.
+        const session = this.session
+        const before = this.context.tokens ?? 0
+        if (!session || !this.mayCompact()) return
+        await this.announce(COMPACTION_STARTING)
+        this.deps.log({ event: 'compacting', sessionId: session.sessionId, contextTokens: before })
+        let compaction: Compaction
+        try {
+          compaction = await this.deps.compactSession(session.sessionId, AbortSignal.timeout(COMPACT_TIMEOUT_MS))
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          compaction = {
+            trigger: 'size', finishedBeforeMs: 0, durationMs: 0, tokensBefore: before, tokensAfter: before,
+            thresholdTokens: COMPACT_ABOVE_TOKENS, costUsd: 0, cachedTokens: 0, uncachedTokens: 0, error: message,
+          }
+        }
+        const finished = Date.now()
+        const { text, detail } = compactionTrace(compaction, this.context.window, finished, false)
+        this.trace('compacted', text, detail)
+        this.deps.log({ event: 'compacted', sessionId: session.sessionId, ...compaction })
+        if (compaction.error === undefined) {
+          this.context = { ...this.context, tokens: compaction.tokensAfter }
+          // Compacted to a summary: the next message repeats the last exchanges to it, and is not
+          // the one to show the compaction, which is shown already.
+          if (this.session?.sessionId === session.sessionId) {
+            this.session = { ...this.session, compactsAt: finished }
+            this.deps.session.save(this.session)
+            this.compactionShown = finished
+          }
+        } else {
+          serverLog(`[receptionist] compaction failed: ${compaction.error}`)
+          this.compactRetryAt = finished + COMPACT_RETRY_MS
+        }
+        await this.announce(compaction.error === undefined ? COMPACTION_COMPLETE : COMPACTION_FAILED)
+      } finally {
+        this.compacting = false
+      }
+    }
+    const next = this.queue.then(run, run)
+    this.queue = next.catch(() => undefined)
+  }
+
+  /** Whether the session is over the threshold and nothing more is coming for the user to hear: see `compactIfLarge`. */
+  private mayCompact(): boolean {
+    if ((this.context.tokens ?? 0) <= COMPACT_ABOVE_TOKENS || Date.now() < this.compactRetryAt) return false
+    return this.events.length === 0 && this.events.questionsOut === 0 && this.carried === undefined && !this.backingOff
+  }
+
+  /**
+   * A line of Control's own, outside any reply: said after whatever the turn
+   * that owns the voice has queued, or on its own when nothing does. Never
+   * over the user, and not when muted or away.
+   */
+  private async announce(text: string): Promise<void> {
+    if (!this.listening || this.reading || this.held) return
+    const content = [{ text, voice: RECEPTIONIST_VOICE }]
+    const owner = this.channel.current
+    if (owner) {
+      await this.channel.deliverInterim(owner, content)
+      return
+    }
+    const attempt = this.channel.begin('synthesizing')
+    if (!await this.channel.deliver(attempt, content)) this.channel.settle(attempt)
   }
 
   /**
@@ -2236,7 +2333,6 @@ export class Receptionist {
         handover !== undefined ? `${HANDOVER_HEADING}\n${handover}` : undefined,
         recap, statusNote, notes.length ? `NOTE: ${notes.join(' ')}` : undefined, opening ? opening.render(opening.words) : prompt,
       ].filter(Boolean).join('\n\n')
-      await this.announceCompaction(attempt, session)
       try {
         const sentAt = Date.now()
         const answer = await this.askWhenFree(
@@ -2249,6 +2345,7 @@ export class Receptionist {
           throw new Unsent(first)
         }
         this.traceCompaction(answer, compacted, sentAt, recap !== undefined)
+        if (answer.contextTokens !== undefined) this.context = { tokens: answer.contextTokens, window: answer.contextWindow ?? this.context.window }
         if (handover !== undefined) this.handover = undefined
         // The message is in the session, so the session knows the status now:
         // told it just now, or told it before and nothing changed. A session
@@ -2283,19 +2380,6 @@ export class Receptionist {
     const next = this.queue.then(run, run)
     this.queue = next.catch(() => undefined)
     return next
-  }
-
-  /**
-   * Tell the listener why the reply is slow when the message about to leave
-   * will wait behind a compaction the daemon is running: said as "Hang on."
-   * is, between the turn's other words, and never over the user.
-   */
-  private async announceCompaction(attempt: Attempt, session: SavedSession | undefined): Promise<void> {
-    if (!compacting(session) || session.compactsAt === this.compactionAnnounced) return
-    if (!attempt.isCurrent || !this.listening || this.reading || this.held) return
-    this.compactionAnnounced = session.compactsAt
-    this.deps.log({ event: 'compacting', compactsAt: session.compactsAt })
-    await this.channel.deliverInterim(attempt, [{ text: COMPACTING_SPEECH, voice: RECEPTIONIST_VOICE }])
   }
 
   /** Words carried since `opening`'s turn began go with it, ahead of its own: they were said first. */
@@ -3793,17 +3877,6 @@ function storedReply(froms: readonly string[], spoken: readonly SpokenPart[]): s
  */
 function forgets(session: SavedSession | undefined): boolean {
   return !session || (session.compactsAt !== undefined && Date.now() >= session.compactsAt)
-}
-
-/**
- * Whether the daemon is likely still compacting the session, so that a
- * message sent now waits for it: the compaction came due within the time one
- * takes.
- */
-function compacting(session: SavedSession | undefined): session is SavedSession & { compactsAt: number } {
-  if (session?.compactsAt === undefined) return false
-  const since = Date.now() - session.compactsAt
-  return since >= 0 && since < COMPACTION_MAY_RUN_MS
 }
 
 /**

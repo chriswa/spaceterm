@@ -54,10 +54,10 @@ export interface ClaudePrintRequest {
   keepAlive?: { minutes: number; priority: boolean }
   /**
    * Compact the session just before its prompt cache expires (55 minutes after
-   * this turn, unless another turn comes first), and whenever its context
-   * grows past `aboveTokens`.
+   * this turn, unless another turn comes first). To compact it sooner, call
+   * `compactClaudePrint` when the caller is ready to wait for it.
    */
-  autoCompact?: { aboveTokens: number }
+  autoCompact?: true
   /** Names the caller in the daemon's usage log, which is where cost is tracked. */
   tag: string
   /** Kills the CLI. The daemon still finishes the turn it started: to stop it, use `abort`. */
@@ -93,23 +93,8 @@ export interface ClaudePrintResponse {
     output_tokens_details?: { thinking_tokens?: number }
   }
   /** A compaction of the session that finished, or failed, since its previous turn. */
-  compaction?: {
-    trigger: 'auto' | 'size'
-    /** How long before this turn began it finished. */
-    compacted_before_ms: number
-    /** When the turn before it ended. */
-    last_activity?: string
-    /** How long this request waited for it. */
-    waited_ms?: number
-    context_tokens_before: number
-    context_tokens_after: number
-    duration_ms: number
-    cost_usd: number
-    cache_read_tokens: number
-    input_tokens: number
-    error?: string
-  }
-  /** What this turn arranged: a compaction started now (`size`), or scheduled for `at` (`auto`). */
+  compaction?: ClaudePrintCompaction
+  /** What this turn arranged: a compaction scheduled for `at` (`auto`). */
   next_compaction?: { trigger: 'auto' | 'size'; at: string }
   /**
    * Set when the turn was aborted, and `result` is then empty. An abort is
@@ -118,6 +103,27 @@ export interface ClaudePrintResponse {
    * prompt was never sent.
    */
   abort?: { prompt_in_session: boolean }
+}
+
+/**
+ * How a compaction went: reported to the turn after it, or answered to the
+ * `compactClaudePrint` that asked for it (`asked`).
+ */
+export interface ClaudePrintCompaction {
+  trigger: 'auto' | 'size' | 'asked'
+  /** How long before this turn began it finished. */
+  compacted_before_ms: number
+  /** When the turn before it ended. */
+  last_activity?: string
+  /** How long this request waited for it. */
+  waited_ms?: number
+  context_tokens_before: number
+  context_tokens_after: number
+  duration_ms: number
+  cost_usd: number
+  cache_read_tokens: number
+  input_tokens: number
+  error?: string
 }
 
 /**
@@ -137,14 +143,46 @@ export function askClaudePrint(req: ClaudePrintRequest): Promise<ClaudePrintResp
     args.push('--keep-alive', `${req.keepAlive.minutes}m`)
     if (req.keepAlive.priority) args.push('--priority')
   }
-  if (req.autoCompact) args.push('--auto-compact', '--compact-above', String(req.autoCompact.aboveTokens))
+  if (req.autoCompact) args.push('--auto-compact')
   if (req.turnId) args.push('--turn-id', req.turnId)
   const { abort, turnId } = req
   const onAbort = () => { if (turnId) abortClaudePrint(turnId) }
   if (abort?.aborted) onAbort()
   else abort?.addEventListener('abort', onAbort, { once: true })
-  return new Promise<ClaudePrintResponse>((resolve, reject) => {
-    const child = spawn(CLAUDE_PRINT_BIN, args, { env: spawnEnv(), stdio: ['pipe', 'pipe', 'pipe'], signal: req.signal })
+  return runClaudePrint<ClaudePrintResponse>(args, req.prompt, req.signal).then((response) => {
+    if (response.is_error) throw new Error(`claude reported an error in session ${response.session_id}: ${response.result}`)
+    return response
+  }).finally(() => abort?.removeEventListener('abort', onAbort))
+}
+
+export interface ClaudePrintCompactRequest {
+  sessionId: string
+  /** The session's profile, which resumes it afterwards if it has no live process. */
+  model?: string
+  effort?: string
+  noThinking?: boolean
+  tag: string
+  signal?: AbortSignal
+}
+
+/**
+ * Compact the session now, resolving once it is done with how it went: a
+ * failure is reported in `error`, and the session then still holds
+ * everything. A compaction already running is waited for instead. Rejects
+ * with `ClaudePrintBusy` while the session is answering a turn.
+ */
+export function compactClaudePrint(req: ClaudePrintCompactRequest): Promise<ClaudePrintCompaction> {
+  const args = ['compact', '--tag', req.tag, '-s', req.sessionId]
+  if (req.model) args.push('-m', req.model)
+  if (req.effort) args.push('-e', req.effort)
+  if (req.noThinking) args.push('--no-thinking')
+  return runClaudePrint<ClaudePrintCompaction>(args, '', req.signal)
+}
+
+/** Run the CLI, giving it `stdin`, and parse the JSON it prints. */
+function runClaudePrint<T>(args: string[], stdin: string, signal: AbortSignal | undefined): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const child = spawn(CLAUDE_PRINT_BIN, args, { env: spawnEnv(), stdio: ['pipe', 'pipe', 'pipe'], signal })
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk })
@@ -159,16 +197,14 @@ export function askClaudePrint(req: ClaudePrintRequest): Promise<ClaudePrintResp
         return
       }
       try {
-        const response = JSON.parse(stdout) as ClaudePrintResponse
-        if (response.is_error) reject(new Error(`claude reported an error in session ${response.session_id}: ${response.result}`))
-        else resolve(response)
+        resolve(JSON.parse(stdout) as T)
       } catch {
         reject(new Error(`${CLAUDE_PRINT_BIN} printed unparseable output: ${stdout.slice(0, 200)}`))
       }
     })
     // The prompt goes over stdin so its size and quoting never meet a command line.
-    child.stdin.end(req.prompt)
-  }).finally(() => abort?.removeEventListener('abort', onAbort))
+    child.stdin.end(stdin)
+  })
 }
 
 /**

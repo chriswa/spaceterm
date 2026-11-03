@@ -2,13 +2,21 @@ import type { ControlTrace } from '../../shared/protocol'
 import { ago } from './roster'
 
 /**
- * A compaction of Control's session, as claude-print-daemon reports it to the
- * first message after it (its `compaction` field: see the daemon's README).
+ * Past this many tokens of context Control's session is compacted, once the
+ * turn that took it there is over. Every turn pays for all of it.
+ */
+export const COMPACT_ABOVE_TOKENS = 40_000
+
+/**
+ * A compaction of Control's session, as claude-print-daemon reports it: to
+ * the receptionist that asked for it, or to the first message after one it
+ * ran on its own (its `compaction` field: see the daemon's README).
  */
 export interface Compaction {
   /**
    * `idle`: the daemon's timer, 55 minutes after the last message, while the
-   * prompt cache was still warm. `size`: the context passed `thresholdTokens`.
+   * prompt cache was still warm. `size`: the context passed `thresholdTokens`,
+   * and the receptionist compacted it after the turn.
    */
   trigger: 'idle' | 'size'
   /** When the message before it ended (epoch ms): what an idle compaction counts from. Absent from a daemon too old to say. */
@@ -20,7 +28,7 @@ export interface Compaction {
   durationMs: number
   tokensBefore: number
   tokensAfter: number
-  /** The context size past which the daemon compacts at once. */
+  /** The context size past which the session is compacted after the turn. */
   thresholdTokens: number
   costUsd: number
   cachedTokens: number

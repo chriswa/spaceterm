@@ -26,8 +26,11 @@ that transcript for the reasoning behind any item here.
   Messages to the session are queued, never overlapping.
 - **Caching**: the daemon keeps the session's process live for an hour
   (`--keep-alive 60m --priority`), compacts it 55 minutes after the last
-  turn so the compaction runs on a warm cache (`--auto-compact`), and above
-  40k tokens of context (`--compact-above`). Verified: each turn reads the
+  turn so the compaction runs on a warm cache (`--auto-compact`). Above 40k
+  tokens of context, Control compacts it itself once the turn is over
+  (`claude-print-daemon compact`), saying "Compaction starting." and
+  "Compaction complete.", and holds every message back until it is done.
+  Verified: each turn reads the
   whole conversation so far from the 1-hour cache and writes only its own
   tail. Below Haiku's minimum cacheable size (about 4k tokens) nothing is
   cached, which costs little at that size.

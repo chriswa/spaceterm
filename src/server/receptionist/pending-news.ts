@@ -153,6 +153,11 @@ export class PendingNews {
     this.save()
   }
 
+  /** How many side questions are out, whose answers are news still to come. */
+  get questionsOut(): number {
+    return this.asking.length
+  }
+
   /** The side questions the last server asked and never had answered. They are this server's to ask again. */
   unanswered(): Asking[] {
     const asking = this.asking

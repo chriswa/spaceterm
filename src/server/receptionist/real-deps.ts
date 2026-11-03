@@ -1,11 +1,11 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { SOCKET_DIR } from '../../shared/protocol'
-import { askClaudePrint, ClaudePrintBusy, type ClaudePrintResponse } from '../claude-print'
+import { askClaudePrint, ClaudePrintBusy, compactClaudePrint, type ClaudePrintCompaction } from '../claude-print'
 import { serverLog } from '../server-log'
 import { SessionBusy, type RecordedMessage, type SavedSession, type SessionAnswer, type SessionTurn } from './receptionist'
 import { parseRecordBytes, spokenPart, transcriptPage, type RecordFile, type Speakers } from './transcript'
-import type { Compaction } from './compaction'
+import { COMPACT_ABOVE_TOKENS, type Compaction } from './compaction'
 import type { ConsumedHow } from './consumption'
 import { parseStatus } from './spaceterm-status'
 import type { HandleNames } from './transcript-names'
@@ -29,12 +29,6 @@ export const RECEPTIONIST_LOG = path.join(RECEPTIONIST_DIR, 'log.jsonl')
  */
 export const RECEPTIONIST_MODEL = { model: 'sonnet', noThinking: false, effort: 'low' }
 
-/**
- * Past this many tokens of context the daemon compacts Control's session.
- * Haiku reads a cached prefix fast, but every turn still pays for all of it.
- */
-export const RECEPTIONIST_COMPACT_ABOVE_TOKENS = 40_000
-
 export async function askReceptionistModel(turn: SessionTurn, signal: AbortSignal, abort?: AbortSignal): Promise<SessionAnswer> {
   const response = await askClaudePrint({
     prompt: turn.prompt,
@@ -42,12 +36,10 @@ export async function askReceptionistModel(turn: SessionTurn, signal: AbortSigna
     ...(turn.sessionId ? { sessionId: turn.sessionId } : {}),
     ...RECEPTIONIST_MODEL,
     // Warm all day, compacted before the cache goes cold: see the daemon's
-    // README. Not a session on its way out: left out, the daemon cancels its
-    // compaction and lets its process go.
-    ...(turn.retiring ? {} : {
-      keepAlive: { minutes: 60, priority: true },
-      autoCompact: { aboveTokens: RECEPTIONIST_COMPACT_ABOVE_TOKENS },
-    }),
+    // README. Compacted for size by the receptionist itself, once a turn is
+    // over: see `Receptionist.compactIfLarge`. Not a session on its way out:
+    // left out, the daemon cancels its compaction and lets its process go.
+    ...(turn.retiring ? {} : { keepAlive: { minutes: 60, priority: true }, autoCompact: true as const }),
     tag: turn.retiring ? 'receptionist-handover' : 'receptionist',
     signal,
     ...(abort && turn.turnId ? { abort, turnId: turn.turnId } : {}),
@@ -68,9 +60,19 @@ export async function askReceptionistModel(turn: SessionTurn, signal: AbortSigna
   }
 }
 
-function compactionOf(c: NonNullable<ClaudePrintResponse['compaction']>): Compaction {
+/** Compact Control's session now, waiting for it: see `ReceptionistDeps.compactSession`. */
+export async function compactReceptionistSession(sessionId: string, signal: AbortSignal): Promise<Compaction> {
+  const { model, effort, noThinking } = RECEPTIONIST_MODEL
+  const compaction = await compactClaudePrint({ sessionId, model, effort, noThinking, tag: 'receptionist', signal }).catch((err: unknown) => {
+    throw err instanceof ClaudePrintBusy ? new SessionBusy(err.message) : err
+  })
+  return compactionOf(compaction)
+}
+
+function compactionOf(c: ClaudePrintCompaction): Compaction {
   const lastActivity = c.last_activity !== undefined ? Date.parse(c.last_activity) : NaN
   return {
+    // Asked for only once the context is past the threshold.
     trigger: c.trigger === 'auto' ? 'idle' : 'size',
     ...(Number.isFinite(lastActivity) ? { lastActivity } : {}),
     finishedBeforeMs: c.compacted_before_ms,
@@ -78,7 +80,7 @@ function compactionOf(c: NonNullable<ClaudePrintResponse['compaction']>): Compac
     durationMs: c.duration_ms,
     tokensBefore: c.context_tokens_before,
     tokensAfter: c.context_tokens_after,
-    thresholdTokens: RECEPTIONIST_COMPACT_ABOVE_TOKENS,
+    thresholdTokens: COMPACT_ABOVE_TOKENS,
     costUsd: c.cost_usd,
     cachedTokens: c.cache_read_tokens,
     uncachedTokens: c.input_tokens,

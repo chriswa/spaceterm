@@ -98,7 +98,7 @@ import { CarryOver } from './receptionist/carry-over'
 import { blockingPrompt, isBlocked, type BlockingPrompt } from './receptionist/blocked'
 import { jevPauseJudge } from './receptionist/backlog-pause'
 import { NameRegistry, NAMES_FILE, fileStore } from './receptionist/name-registry'
-import { REAL_RECEPTIONIST_RECORD, REAL_RECEPTIONIST_SESSION, RecordNameScanner, appendReceptionistLog, askReceptionistModel } from './receptionist/real-deps'
+import { REAL_RECEPTIONIST_RECORD, REAL_RECEPTIONIST_SESSION, RecordNameScanner, appendReceptionistLog, askReceptionistModel, compactReceptionistSession } from './receptionist/real-deps'
 import { ControlImages } from './control-images'
 import { HandleNames, isHandleOf } from './receptionist/transcript-names'
 import { parseRecordLine, type Speakers } from './receptionist/transcript'
@@ -3947,6 +3947,7 @@ async function startServer(): Promise<void> {
   receptionistBacklog = new Backlog({ onChange: (state) => broadcastToAll({ type: 'receptionist-backlog', ...state }) })
   receptionist = new Receptionist({
     askModel: askReceptionistModel,
+    compactSession: compactReceptionistSession,
     agents: receptionistAgents,
     readTranscript,
     readWholeTranscript,
