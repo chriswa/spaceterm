@@ -579,6 +579,23 @@ describe('Receptionist', () => {
     expect(traces[0].detail).toContain('repeated to it word for word')
   })
 
+  it('says it is compacting its memory when a message will wait behind a compaction, once for each', async () => {
+    const run = async (compactsAt: number) => {
+      const h = harness({
+        compactsAt,
+        replies: [reply([{ from: 'control', text: 'Kevin is on it.' }]), reply([{ from: 'control', text: 'Sent.' }]), reply([{ from: 'control', text: 'Done.' }])],
+      })
+      for (const words of ['what is Kevin doing?', 'tell him to do that now', 'thanks']) {
+        await h.receptionist.hear(words, 'spoken')
+        await flush()
+      }
+      return h.spoken.map(entry => (entry.content as Array<{ text: string }>).map(part => part.text).join(' '))
+    }
+    expect(await run(Date.now() - 1_000)).toEqual(['Kevin is on it.', 'One moment, I\'m compacting my memory.', 'Sent.', 'Done.'])
+    // Long finished: the message does not wait, so there is nothing to say.
+    expect(await run(Date.now() - 5 * 60_000)).toEqual(['Kevin is on it.', 'Sent.', 'Done.'])
+  })
+
   describe('Spaceterm status', () => {
     it('tells the session what is pending only when it changes, ahead of the user\'s words', async () => {
       let status: StatusSample = { restartPending: false, phoneInstallPending: false, reloadPending: false, device: 'Mac' }

@@ -489,6 +489,10 @@ export const VOICE_FOLLOW_MS = 150
 /** How long a cut waits for the voice to say where interim words stopped, before going by the last it heard. */
 export const INTERIM_CUT_WAIT_MS = 1500
 const TURN_FAILED_SPEECH = 'Sorry, I lost my train of thought. Could you say that again?'
+/** Said while a message waits behind a compaction, which takes up to a minute: see `announceCompaction`. */
+const COMPACTING_SPEECH = 'One moment, I\'m compacting my memory.'
+/** How long a compaction may still be running after it comes due: they take 15 to 55 seconds. */
+export const COMPACTION_MAY_RUN_MS = 60_000
 /** How many servers may ask one side question before it is given up on: see `resumeQuestions`. */
 export const MAX_QUESTION_TRIES = 3
 /**
@@ -591,6 +595,8 @@ export class Receptionist {
   private handover: string | undefined
   /** The compaction last shown in the transcript (its `compactsAt`), so a message sent again does not show it twice. */
   private compactionShown?: number
+  /** The compaction last announced aloud (its `compactsAt`), so a message sent again does not say so twice. */
+  private compactionAnnounced?: number
   /** The last reply spoken, so an interruption can say how much of it was heard. */
   private lastSpoken?: SpokenPart[]
   /** Where `lastSpoken` is in the record, so an interruption can mark it there too. */
@@ -2230,6 +2236,7 @@ export class Receptionist {
         handover !== undefined ? `${HANDOVER_HEADING}\n${handover}` : undefined,
         recap, statusNote, notes.length ? `NOTE: ${notes.join(' ')}` : undefined, opening ? opening.render(opening.words) : prompt,
       ].filter(Boolean).join('\n\n')
+      await this.announceCompaction(attempt, session)
       try {
         const sentAt = Date.now()
         const answer = await this.askWhenFree(
@@ -2276,6 +2283,19 @@ export class Receptionist {
     const next = this.queue.then(run, run)
     this.queue = next.catch(() => undefined)
     return next
+  }
+
+  /**
+   * Tell the listener why the reply is slow when the message about to leave
+   * will wait behind a compaction the daemon is running: said as "Hang on."
+   * is, between the turn's other words, and never over the user.
+   */
+  private async announceCompaction(attempt: Attempt, session: SavedSession | undefined): Promise<void> {
+    if (!compacting(session) || session.compactsAt === this.compactionAnnounced) return
+    if (!attempt.isCurrent || !this.listening || this.reading || this.held) return
+    this.compactionAnnounced = session.compactsAt
+    this.deps.log({ event: 'compacting', compactsAt: session.compactsAt })
+    await this.channel.deliverInterim(attempt, [{ text: COMPACTING_SPEECH, voice: RECEPTIONIST_VOICE }])
   }
 
   /** Words carried since `opening`'s turn began go with it, ahead of its own: they were said first. */
@@ -3773,6 +3793,17 @@ function storedReply(froms: readonly string[], spoken: readonly SpokenPart[]): s
  */
 function forgets(session: SavedSession | undefined): boolean {
   return !session || (session.compactsAt !== undefined && Date.now() >= session.compactsAt)
+}
+
+/**
+ * Whether the daemon is likely still compacting the session, so that a
+ * message sent now waits for it: the compaction came due within the time one
+ * takes.
+ */
+function compacting(session: SavedSession | undefined): session is SavedSession & { compactsAt: number } {
+  if (session?.compactsAt === undefined) return false
+  const since = Date.now() - session.compactsAt
+  return since >= 0 && since < COMPACTION_MAY_RUN_MS
 }
 
 /**
