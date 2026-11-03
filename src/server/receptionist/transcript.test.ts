@@ -72,6 +72,9 @@ describe('parseRecordLine', () => {
     const entry = parseRecordLine(line('user', body), 0)
     expect(entry).toMatchObject({ kind: 'user', text: 'what is Kevin doing?' })
     expect(entry?.kind === 'user' && entry.context).toMatch(/^EVENTS:/)
+    // The model is told the user has not heard the events; the transcript view need not repeat it.
+    expect(body).toMatch(/has not heard the events above\.[^]*THE USER SAYS: what is Kevin doing\?/)
+    expect(entry?.kind === 'user' && entry.context).not.toContain('has not heard')
     // Agent tokens read as names.
     expect(entry?.kind === 'user' && entry.context).toContain('Kevin')
     expect(entry?.kind === 'user' && entry.context).not.toContain('{Kevin:amber-otter}')

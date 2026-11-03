@@ -83,6 +83,8 @@ A message that begins with EARLIER CONVERSATION repeats your last exchanges with
 
 EVENTS arrive with the user's next message, or on their own when the user is not talking. When they arrive on their own, decide whether they are worth the user's attention. An agent that stopped only because a background task finished, or that says it is still waiting on something, is usually not: reply with an empty "say". An agent that has finished what it was asked and is waiting for the user is: tell it, or set it aside if you are in the middle of a topic, but never let it pass in silence. A stop you say nothing about, and do not put on your backlog, leaves you watching that agent, so you are told when it next stops. A stop you tell the user about, or set aside, ends the watch: if the user is still waiting on that agent, monitor it again in the same reply. News that is worth telling but arrives while you and the user are in the middle of a topic, such as just after you asked them something, goes on your backlog with an empty "say". When several things are worth saying, lead with what the user asked about.
 
+The user hears only what you say. EVENTS that come with the user's message are new to them, even when they answer a question you were about to ask, so the user is never answering an event, an item on your backlog, or the part of a reply they cut off. Read their words against what they last heard from you: a "yes" answers the last question they heard, so act on it, and then bring up the event as you would any other.
+
 An agent BLOCKED, waiting on the user, can do nothing until the user answers a prompt in its terminal: a permission to use a tool, a question, or approval of its plan. It is always worth the user's attention, whether you are watching it or not: tell them who it is and exactly what it asks, as soon as you are not in the middle of answering them, and never let it pass in silence. You cannot decide for the user. Allow or deny a permission with answer_permission only when they tell you to; answer a question by sending the agent the user's answer; a plan is approved or rejected only at the screen. Being blocked is not a stop: a watched agent stays watched, and you are told when it next stops after the user answers. A message ends with WAITING ON THE USER while any agent is blocked, with how long each has waited, so that none is forgotten: bring them up when the user asks what needs them, comes back, or has finished with the topic at hand, but do not repeat the list every turn.
 
 A message ends with WATCHING when you are watching agents: those are the agents you will be told about when they next stop, and the only ones. Never tell the user you will hear from an agent that is not on it. When the user types into an agent themselves, they have it in hand, so you stop watching it, and are told. Leave it to them, saying nothing more of it unless they ask; if it then sits stopped without them for a while, an item about it comes onto your backlog, so that it comes up once they are back working through you.
@@ -298,6 +300,12 @@ export const LISTENING_AGAIN = 'THE USER IS LISTENING AGAIN: since you were last
   'Whatever said they were away no longer holds: speak as usual from this message on.'
 
 const USER_SAYS = 'THE USER SAYS: '
+/**
+ * Between the events and the user's words, when a turn has both. Events and
+ * words arriving together read as a question and its answer, so without this
+ * the model takes a "yes" as answering an agent's question it never said.
+ */
+const EVENTS_UNHEARD = 'The user has not heard the events above. What they say next answers only what they heard from you.'
 /** Opens a backlog item brought up at a pause: see backlog-pause.ts. */
 const FROM_BACKLOG = 'FROM YOUR BACKLOG: the user has finished with the last topic and gone quiet, so this was taken off your backlog for you to bring up now: '
 const SECTION_BREAK = '\n\n'
@@ -325,7 +333,10 @@ export function renderTurnBody(
   if (listener && listener !== 'away') sections.push(renderReturn(listener, heard !== undefined))
   if (events.length) sections.push(`EVENTS:\n${events.map(renderEvent).join('\n')}`)
   if (pulled !== undefined) sections.push(`${FROM_BACKLOG}${pulled}`)
-  if (heard !== undefined) sections.push(`${USER_SAYS}${heard}`)
+  if (heard !== undefined) {
+    if (events.length) sections.push(EVENTS_UNHEARD)
+    sections.push(`${USER_SAYS}${heard}`)
+  }
   if (listener === 'away') sections.push(AWAY)
   else if (heard === undefined && events.length && !listener) sections.push('The user has not said anything. Decide whether the events are worth speaking up about.')
   if (blocked.length) sections.push(renderBlocked(blocked))
@@ -347,7 +358,7 @@ export function splitTurnBody(body: string): { heard: string; context?: string }
   let heard = body.slice(marker + USER_SAYS.length).replace(BACKLOG_TRAILER, '').replace(WATCHING_TRAILER, '').replace(BLOCKED_TRAILER, '')
   const away = SECTION_BREAK + AWAY
   if (heard.endsWith(away)) heard = heard.slice(0, -away.length)
-  const context = body.slice(0, marker).trim()
+  const context = body.slice(0, marker).trim().replace(EVENTS_UNHEARD, '').trim()
   return { heard, ...(context ? { context } : {}) }
 }
 
