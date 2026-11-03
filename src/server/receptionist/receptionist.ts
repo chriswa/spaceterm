@@ -495,8 +495,7 @@ export const VOICE_FOLLOW_MS = 150
 /** How long a cut waits for the voice to say where interim words stopped, before going by the last it heard. */
 export const INTERIM_CUT_WAIT_MS = 1500
 const TURN_FAILED_SPEECH = 'Sorry, I lost my train of thought. Could you say that again?'
-/** Said as a compaction for size starts and ends: see `compactIfLarge`. */
-const COMPACTION_STARTING = 'Compaction starting.'
+/** Said when a compaction for size ends, only where silence would leave the user wondering: see `compactIfLarge`. */
 const COMPACTION_COMPLETE = 'Compaction complete.'
 const COMPACTION_FAILED = 'Compaction failed.'
 /** A compaction takes 15 to 55 seconds; past this it is given up on, and the session kept whole. */
@@ -607,6 +606,8 @@ export class Receptionist {
   private compactionShown?: number
   /** The session's context and the model's window, as its last answer said: what `compactIfLarge` goes by. */
   private context: { tokens?: number; window?: number } = {}
+  /** How many replies with words have been written: a turn that adds none answered in silence. */
+  private repliesWithWords = 0
   /** A compaction for size is queued or running: see `compactIfLarge`. */
   private compacting = false
   /** No compaction for size before this (epoch ms): the last one failed. */
@@ -1998,6 +1999,9 @@ export class Receptionist {
       render: said => `${render(said)}\n\n${FORMAT_REMINDER}`,
     }
     let monitoring = false
+    // Whether the user spoke and Control chose to say nothing back: see `compactIfLarge`.
+    let answeredInSilence = false
+    const repliesBefore = this.repliesWithWords
     try {
       const reply = await this.converse(attempt, opening, earlier, away, taken, answering)
       if (!attempt.isCurrent) {
@@ -2018,6 +2022,7 @@ export class Receptionist {
         this.keepAway()
       }
       monitoring = await this.speak(attempt, render(opening.words), heard === undefined ? reply : acknowledgeSends(reply), taken, events, opening.words !== undefined)
+      answeredInSilence = opening.words !== undefined && this.repliesWithWords === repliesBefore
     } catch (err) {
       this.putBack(taken)
       // Stopped before the session got the user's words, `ask` carried them on to the next message.
@@ -2049,7 +2054,7 @@ export class Receptionist {
       // Told, or failed past retelling: either way, no longer the next server's to tell.
       this.events.told(attempt)
       if (!monitoring) this.channel.settle(attempt)
-      this.compactIfLarge()
+      this.compactIfLarge(answeredInSilence)
     }
   }
 
@@ -2062,10 +2067,16 @@ export class Receptionist {
    * started now would hold back; the compaction waits for the end of that
    * one instead. Queued as a message is, so nothing reaches the session
    * until it is done, and nothing stops it: a message sent meanwhile waits
-   * its turn, and a stop silences only the words. Said as it starts and as
-   * it ends.
+   * its turn, and a stop silences only the words.
+   *
+   * Quiet, since the user is listening to the turn's words while it runs,
+   * and a message sent meanwhile is simply answered once it is done. Only a
+   * failure is said, and its end when the turn it followed answered the
+   * user's words with silence: nothing else will tell them Control is free.
+   * News that Control chose to keep quiet about is not followed by a line
+   * out of nowhere.
    */
-  private compactIfLarge(): void {
+  private compactIfLarge(answeredInSilence: boolean): void {
     if (this.compacting || !this.mayCompact()) return
     this.compacting = true
     const run = async (): Promise<void> => {
@@ -2074,7 +2085,6 @@ export class Receptionist {
         const session = this.session
         const before = this.context.tokens ?? 0
         if (!session || !this.mayCompact()) return
-        await this.announce(COMPACTION_STARTING)
         this.deps.log({ event: 'compacting', sessionId: session.sessionId, contextTokens: before })
         let compaction: Compaction
         try {
@@ -2103,7 +2113,9 @@ export class Receptionist {
           serverLog(`[receptionist] compaction failed: ${compaction.error}`)
           this.compactRetryAt = finished + COMPACT_RETRY_MS
         }
-        await this.announce(compaction.error === undefined ? COMPACTION_COMPLETE : COMPACTION_FAILED)
+        if (compaction.error !== undefined) await this.announce(COMPACTION_FAILED)
+        // Not when a turn has the voice: a message sent meanwhile, whose answer says it.
+        else if (answeredInSilence && !this.channel.current) await this.announce(COMPACTION_COMPLETE)
       } finally {
         this.compacting = false
       }
@@ -3502,6 +3514,7 @@ export class Receptionist {
       voices: spoken.map(part => part.voice ?? RECEPTIONIST_VOICE),
       ...(reading ? { delivery: 'text' as const } : {}),
     }])[0]
+    if (spoken.length) this.repliesWithWords++
     if (at !== undefined && spoken.length) {
       this.ledger.delivered(at, spoken.map(part => part.text), reading ? 'text' : 'spoken')
       if (reading) this.onUnread(this.ledger.unread())

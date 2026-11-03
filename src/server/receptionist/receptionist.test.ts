@@ -597,7 +597,7 @@ describe('Receptionist', () => {
     const texts = (h: { spoken: Array<{ content: SpeechContent }> }): string[] =>
       h.spoken.map(entry => (entry.content as Array<{ text: string }>).map(part => part.text).join(' '))
 
-    it('compacts once the turn is over, saying so as it starts and ends, and the next message repeats the last exchanges', async () => {
+    it('compacts quietly once the turn is over, and the next message repeats the last exchanges', async () => {
       const h = harness({
         contextTokens: turn => turn.sessionId ? 3_100 : 45_000,
         replies: [reply([{ from: 'control', text: 'Kevin is on it.' }]), reply([{ from: 'control', text: 'Sent.' }])],
@@ -605,7 +605,7 @@ describe('Receptionist', () => {
       await h.receptionist.hear('what is Kevin doing?', 'spoken')
       await flush()
       expect(h.compactions).toEqual([{ sessionId: 'session-1', afterTurns: 1 }])
-      expect(texts(h)).toEqual(['Kevin is on it.', 'Compaction starting.', 'Compaction complete.'])
+      expect(texts(h)).toEqual(['Kevin is on it.'])
       expect(h.traces.filter(trace => trace.what === 'compacted').map(trace => trace.text))
         .toEqual([expect.stringMatching(/^Memory compacted \(over the size threshold\): 45\.0k → 3\.0k tokens/)])
       await h.receptionist.hear('tell him to do that now', 'spoken')
@@ -615,7 +615,7 @@ describe('Receptionist', () => {
       expect(h.traces.filter(trace => trace.what === 'compacted')).toHaveLength(1)
     })
 
-    it('holds every message back until the compaction is done', async () => {
+    it('holds every message back until the compaction is done, then just answers it', async () => {
       let finish: (c: Compaction) => void = () => {}
       const h = harness({
         contextTokens: turn => turn.sessionId ? 3_100 : 45_000,
@@ -634,7 +634,7 @@ describe('Receptionist', () => {
       await second
       await flush()
       expect(h.turns).toHaveLength(2)
-      expect(texts(h)).toEqual(['Kevin is on it.', 'Compaction starting.', 'Compaction complete.', 'Sent.'])
+      expect(texts(h)).toEqual(['Kevin is on it.', 'Sent.'])
       // Small again: nothing more to compact.
       expect(h.compactions).toHaveLength(1)
     })
@@ -665,7 +665,29 @@ describe('Receptionist', () => {
       answerSide?.({ ok: true, text: '42 litres.', usage: {} })
       await flush()
       expect(h.compactions).toEqual([{ sessionId: 'session-1', afterTurns: 2 }])
-      expect(texts(h)).toEqual(['Asked.', 'Kevin here. Forty-two litres. Want it bigger?', 'Compaction starting.', 'Compaction complete.'])
+      expect(texts(h)).toEqual(['Asked.', 'Kevin here. Forty-two litres. Want it bigger?'])
+    })
+
+    it('says it is done when it followed the user\'s words answered with silence', async () => {
+      const h = harness({ contextTokens: 45_000, replies: [reply([])] })
+      await h.receptionist.hear('thanks', 'spoken')
+      await flush()
+      expect(h.compactions).toHaveLength(1)
+      expect(texts(h)).toEqual(['Compaction complete.'])
+    })
+
+    it('says nothing after news Control chose to keep quiet about', async () => {
+      const h = harness({
+        contextTokens: turn => turn.sessionId ? 45_000 : 30_000,
+        replies: [reply([{ from: 'control', text: 'Watching Sally.' }], [{ tool: 'monitor', agent: SALLY }]), reply([])],
+      })
+      await h.receptionist.hear('tell me when Sally is done', 'spoken')
+      await flush()
+      h.setState(SALLY_ID, 'stopped')
+      await flush()
+      expect(h.turns).toHaveLength(2)
+      expect(h.compactions).toHaveLength(1)
+      expect(texts(h)).toEqual(['Watching Sally.'])
     })
 
     it('leaves a session under the threshold alone', async () => {
@@ -687,7 +709,7 @@ describe('Receptionist', () => {
       await h.receptionist.hear('tell him to do that now', 'spoken')
       await flush()
       expect(h.compactions).toHaveLength(1)
-      expect(texts(h)).toEqual(['Kevin is on it.', 'Compaction starting.', 'Compaction failed.', 'Sent.'])
+      expect(texts(h)).toEqual(['Kevin is on it.', 'Compaction failed.', 'Sent.'])
       expect(h.traces.filter(trace => trace.what === 'compacted').map(trace => trace.text))
         .toEqual([expect.stringMatching(/^Memory compaction failed \(over the size threshold\) at 45\.0k tokens/)])
       // Kept whole: the session still has every word.
