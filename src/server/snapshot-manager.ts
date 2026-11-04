@@ -166,6 +166,35 @@ export class SnapshotManager {
   }
 
   /**
+   * The active buffer — scrollback and screen — as plain text, for copying.
+   * Soft-wrapped rows are joined back into the line the program wrote, and
+   * trailing blank rows are dropped. After the same drain barrier as
+   * `serializeForAttach`, so it includes everything written so far.
+   */
+  bufferText(sessionId: PtySessionId, cb: (text: string | null) => void): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) {
+      cb(null)
+      return
+    }
+    session.terminal.write('', () => {
+      const buffer = session.terminal.buffer.active
+      const lines: string[] = []
+      for (let y = 0; y < buffer.length; y++) {
+        const row = buffer.getLine(y)
+        if (!row) continue
+        // A row that wraps onto the next is full; trimming it would eat a
+        // space that fell at the wrap.
+        const text = row.translateToString(!buffer.getLine(y + 1)?.isWrapped)
+        if (row.isWrapped && lines.length > 0) lines[lines.length - 1] += text
+        else lines.push(text)
+      }
+      while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop()
+      cb(lines.join('\n'))
+    })
+  }
+
+  /**
    * The session's screen as it stands, for one client catching up — a phone
    * back from Control mode. Unlike `snapshotNow` it leaves the tick's
    * bookkeeping alone: a session still dirty is still owed to every other

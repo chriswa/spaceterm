@@ -39,6 +39,8 @@ import { useRtsSelectStore } from '../stores/rtsSelectStore'
 import { cleanTerminalCopy } from '../../../../shared/cleanTerminalCopy'
 import { useCopyCleanupStore } from '../stores/copyCleanupStore'
 import { type NodeId, type PtySessionId } from '../../../../shared/ids'
+import { nativeClipboardAvailable } from '../../../../mobile/native-clipboard'
+import { copyTerminalBuffer } from '../../../../mobile/copy-buffer'
 import type { AgentType } from '../../../../shared/agent-type'
 
 
@@ -1342,6 +1344,7 @@ export function TerminalCard({
       onMouseDown={handleMouseDown}
       onStartReparent={onStartReparent}
       onStartResize={onStartResize}
+      onCopyBuffer={nativeClipboardAvailable() ? (id) => { void copyTerminalBuffer(id) } : undefined}
       onFork={agentType !== 'cursor' && agentType !== 'codex' && claudeSessionHistory && claudeSessionHistory.length > 0 ? onFork : undefined}
       // Cursor/Codex often lack SessionStart history; gate on agentType so restart stays available.
       onExtraCliArgs={

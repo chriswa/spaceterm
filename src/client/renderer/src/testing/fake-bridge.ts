@@ -358,6 +358,7 @@ export class FakeBridge implements Api {
     terminalResize: (nodeId, cols, rows) => this.reply('node.terminalResize', undefined, nodeId, cols, rows),
     terminalBorrowSize: (nodeId, cols, rows) => this.reply('node.terminalBorrowSize', undefined, nodeId, cols, rows),
     terminalReturnSize: (nodeId) => this.reply('node.terminalReturnSize', undefined, nodeId),
+    terminalBufferText: (nodeId) => this.reply('node.terminalBufferText', null, nodeId),
     terminalReincarnate: (nodeId, options) =>
       this.reply('node.terminalReincarnate', this.responses.sessionInfo, nodeId, options),
     terminalRestart: (nodeId, extraCliArgs) =>

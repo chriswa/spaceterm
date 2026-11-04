@@ -2545,6 +2545,18 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'terminal-buffer-text': {
+      const node = stateManager.getNode(msg.nodeId)
+      if (node?.type !== 'terminal') {
+        send(client.link, { type: 'terminal-buffer-text-result', seq: msg.seq, text: null })
+        break
+      }
+      snapshotManager.bufferText(node.sessionId, (text) => {
+        send(client.link, { type: 'terminal-buffer-text-result', seq: msg.seq, text })
+      })
+      break
+    }
+
     case 'app-behind': {
       if (typeof msg.deviceId !== 'string' || msg.deviceId === '') break
       const behind = { native: msg.behind === true, web: msg.web === true }

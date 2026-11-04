@@ -24,6 +24,8 @@ export interface NodeActionBarProps {
   focused: boolean
   onShipIt?: (id: NodeId) => void
   onFork?: (id: NodeId) => void
+  /** The terminal's whole buffer onto the clipboard — the phone app only, which has one to write to. */
+  onCopyBuffer?: (id: NodeId) => void
   onExtraCliArgs?: (nodeId: NodeId, extraCliArgs: string) => void
   extraCliArgs?: string
   showColorPicker?: boolean
@@ -77,7 +79,7 @@ export interface NodeActionBarProps {
  */
 export function NodeActionBar({
   nodeId, preset, focused,
-  onShipIt, onFork, onExtraCliArgs, extraCliArgs,
+  onShipIt, onFork, onCopyBuffer, onExtraCliArgs, extraCliArgs,
   showColorPicker, onColorChange, onStampChange,
   pastSessions, currentSessionIndex, onSessionsToggled, onSessionRevive,
   archivedChildren, onOpenArchiveSearch,
@@ -341,6 +343,24 @@ export function NodeActionBar({
             <path d="M7 13 L7 6" />
             <path d="M3 1 L3 5 Q3 6 7 6 Q11 6 11 5 L11 1" />
             <path d="M7 1 L7 6" />
+          </svg>
+        </button>
+      )}
+      {onCopyBuffer && (
+        <button
+          className="node-titlebar__copy-buffer-btn"
+          data-tooltip="Copy the whole buffer"
+          style={preset ? { color: preset.titleBarFg } : undefined}
+          onClick={(e) => { e.stopPropagation(); onCopyBuffer(nodeId); onActionInvoked?.() }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {/* Two sheets, the front one lined: the text, copied. */}
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="4.5" y="1.5" width="8" height="9" rx="1" />
+            <path d="M2.5 4.5 L2.5 12 Q2.5 12.5 3 12.5 L9.5 12.5" />
+            <line x1="6.5" y1="4.5" x2="10.5" y2="4.5" />
+            <line x1="6.5" y1="6.5" x2="10.5" y2="6.5" />
+            <line x1="6.5" y1="8.5" x2="9" y2="8.5" />
           </svg>
         </button>
       )}

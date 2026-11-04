@@ -2581,8 +2581,9 @@ html, body, #root {
   cursor: default;
 }
 
-/* Fork button in title bar */
-.node-titlebar__fork-btn {
+/* Fork and copy-buffer buttons in title bar */
+.node-titlebar__fork-btn,
+.node-titlebar__copy-buffer-btn {
   width: 20px;
   height: 20px;
   border: none;
@@ -2595,7 +2596,8 @@ html, body, #root {
   justify-content: center;
 }
 
-.node-titlebar__fork-btn:hover {
+.node-titlebar__fork-btn:hover,
+.node-titlebar__copy-buffer-btn:hover {
   background: #181825;
   color: #cdd6f4 !important;
 }
@@ -4003,6 +4005,7 @@ html, body, #root {
 .floating-toolbar .node-titlebar__archive-btn:hover:not(:disabled),
 .floating-toolbar .node-titlebar__sessions-btn:hover:not(:disabled),
 .floating-toolbar .node-titlebar__fork-btn:hover,
+.floating-toolbar .node-titlebar__copy-buffer-btn:hover,
 .floating-toolbar .node-titlebar__cli-args-btn:hover,
 .floating-toolbar .node-titlebar__reparent-btn:hover,
 .floating-toolbar .node-titlebar__add-btn:hover,

@@ -116,6 +116,7 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       terminalResize: (nodeId, cols, rows) => client.terminalResize(nodeId, cols, rows),
       terminalBorrowSize: (nodeId, cols, rows) => client.terminalBorrowSize(nodeId, cols, rows),
       terminalReturnSize: (nodeId) => client.terminalReturnSize(nodeId),
+      terminalBufferText: (nodeId) => client.terminalBufferText(nodeId),
       terminalReincarnate: (nodeId, options) => client.terminalReincarnate(nodeId, options),
       terminalRestart: (nodeId, extraCliArgs) => client.terminalRestart(nodeId, extraCliArgs),
       forkSession: (nodeId) => client.forkSession(nodeId),

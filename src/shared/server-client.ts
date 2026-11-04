@@ -338,6 +338,7 @@ export class ServerClient {
       case 'mutation-ack':
       case 'node-add-ack':
       case 'validate-directory-result':
+      case 'terminal-buffer-text-result':
       case 'directory-command-result':
       case 'validate-file-result':
       case 'client-hello-result':
@@ -566,6 +567,12 @@ export class ServerClient {
 
   terminalReturnSize(nodeId: NodeId): Promise<void> {
     return this.ack({ type: 'terminal-return-size', nodeId })
+  }
+
+  async terminalBufferText(nodeId: NodeId): Promise<string | null> {
+    const resp = await this.request({ type: 'terminal-buffer-text', nodeId })
+    if (resp.type === 'terminal-buffer-text-result') return resp.text
+    return unexpected(resp)
   }
 
   terminalReincarnate(nodeId: NodeId, options?: CreateOptions): Promise<SessionInfo> {

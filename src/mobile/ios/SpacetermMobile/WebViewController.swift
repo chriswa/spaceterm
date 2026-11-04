@@ -14,6 +14,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     private lazy var location = NativeLocation(events: events)
     /// The last "dictate …" said hands-free, kept for the Action button.
     private lazy var dictation = NativeDictation(events: events)
+    /// Text the page puts on the clipboard, which it has no API for over http.
+    private lazy var clipboard = NativeClipboard(events: events)
     /// The Action button's shortcut, offered to Shortcuts to add.
     private lazy var shortcutImport = NativeShortcutImport(events: events)
 
@@ -65,6 +67,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.userContentController.add(location, name: "nativeLocation")
         // Words said after "dictate", for the Action button to copy (native-dictation.ts).
         config.userContentController.add(dictation, name: "nativeDictation")
+        // A terminal's buffer, copied from its action bar (native-clipboard.ts).
+        config.userContentController.addScriptMessageHandler(clipboard, contentWorld: .page, name: "nativeClipboard")
         // A shortcut the Mac signed, opened in Shortcuts (action-button-setup.ts).
         config.userContentController.add(shortcutImport, name: "nativeShortcut")
 

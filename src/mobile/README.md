@@ -46,6 +46,11 @@ Touches never reach xterm (`terminal-gesture.ts`):
 
 On the canvas, a long press on a card is the desktop's ⌘-click: the
 quick-actions toolbar; moving on without lifting drags the card instead.
+On a terminal it carries one button the desktop lacks: copy the whole buffer
+(scrollback and screen) as one line, its rows trimmed and run together — for a
+long link the terminal wrapped, which xterm's own selection cannot get out on a
+phone. The page has no clipboard over plain http, so the app writes it
+(`copy-buffer.ts`, `NativeClipboard.swift`).
 A long press on the bare background is the desktop's right-button drag: a
 dot marks the press, and moving the finger down from it zooms out about it,
 up zooms in (`useZoomDrag`); sideways is ignored.

@@ -514,6 +514,23 @@ export interface TerminalReturnSizeMessage {
   nodeId: NodeId
 }
 
+/**
+ * A terminal surface's whole buffer — scrollback and screen — as plain text,
+ * for the phone to copy. Replies `terminal-buffer-text-result`.
+ */
+export interface TerminalBufferTextMessage {
+  type: 'terminal-buffer-text'
+  seq: number
+  nodeId: NodeId
+}
+
+export interface TerminalBufferTextResult {
+  type: 'terminal-buffer-text-result'
+  seq: number
+  /** Null when the node is not a terminal with a running session. */
+  text: string | null
+}
+
 /** Total memory of every process under the PTY daemon. Replies `agent-memory-result`. */
 /**
  * A log line from a client with no log file of its own — the phone — written
@@ -1342,6 +1359,7 @@ export type ClientMessage =
   | AgentMemoryQueryMessage
   | TerminalBorrowSizeMessage
   | TerminalReturnSizeMessage
+  | TerminalBufferTextMessage
   | DictationStartMessage
   | DictationAudioMessage
   | DictationResumeMessage
@@ -2344,6 +2362,7 @@ export type ServerMessage =
   | NodeAddAckMessage
   | SnapshotMessage
   | ValidateDirectoryResult
+  | TerminalBufferTextResult
   | DirectoryCommandResult
   | ValidateFileResult
   | FileContentMessage

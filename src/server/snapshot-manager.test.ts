@@ -355,3 +355,29 @@ describe('currentSnapshot', () => {
     expect(harness().manager.currentSnapshot(sid('nope'))).toBeNull()
   })
 })
+
+describe('bufferText', () => {
+  const textOf = (manager: SnapshotManager, id: string) =>
+    new Promise<string | null>((resolve) => manager.bufferText(sid(id), resolve))
+
+  it('is null for a session it does not hold', async () => {
+    const { manager } = harness()
+    expect(await textOf(manager, 'missing')).toBeNull()
+  })
+
+  it('includes scrollback, and joins a soft-wrapped line back into one', async () => {
+    const { manager } = harness()
+    manager.addSession(sid('s'), 10, 3)
+    const url = 'https://example.com/a b/c'
+    manager.write(sid('s'), `first\r\n${url}\r\nthird\r\nfourth\r\nfifth`)
+    const text = await textOf(manager, 's')
+    expect(text?.split('\n')).toEqual(['first', url, 'third', 'fourth', 'fifth'])
+  })
+
+  it('drops the blank rows below the last output', async () => {
+    const { manager } = harness()
+    manager.addSession(sid('s'), 20, 10)
+    manager.write(sid('s'), 'only\r\n')
+    expect(await textOf(manager, 's')).toBe('only')
+  })
+})

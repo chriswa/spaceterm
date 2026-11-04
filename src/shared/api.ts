@@ -114,6 +114,8 @@ export interface NodeApi {
    */
   terminalBorrowSize(nodeId: NodeId, cols: number, rows: number): Promise<void>
   terminalReturnSize(nodeId: NodeId): Promise<void>
+  /** The surface's scrollback and screen as plain text; null when it has no session. */
+  terminalBufferText(nodeId: NodeId): Promise<string | null>
   terminalReincarnate(nodeId: NodeId, options?: CreateOptions): Promise<SessionInfo>
   terminalRestart(nodeId: NodeId, extraCliArgs: string): Promise<SessionInfo>
   forkSession(nodeId: NodeId): Promise<SessionInfo>
