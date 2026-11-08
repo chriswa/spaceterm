@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 /// Spaceterm on the phone: the mobile web app (`src/mobile`), full screen in a
 /// web view, with none of a browser's chrome.
@@ -13,6 +14,9 @@ import SwiftUI
 /// from the Mac's network, as a download the phone fetches over Tailscale.
 @main
 struct SpacetermApp: App {
+    /// Before launch finishes, or iOS drops the tap that launched the app.
+    init() { UNUserNotificationCenter.current().delegate = NativeNotifications.shared }
+
     var body: some Scene {
         WindowGroup {
             SpacetermWebView()

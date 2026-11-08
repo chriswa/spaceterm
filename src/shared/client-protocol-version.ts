@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 33
+export const CLIENT_PROTOCOL_VERSION = 34
 
 /**
  * Oldest client protocol this build still serves.
@@ -148,5 +148,9 @@ export const CLIENT_PROTOCOL_VERSION = 33
  * v32 cannot keep what is said after "dictate" hands-free
  * (`dictation-kept`), so it is never sent it, and the words are lost; nor set
  * up the Action button (`action-button-shortcut`). It loses nothing else.
+ *
+ * v33 raises no notification for a blocked agent (`block-alert`,
+ * `block-alert-cleared`), and logs both as unknown messages; it loses nothing
+ * else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

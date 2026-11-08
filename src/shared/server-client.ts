@@ -78,6 +78,7 @@ export type ServerEventType =
   | 'receptionist-transcript-appended' | 'receptionist-unread' | 'receptionist-backlog' | 'receptionist-replaying' | 'receptionist-speaking'
   | 'hands-free-event' | 'hands-free-stream' | 'dictation-kept'
   | 'location-request'
+  | 'block-alert' | 'block-alert-cleared'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
 
@@ -290,6 +291,8 @@ export class ServerClient {
       case 'system-stats':
       case 'speech-link':
       case 'mobile-build-changed':
+      case 'block-alert':
+      case 'block-alert-cleared':
       case 'mobile-app-install-link':
       case 'mobile-app-quit':
       case 'reload-page':

@@ -17,6 +17,7 @@ import { startSpeechPlayer } from './speech-player'
 import { speechLink } from './speech-link'
 import { initAudioSession } from './audio-session'
 import { installStayAwake } from './stay-awake'
+import { installBlockAlerts } from './block-alerts'
 import { followHandsFree, installDuckOthers } from './duck-others'
 import { DownlinkWatch, watchedTransport } from './downlink-watch'
 import { useHandsFree } from './hands-free'
@@ -154,6 +155,8 @@ if (!token) {
     initAudioSession()
     // Control heard with the phone locked: the app stays awake while this phone holds it.
     installStayAwake()
+    // A notification whenever an agent stops on a prompt only the user can answer.
+    installBlockAlerts(client)
     installDuckOthers()
     followHandsFree()
     // The held microphone, and in the app Voice Operator listening on it for "Control"; see hands-free-mode.ts.

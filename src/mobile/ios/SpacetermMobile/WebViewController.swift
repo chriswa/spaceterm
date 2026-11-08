@@ -69,6 +69,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.userContentController.add(dictation, name: "nativeDictation")
         // A terminal's buffer, copied from its action bar (native-clipboard.ts).
         config.userContentController.addScriptMessageHandler(clipboard, contentWorld: .page, name: "nativeClipboard")
+        // Notifications of agents blocked on the user (block-alerts.ts).
+        config.userContentController.add(NativeNotifications.shared, name: "nativeNotifications")
         // A shortcut the Mac signed, opened in Shortcuts (action-button-setup.ts).
         config.userContentController.add(shortcutImport, name: "nativeShortcut")
 
@@ -78,6 +80,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         shortcutImport.webView = webView
         shortcutImport.presenter = self
         events.webView = webView
+        NativeNotifications.shared.webView = webView
+        NativeNotifications.shared.events = events
         webView.uiDelegate = self
         webView.navigationDelegate = self
         webView.isOpaque = false

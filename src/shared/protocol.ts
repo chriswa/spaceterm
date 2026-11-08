@@ -1569,6 +1569,27 @@ export interface MobileBuildChangedMessage {
 }
 
 /**
+ * Unsolicited broadcast: an agent has just stopped on a prompt only the user
+ * can answer. A phone raises a notification (src/mobile/block-alerts.ts); the
+ * Mac ignores it. Sent once per block and never replayed on connect, so it is
+ * an event, not state: `claudeState` on the node is what stays true.
+ */
+export interface BlockAlertMessage {
+  type: 'block-alert'
+  nodeId: NodeId
+  /** Which agent: its surface's title. */
+  title: string
+  /** What it waits on, in full enough to decide whether to go and answer. */
+  body: string
+}
+
+/** Unsolicited broadcast: that block is over, so its notification should go. */
+export interface BlockAlertClearedMessage {
+  type: 'block-alert-cleared'
+  nodeId: NodeId
+}
+
+/**
  * Unsolicited broadcast: reload the page, as the toolbar's reload does.
  * Control's refresh_clients, which lets go of Control first.
  */
@@ -2398,6 +2419,8 @@ export type ServerMessage =
   | MobileAppInstallResultMessage
   | ActionButtonShortcutResultMessage
   | MobileBuildChangedMessage
+  | BlockAlertMessage
+  | BlockAlertClearedMessage
   | MobileAppInstallLinkMessage
   | MobileAppQuitMessage
   | ReloadPageMessage

@@ -56,6 +56,7 @@ import { announceInstallStage, type DownloadStage } from './install-announcer'
 import { readAgentMemoryBytes } from './agent-memory'
 import type { ClientLink } from './client-link'
 import { startWebGateway, loadOrCreateWebToken, DEFAULT_WEB_PORT } from './web-gateway'
+import { BlockAlerts } from './block-alerts'
 import { refreshMobileBuild, realMobileBuildDeps, MobileBuildKeeper, watchMobileSources } from './mobile-build'
 import { LineParser } from './line-parser'
 import { CacheWarmthTracker } from './cache-warmth'
@@ -861,6 +862,15 @@ function announceRecorded(appended: Array<{ line: string; offset: number }>): nu
  * then. Not kept across a restart: a block from before one is told by kind alone.
  */
 const blockingPrompts = new Map<PtySessionId, BlockingPrompt>()
+
+/** Tells the phones when an agent stops on a prompt only the user can answer. */
+const blockAlerts = new BlockAlerts({
+  send: (msg) => broadcastToAll(msg),
+  title: (nodeId) => {
+    const node = stateManager.getNode(nodeId)
+    return node?.type === 'terminal' ? agentSurfaceTitle(node) : UNTITLED_AGENT
+  },
+})
 
 /** Live Claude Code surfaces: everything the receptionist knows about. */
 function receptionistAgents(): RosterAgent[] {
@@ -3841,6 +3851,7 @@ async function startServer(): Promise<void> {
       // Transitions only: the state machine re-asserts unchanged states, and a
       // monitor waiting for "stopped" must not fire on a surface that already was.
       const nodeId = stateManager.getNodeIdForSession(id)
+      if (nodeId) blockAlerts.observe(nodeId, previous, state, blockingPrompts.get(id))
       if (nodeId && state !== previous) receptionist?.agentStateChanged(nodeId, state)
       // Asked again while already blocked: a new prompt, with the same state.
       else if (nodeId && isBlocked(state)) receptionist?.agentBlocked(nodeId)

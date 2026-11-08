@@ -263,6 +263,22 @@ seconds for a phone whose speaker connection is still coming up. If the
 connection drops, Voice Operator ends what was playing at the point the
 listener had heard.
 
+### Told when an agent is blocked
+
+When an agent stops on a prompt only you can answer — permission for a tool, a
+question, or approval of a plan — the phone raises a notification at once, with
+the agent's title and what it wants. Tapping it opens that terminal. Answering
+the prompt, here or on the Mac, takes the notification away, and asking again
+replaces it. There is none for the terminal you are looking at.
+
+The server decides (`src/server/block-alerts.ts`, sent as `block-alert`), the
+page passes it on (`block-alerts.ts`) and the app shows it
+(`NativeNotifications.swift`), since a page cannot. These are local
+notifications, so the page must be running to raise one: on screen, or kept
+awake in the background by holding Control or by hands-free. A suspended app
+hears nothing, and a block that came and went while it slept is not told
+afterwards. `native-notification` in the event record shows each one.
+
 ### Music from other apps
 
 In the iPhone app, Spotify or any other app's audio always comes back after
