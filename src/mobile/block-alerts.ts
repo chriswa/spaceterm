@@ -11,8 +11,12 @@ import { recordMobileEvent } from './mobile-events'
  * (`NativeNotifications.swift`) because a page cannot raise one. The server
  * decides when (`src/server/block-alerts.ts`); this only passes it on.
  *
+ * Normally the notification comes through Apple (`src/server/apns.ts`) and the
+ * page's part is only to hand the server the app's push token and say what is
+ * on screen. A `block-alert` over the socket means Apple could not be used.
+ *
  *   page → app:  `{kind: 'ready'}`, `{kind: 'show', id, title, body}`, `{kind: 'clear', id}`
- *   app → page:  `window.spacetermNativeNotifications.tapped(id)`
+ *   app → page:  `window.spacetermNativeNotifications.tapped(id)`, `.lookingAt(id)`, `.pushToken(token)`
  */
 
 interface NotificationHandler {
@@ -21,7 +25,7 @@ interface NotificationHandler {
 
 declare global {
   interface Window {
-    spacetermNativeNotifications?: { tapped(id: string): void }
+    spacetermNativeNotifications?: { tapped(id: string): void; lookingAt(id: string): boolean; pushToken(token: string): void }
   }
 }
 
@@ -49,7 +53,7 @@ function openAgent(nodeId: NodeId): void {
 }
 
 /** In a browser, or an app built before this existed, there is nothing to raise one. */
-export function installBlockAlerts(client: Pick<ServerClient, 'on'>): void {
+export function installBlockAlerts(client: Pick<ServerClient, 'on' | 'onLifecycle' | 'registerPushToken'>, deviceId: string): void {
   const app = handler()
   if (!app) return
   client.on('block-alert', ({ nodeId, title, body }) => {
@@ -58,7 +62,17 @@ export function installBlockAlerts(client: Pick<ServerClient, 'on'>): void {
     if (shown) app.postMessage({ kind: 'show', id: nodeId, title, body })
   })
   client.on('block-alert-cleared', ({ nodeId }) => app.postMessage({ kind: 'clear', id: nodeId }))
-  window.spacetermNativeNotifications = { tapped: (id) => openAgent(asNodeId(id)) }
+  let token: string | undefined
+  const register = () => { if (token) client.registerPushToken(deviceId, token) }
+  client.onLifecycle('connect', register)
+  window.spacetermNativeNotifications = {
+    tapped: (id) => openAgent(asNodeId(id)),
+    lookingAt: (id) => lookingAt(asNodeId(id)),
+    pushToken: (received) => {
+      token = received
+      register()
+    },
+  }
   // Last: this asks for permission, and hands over a tap that launched the app.
   app.postMessage({ kind: 'ready' })
 }

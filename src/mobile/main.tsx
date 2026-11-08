@@ -156,7 +156,7 @@ if (!token) {
     // Control heard with the phone locked: the app stays awake while this phone holds it.
     installStayAwake()
     // A notification whenever an agent stops on a prompt only the user can answer.
-    installBlockAlerts(client)
+    installBlockAlerts(client, phoneDevice().id)
     installDuckOthers()
     followHandsFree()
     // The held microphone, and in the app Voice Operator listening on it for "Control"; see hands-free-mode.ts.

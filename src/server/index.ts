@@ -57,6 +57,7 @@ import { readAgentMemoryBytes } from './agent-memory'
 import type { ClientLink } from './client-link'
 import { startWebGateway, loadOrCreateWebToken, DEFAULT_WEB_PORT } from './web-gateway'
 import { BlockAlerts } from './block-alerts'
+import { ApnsSender, realApnsDeps } from './apns'
 import { refreshMobileBuild, realMobileBuildDeps, MobileBuildKeeper, watchMobileSources } from './mobile-build'
 import { LineParser } from './line-parser'
 import { CacheWarmthTracker } from './cache-warmth'
@@ -863,9 +864,24 @@ function announceRecorded(appended: Array<{ line: string; offset: number }>): nu
  */
 const blockingPrompts = new Map<PtySessionId, BlockingPrompt>()
 
-/** Tells the phones when an agent stops on a prompt only the user can answer. */
+/** Reaches a phone through Apple, with its app suspended or not running. */
+const apns = new ApnsSender(realApnsDeps(SOCKET_DIR, path.resolve(__dirname, '..', '..'), serverLog))
+
+/**
+ * Tells the phones when an agent stops on a prompt only the user can answer.
+ * Through Apple where it can be, which reaches a connected phone as well, so
+ * the socket's own alert is only for when it cannot: no key on this Mac, no
+ * phone registered, or Apple refused or could not be reached.
+ */
 const blockAlerts = new BlockAlerts({
-  send: (msg) => broadcastToAll(msg),
+  send: (msg) => {
+    if (msg.type === 'block-alert-cleared') {
+      broadcastToAll(msg)
+      void apns.clear(msg.nodeId)
+    } else {
+      void apns.alert(msg).then((sent) => { if (!sent) broadcastToAll(msg) })
+    }
+  },
   title: (nodeId) => {
     const node = stateManager.getNode(nodeId)
     return node?.type === 'terminal' ? agentSurfaceTitle(node) : UNTITLED_AGENT
@@ -2176,6 +2192,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       } else {
         locationBroker.answer(client.id, msg.requestId, { ok: false, error: String(msg.error) })
       }
+      break
+    }
+
+    case 'push-token': {
+      apns.register(msg.deviceId, msg.token)
       break
     }
 

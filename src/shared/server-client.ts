@@ -757,6 +757,11 @@ export class ServerClient {
     this.fireAndForget({ type: 'set-alerts-read-timestamp', nodeId, timestamp })
   }
 
+  /** Where Apple's push service reaches this phone: see `PushTokenMessage`. */
+  registerPushToken(deviceId: string, token: string): void {
+    this.fireAndForget({ type: 'push-token', deviceId, token })
+  }
+
   /** Not remembered across a reconnect: the caller sends it again on 'connect'. */
   watchSystemStats(watching: boolean): void {
     this.fireAndForget({ type: 'system-stats-watch', watching })

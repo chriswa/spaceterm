@@ -10,9 +10,15 @@ function setup() {
   const posted: unknown[] = []
   window.webkit = { messageHandlers: { nativeNotifications: { postMessage: (m: unknown) => posted.push(m) } } }
   const listeners = new Map<string, Listener>()
-  installBlockAlerts({ on: ((type: string, listener: Listener) => { listeners.set(type, listener); return () => undefined }) as never })
+  const registered: Array<[string, string]> = []
+  const connects: Array<() => void> = []
+  installBlockAlerts({
+    on: ((type: string, listener: Listener) => { listeners.set(type, listener); return () => undefined }) as never,
+    onLifecycle: ((_: string, listener: () => void) => { connects.push(listener); return () => undefined }) as never,
+    registerPushToken: (deviceId, token) => registered.push([deviceId, token]),
+  }, 'phone-1')
   const emit = (type: string, message: object) => listeners.get(type)!({ type, ...message } as never)
-  return { posted, emit }
+  return { posted, emit, registered, connect: () => connects.forEach(fn => fn()) }
 }
 
 const a = asNodeId('a')
@@ -52,6 +58,23 @@ describe('block alerts', () => {
 
   it('does nothing without the app', () => {
     window.webkit = { messageHandlers: {} }
-    expect(() => installBlockAlerts({ on: () => { throw new Error('subscribed') } })).not.toThrow()
+    const refuse = () => { throw new Error('subscribed') }
+    expect(() => installBlockAlerts({ on: refuse, onLifecycle: refuse, registerPushToken: refuse }, 'phone-1')).not.toThrow()
+  })
+
+  it('answers whether a terminal is on screen', () => {
+    setup()
+    useSurfacePresenterStore.getState().publishFocusedTerminal(a)
+    expect(window.spacetermNativeNotifications!.lookingAt(a)).toBe(true)
+    expect(window.spacetermNativeNotifications!.lookingAt(asNodeId('b'))).toBe(false)
+  })
+
+  it('gives the server the push token, and again on every connect', () => {
+    const { registered, connect } = setup()
+    connect()
+    expect(registered).toEqual([])
+    window.spacetermNativeNotifications!.pushToken('abc')
+    connect()
+    expect(registered).toEqual([['phone-1', 'abc'], ['phone-1', 'abc']])
   })
 })

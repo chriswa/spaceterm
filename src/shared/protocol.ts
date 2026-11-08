@@ -162,6 +162,17 @@ export interface SystemStatsWatchMessage {
 }
 
 /**
+ * This phone's address for Apple's push service, so the server can reach it
+ * with the app not running. Kept across restarts. See `src/server/apns.ts`.
+ */
+export interface PushTokenMessage {
+  type: 'push-token'
+  deviceId: string
+  /** Hex, as Apple's `/3/device/<token>` wants it. */
+  token: string
+}
+
+/**
  * Pause or resume this client's canvas. While paused it is sent no terminal
  * `snapshot` frames — they are dropped, not queued — and on resume it is sent
  * each subscribed terminal's screen as it now stands. The phone pauses while
@@ -1383,6 +1394,7 @@ export type ClientMessage =
   | RestartFlagQueryMessage
   | UsageReportQueryMessage
   | SystemStatsWatchMessage
+  | PushTokenMessage
   | CanvasPauseMessage
   | LocationReplyMessage
   | AttachMessage

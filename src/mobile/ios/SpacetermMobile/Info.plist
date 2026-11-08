@@ -17,10 +17,13 @@
 	<!-- Location: an agent's request for the user's position can be answered
 	     while the app runs in the background, with Always permission
 	     (NativeLocation.swift). Only from a request to its answer. -->
+	<!-- Remote notification: a quiet push takes a notification away once its
+	     prompt has been answered elsewhere (NativeNotifications.swift). -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
 		<string>location</string>
+		<string>remote-notification</string>
 	</array>
 	<key>CFBundleIcons</key>
 	<dict>

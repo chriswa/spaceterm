@@ -271,13 +271,26 @@ the agent's title and what it wants. Tapping it opens that terminal. Answering
 the prompt, here or on the Mac, takes the notification away, and asking again
 replaces it. There is none for the terminal you are looking at.
 
-The server decides (`src/server/block-alerts.ts`, sent as `block-alert`), the
-page passes it on (`block-alerts.ts`) and the app shows it
-(`NativeNotifications.swift`), since a page cannot. These are local
-notifications, so the page must be running to raise one: on screen, or kept
-awake in the background by holding Control or by hands-free. A suspended app
-hears nothing, and a block that came and went while it slept is not told
-afterwards. `native-notification` in the event record shows each one.
+The server decides (`src/server/block-alerts.ts`) and sends it through Apple's
+push service (`src/server/apns.ts`), so it arrives with the phone locked and the
+app suspended or not running, as long as the Mac is awake and online. It takes
+one file: an APNs key from
+<https://developer.apple.com/account/resources/authkeys/list>, saved as it
+downloads (`AuthKey_<id>.p8`) in `~/.spaceterm/`. The team and bundle id come
+from `ios/Local.xcconfig`, and the app gives the server its address when it
+opens (`push-token`, kept in `~/.spaceterm/apns-devices.json`). The app is
+signed for development, so this is Apple's sandbox service; an App Store or
+ad hoc build would need the production one.
+
+Without a key, or if Apple refuses, the server tells connected phones over the
+socket instead (`block-alert`), and the app raises the notification itself.
+That needs the page running: on screen, or kept awake by holding Control or by
+hands-free.
+
+Taking a notification away from a suspended app is a quiet push, which iOS may
+delay or drop, and which never reaches an app that was swiped away, so one can
+outlast its prompt. Tapping it still opens the terminal.
+`native-notification` in the event record shows registration and each one.
 
 ### Music from other apps
 

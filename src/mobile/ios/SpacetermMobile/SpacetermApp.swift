@@ -14,6 +14,8 @@ import UserNotifications
 /// from the Mac's network, as a download the phone fetches over Tailscale.
 @main
 struct SpacetermApp: App {
+    @UIApplicationDelegateAdaptor(PushAppDelegate.self) private var pushDelegate
+
     /// Before launch finishes, or iOS drops the tap that launched the app.
     init() { UNUserNotificationCenter.current().delegate = NativeNotifications.shared }
 
