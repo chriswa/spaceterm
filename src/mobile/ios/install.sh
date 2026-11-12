@@ -138,7 +138,10 @@ want = sys.argv[2]
 found = []
 for d in devices:
     hw, conn, props = d.get("hardwareProperties", {}), d.get("connectionProperties", {}), d.get("deviceProperties", {})
-    if hw.get("platform") != "iOS" or conn.get("pairingState") != "paired":
+    # Simulators are iOS and "paired" too; one picked here fails only at
+    # install time, after a whole build (November 12: "Install Application is
+    # not supported by this device").
+    if hw.get("platform") != "iOS" or hw.get("reality") != "physical" or conn.get("pairingState") != "paired":
         continue
     name = props.get("name", "")
     if want and want not in (name, d["identifier"], hw.get("udid")):
