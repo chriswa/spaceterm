@@ -45,9 +45,11 @@ import { BugIcon, StopwatchIcon, CameraIcon, ScrollIcon, FitToMonitorIcon, LockI
  * cannot reach the host, and it is the shape a mod-supplied button would have.
  */
 
-export function DebugDropdown({ onDebugCapture, onInertiaLogDump }: {
+export function DebugDropdown({ onDebugCapture, onInertiaLogDump, keycastEnabled, onKeycastToggle }: {
   onDebugCapture: () => void
   onInertiaLogDump: () => void
+  keycastEnabled: boolean
+  onKeycastToggle: () => void
 }) {
   // Read the perf store here rather than taking it as a prop: the toolbar was
   // subscribing to `recording` on behalf of a child, so every trace start
@@ -95,8 +97,17 @@ export function DebugDropdown({ onDebugCapture, onInertiaLogDump }: {
             <ScrollIcon />
             <span>Inertia Log</span>
           </button>
-          {/* These three stay open: each toggles something you want to see the
-              state of, so closing the menu would hide the answer. */}
+          {/* These stay open: each toggles something you want to see the state
+              of, so closing the menu would hide the answer. */}
+          <button
+            className={'toolbar__menu-item' + (keycastEnabled ? ' toolbar__menu-item--active' : '')}
+            onClick={onKeycastToggle}
+            data-tooltip="Show key presses on screen"
+            data-tooltip-no-flip
+          >
+            <KeycastIcon />
+            <span>Keycast</span>
+          </button>
           <button
             className={'toolbar__menu-item' + (powerMonitor ? ' toolbar__menu-item--active' : '')}
             onClick={togglePowerMonitor}
@@ -482,7 +493,7 @@ export function ThemePicker() {
 
 // --- Host-driven buttons ---
 //
-// These three cannot be standalone: their state lives in App (a keyboard-driven
+// These two cannot be standalone: their state lives in App (a keyboard-driven
 // overlay, an in-flight server restart) rather than in a store. That is the
 // honest dividing line between what a mod could supply today and what it could
 // not.
@@ -596,19 +607,6 @@ export function ActionButtonSetupButton() {
       data-tooltip-no-flip
     >
       <ActionButtonIcon />
-    </button>
-  )
-}
-
-export function KeycastToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
-  return (
-    <button
-      className={'toolbar__btn' + (enabled ? ' toolbar__btn--active' : '')}
-      onClick={onToggle}
-      data-tooltip="Keycast — Show key presses on screen"
-      data-tooltip-no-flip
-    >
-      <KeycastIcon />
     </button>
   )
 }

@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 35
+export const CLIENT_PROTOCOL_VERSION = 36
 
 /**
  * Oldest client protocol this build still serves.
@@ -156,5 +156,8 @@ export const CLIENT_PROTOCOL_VERSION = 35
  * v34 never gives the server its address for Apple's push service
  * (`push-token`), so it is told of a blocked agent only while connected; it
  * loses nothing else.
+ *
+ * v35 cannot show the automation event log (`automation-events-query`) and
+ * ignores `automation-event`; it loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

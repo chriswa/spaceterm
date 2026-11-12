@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseAgentRef } from './agent-token'
-import { CONTROL, isBlocking, letsGo, parseReply, playedLengths, redactSpoken, renderSpeech, type Speaker } from './reply'
+import { CONTROL, isAction, isBlocking, letsGo, parseReply, playedLengths, redactSpoken, renderSpeech, type Speaker } from './reply'
 
 const KEVIN: Speaker = { name: 'Kevin', voice: 'am_michael' }
 const resolveKevin = (handle: string): Speaker | undefined => handle === 'a1' ? KEVIN : undefined
@@ -20,6 +20,21 @@ describe('parseReply', () => {
     const parsed = parseReply('{"say":[{"text":"Restarting."}],"tools":[{"tool":"restart_server"},{"tool":"refresh_clients"},{"tool":"install_phone_app","extra":1}]}')
     expect(parsed.tools).toEqual([{ tool: 'restart_server' }, { tool: 'refresh_clients' }, { tool: 'install_phone_app' }])
     expect(parsed.tools.every(letsGo)).toBe(true)
+  })
+
+  it('reads the Spotify tools as actions, and spotify_volume only with a percent from 0 to 100', () => {
+    const parsed = parseReply('{"say":[{"text":"Done."}],"tools":[{"tool":"spotify_play"},{"tool":"spotify_pause"},{"tool":"spotify_next"},{"tool":"spotify_volume","percent":40.4}]}')
+    expect(parsed.tools).toEqual([{ tool: 'spotify_play' }, { tool: 'spotify_pause' }, { tool: 'spotify_next' }, { tool: 'spotify_volume', percent: 40 }])
+    expect(parsed.tools.every(call => isAction(call) && !isBlocking(call) && !letsGo(call))).toBe(true)
+    for (const percent of ['', ',"percent":"40"', ',"percent":101', ',"percent":-1']) {
+      expect(() => parseReply(`{"tools":[{"tool":"spotify_volume"${percent}}]}`)).toThrow('"spotify_volume" needs a "percent" from 0 to 100')
+    }
+  })
+
+  it('reads agent_usage, a lookup that takes nothing', () => {
+    const [call] = parseReply('{"tools":[{"tool":"agent_usage"}]}').tools
+    expect(call).toEqual({ tool: 'agent_usage' })
+    expect(isBlocking(call) && !isAction(call)).toBe(true)
   })
 
   it('refuses go_quiet, which is no longer a tool', () => {

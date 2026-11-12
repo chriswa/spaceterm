@@ -15,7 +15,7 @@ import { unhandledVariant } from './exhaustive'
 import type { NodeId, PtySessionId } from './ids'
 import type { NodeStamp, ServerState } from './state'
 import type { UndoEntry } from './undo-types'
-import type { AutomationPatch } from './automation'
+import type { AutomationEventRecord, AutomationPatch } from './automation'
 
 /**
  * The client half of the client socket protocol: request/reply correlation,
@@ -70,7 +70,7 @@ export type ServerEventType =
   | 'mod' | 'data' | 'exit' | 'node-updated' | 'node-added' | 'node-removed'
   | 'file-content' | 'snapshot' | 'play-sound' | 'speech-active'
   | 'peer-connected' | 'peer-disconnected' | 'peer-camera-bounds'
-  | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'restart-required' | 'usage-report'
+  | 'focus-surface' | 'saved-viewports' | 'root-cwd' | 'auto-stamps-enabled' | 'automation-event' | 'restart-required' | 'usage-report'
   | 'system-stats'
   | 'speech-link' | 'mobile-build-changed' | 'mobile-app-install-link' | 'mobile-app-quit' | 'reload-page' | 'server-restarting'
   | 'agent-meta-availability' | 'server-error'
@@ -286,6 +286,7 @@ export class ServerClient {
       case 'saved-viewports':
       case 'root-cwd':
       case 'auto-stamps-enabled':
+      case 'automation-event':
       case 'restart-required':
       case 'usage-report':
       case 'system-stats':
@@ -353,6 +354,7 @@ export class ServerClient {
       case 'dictation-resumed':
       case 'dictation-result':
       case 'agent-memory-result':
+      case 'automation-events-result':
       case 'receptionist-transcript-result':
       case 'control-image-result': {
         const pending = this.pending.get(msg.seq)
@@ -821,6 +823,13 @@ export class ServerClient {
   async agentMemory(): Promise<number | null> {
     const resp = await this.request({ type: 'agent-memory-query' })
     if (resp.type === 'agent-memory-result') return resp.bytes
+    return unexpected(resp)
+  }
+
+  /** Every event the log still holds, oldest first. */
+  async automationEvents(): Promise<AutomationEventRecord[]> {
+    const resp = await this.request({ type: 'automation-events-query' })
+    if (resp.type === 'automation-events-result') return resp.events
     return unexpected(resp)
   }
 

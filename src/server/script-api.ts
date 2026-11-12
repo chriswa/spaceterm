@@ -14,6 +14,7 @@ import { checkProtocolVersion } from '../shared/protocol-handshake'
 import type { ModCapability } from '../shared/mod-manifest'
 import type { Located } from './location-broker'
 import { CUSTOM_EVENT_PREFIX, MAX_EVENT_PAYLOAD_BYTES, isCustomEventId } from '../shared/automation'
+import type { IncomingAutomationEvent } from './automation-event-log'
 
 /** What this build serves on the scripts socket. */
 const SCRIPT_PROTOCOL_RANGE = { min: MIN_SCRIPT_PROTOCOL_VERSION, current: SCRIPT_PROTOCOL_VERSION }
@@ -118,8 +119,13 @@ export interface ScriptHost {
    * caller for the log.
    */
   getLocation(askedBy: string): Promise<Located>
-  /** Fire a custom event at every automation card listening for it. Returns how many were. */
-  fireEvent(eventId: string, payload: unknown): number
+  /**
+   * Fire a custom event at every automation card listening for it. Returns how
+   * many were, and how many more would have been had they not been switched off.
+   */
+  fireEvent(eventId: string, payload: unknown): { matched: number; disabled: number }
+  /** Enter an event in the event log. Called once for every `script-fire-event`, whatever became of it. */
+  recordEvent(event: IncomingAutomationEvent): void
   log(line: string): void
 }
 
@@ -143,6 +149,17 @@ const REQUIRED_CAPABILITY: { readonly [T in ScriptMessage['type']]: ModCapabilit
   'script-fork-claude': 'fork-session',
   'script-fire-event': 'fire-events',
   'script-get-location': 'read-location',
+}
+
+/** Why a script's event cannot be fired, or undefined when it can. */
+function fireEventError(eventId: unknown, payload: unknown): string | undefined {
+  if (typeof eventId !== 'string' || !isCustomEventId(eventId)) {
+    return `event ids look like ${CUSTOM_EVENT_PREFIX}name (letters, digits, _ . : or -), got ${JSON.stringify(eventId)}`
+  }
+  if (payload !== undefined && JSON.stringify(payload).length > MAX_EVENT_PAYLOAD_BYTES) {
+    return `payload is larger than ${MAX_EVENT_PAYLOAD_BYTES} bytes of JSON`
+  }
+  return undefined
 }
 
 interface ScriptSubscriber {
@@ -219,10 +236,11 @@ export class ScriptApi {
     const identity = this.identities.get(connection)
     if (required !== null && identity && !identity.capabilities.has(required)) {
       this.host.log(`[scripts] ${identity.modId} refused ${msg.type}: manifest does not declare "${required}"`)
-      connection.send({
-        type: 'error',
-        error: `mod "${identity.modId}" did not declare the "${required}" capability`,
-      })
+      const error = `mod "${identity.modId}" did not declare the "${required}" capability`
+      if (msg.type === 'script-fire-event') {
+        this.host.recordEvent({ eventId: msg.eventId, payload: msg.payload, source: identity.modId, outcome: { kind: 'rejected', error } })
+      }
+      connection.send({ type: 'error', error })
       connection.close()
       return
     }
@@ -359,16 +377,20 @@ export class ScriptApi {
       }
 
       case 'script-fire-event': {
-        const fail = (error: string) => reply({ type: 'script-fire-event-result', seq: msg.seq, matched: 0, error })
-        if (typeof msg.eventId !== 'string' || !isCustomEventId(msg.eventId)) {
-          fail(`event ids look like ${CUSTOM_EVENT_PREFIX}name (letters, digits, _ . : or -), got ${JSON.stringify(msg.eventId)}`)
+        const { eventId, payload } = msg
+        const source = identity?.modId
+        const error = fireEventError(eventId, payload)
+        if (error) {
+          this.host.recordEvent({ eventId, payload, source, outcome: { kind: 'rejected', error } })
+          reply({ type: 'script-fire-event-result', seq: msg.seq, matched: 0, error })
           return
         }
-        if (msg.payload !== undefined && JSON.stringify(msg.payload).length > MAX_EVENT_PAYLOAD_BYTES) {
-          fail(`payload is larger than ${MAX_EVENT_PAYLOAD_BYTES} bytes of JSON`)
-          return
-        }
-        reply({ type: 'script-fire-event-result', seq: msg.seq, matched: this.host.fireEvent(msg.eventId, msg.payload) })
+        const { matched, disabled } = this.host.fireEvent(eventId, payload)
+        this.host.recordEvent({
+          eventId, payload, source,
+          outcome: matched > 0 ? { kind: 'fired', matched } : { kind: 'unheard', disabled }
+        })
+        reply({ type: 'script-fire-event-result', seq: msg.seq, matched })
         return
       }
 

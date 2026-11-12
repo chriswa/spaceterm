@@ -159,6 +159,12 @@ and the line says the run is late. A per-card setting decides what a firing does
 while children are still under the card: start another agent, skip it, queue it
 until every child is archived, or send it to the single child as a new prompt.
 
+The toolbar's event log button lists every event scripts have sent, newest
+first and updating live: its time, id and payload, and whether cards heard it,
+nothing was listening, or it was rejected. The last 500 (up to 4 MB) are kept in
+`~/.spaceterm/automation-events.jsonl` across restarts. Cron firings are not events and
+do not appear.
+
 ## Optional companions
 
 Each of these is found wherever it is installed — by PATH or by a file it

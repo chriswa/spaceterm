@@ -31,7 +31,7 @@ import type {
   ReceptionistPhase, ControlTranscriptEntry, ReceptionistHoldAction, ReceptionistBacklogEntry
 } from './protocol'
 import type { LaunchPrefs } from './launch-prefs'
-import type { AutomationPatch } from './automation'
+import type { AutomationEventRecord, AutomationPatch } from './automation'
 import type { NodeData, NodeStamp, ReceptionistHolder, ServerState } from './state'
 import type { SystemMetricsSample } from './system-metrics'
 import type { UndoEntry } from './undo-types'
@@ -172,6 +172,10 @@ export interface NodeApi {
   automationAdd(parentId: NodeId, x?: number, y?: number): Promise<{ nodeId: NodeId }>
   automationUpdate(nodeId: NodeId, patch: AutomationPatch): Promise<void>
   automationClearQueue(nodeId: NodeId): Promise<void>
+  /** Every event the log still holds, oldest first. */
+  automationEvents(): Promise<AutomationEventRecord[]>
+  /** Each event a script sends from now on, whatever became of it. */
+  onAutomationEvent(callback: (event: AutomationEventRecord) => void): () => void
   /** Mute or watch a surface's cache countdown. Muting a cold surface does nothing. */
   cacheTimerMute(nodeId: NodeId, muted: boolean): Promise<void>
 

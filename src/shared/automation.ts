@@ -127,6 +127,37 @@ export type AutomationFiring =
 /** Largest event payload accepted, as serialised JSON. It ends up on a command line. */
 export const MAX_EVENT_PAYLOAD_BYTES = 64 * 1024
 
+/**
+ * What became of one event a script sent.
+ *
+ * - `fired`: at least one enabled card was listening.
+ * - `unheard`: a well-formed event no enabled card was listening for, usually
+ *   a misspelt id. `disabled` counts the cards that would have heard it if
+ *   switched on.
+ * - `rejected`: refused before any card was considered.
+ */
+export type AutomationEventOutcome =
+  | { kind: 'fired'; matched: number }
+  | { kind: 'unheard'; disabled: number }
+  | { kind: 'rejected'; error: string }
+
+/** One entry in the event log: every event scripts send, whether or not anything acted on it. */
+export interface AutomationEventRecord {
+  /** Increases over the log's whole life, across server restarts. */
+  seq: number
+  /** epoch ms the server received it. */
+  at: number
+  /** As sent, so a malformed id can be read. Shortened if absurdly long. */
+  eventId: string
+  /** Whatever JSON the script sent, absent when it sent none. */
+  payload?: unknown
+  /** In place of `payload` when that is over `MAX_EVENT_PAYLOAD_BYTES`. */
+  oversizedPayload?: { preview: string; bytes: number }
+  /** The mod that sent it, when the connection identified itself as one. */
+  source?: string
+  outcome: AutomationEventOutcome
+}
+
 /** `2026-10-24T09:00:00-07:00`: local wall-clock time, with its offset. */
 export function formatLocalTime(ms: number): string {
   const d = new Date(ms)

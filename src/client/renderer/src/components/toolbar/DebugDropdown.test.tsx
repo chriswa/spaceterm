@@ -27,6 +27,8 @@ function terminal(id: string, overrides: Partial<Record<string, unknown>> = {}):
   } as unknown as TerminalNodeData
 }
 
+const HOST = { onDebugCapture: () => {}, onInertiaLogDump: () => {}, keycastEnabled: false, onKeycastToggle: () => {} }
+
 const realStart = useRollingRestartStore.getState().start
 
 beforeEach(() => {
@@ -39,7 +41,7 @@ beforeEach(() => {
 afterEach(cleanup)
 
 function openMenu() {
-  const utils = render(<DebugDropdown onDebugCapture={() => {}} onInertiaLogDump={() => {}} />)
+  const utils = render(<DebugDropdown {...HOST} />)
   const bug = utils.container.querySelector('button')!
   fireEvent.click(bug)
   const item = (label: string) =>
@@ -49,11 +51,30 @@ function openMenu() {
 }
 
 describe('the toolbar', () => {
-  it('no longer carries the two buttons the debug menu took over', () => {
+  it('no longer carries the buttons the debug menu took over', () => {
     const ids = TOOLBAR_WIDGETS.map((w) => w.id)
     expect(ids).not.toContain('rolling-restart')
     expect(ids).not.toContain('unfocused-frames')
+    expect(ids).not.toContain('keycast')
     expect(ids).toContain('restart')
+  })
+})
+
+describe('Keycast, in the debug menu', () => {
+  it('toggles, lights when on, and keeps the menu open', () => {
+    const onKeycastToggle = vi.fn()
+    const { container, rerender } = render(<DebugDropdown {...HOST} onKeycastToggle={onKeycastToggle} />)
+    fireEvent.click(container.querySelector('button')!)
+    const keycast = () => Array.from(container.querySelectorAll<HTMLButtonElement>('.toolbar__menu-item'))
+      .find((b) => b.textContent?.includes('Keycast'))!
+    expect(keycast().className).not.toContain('toolbar__menu-item--active')
+
+    fireEvent.click(keycast())
+    expect(onKeycastToggle).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('.toolbar__menu')).not.toBeNull()
+
+    rerender(<DebugDropdown {...HOST} keycastEnabled onKeycastToggle={onKeycastToggle} />)
+    expect(keycast().className).toContain('toolbar__menu-item--active')
   })
 })
 
@@ -81,7 +102,7 @@ describe('Rolling restart, in the debug menu', () => {
       b: terminal('b', { agentType: 'claude' }),
       shell: terminal('shell'),
     } as Record<string, NodeData> }))
-    rerender(<DebugDropdown onDebugCapture={() => {}} onInertiaLogDump={() => {}} />)
+    rerender(<DebugDropdown {...HOST} />)
     expect(item('agent surface').textContent).toContain('Restart 2 agent surfaces')
     expect(item('agent surface').disabled).toBe(false)
   })
@@ -104,7 +125,7 @@ describe('Rolling restart, in the debug menu', () => {
       restart: () => new Promise<void>((resolve) => { release = resolve }),
       wait: async () => {},
     }
-    const { container } = render(<DebugDropdown onDebugCapture={() => {}} onInertiaLogDump={() => {}} />)
+    const { container } = render(<DebugDropdown {...HOST} />)
     const bug = container.querySelector('button')!
 
     let run!: Promise<void>

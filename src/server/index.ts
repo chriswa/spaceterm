@@ -33,6 +33,7 @@ import { UNTITLED_AGENT, agentSurfaceTitle, collectAgentSurfaces, jevCliRunner, 
 import { isAgentSurface } from '../shared/node-utils'
 import { serverLog, serverLogSync, sanitizeForLog } from './server-log'
 import { MobileEventsLog } from './mobile-events'
+import { AutomationEventLog } from './automation-event-log'
 import { expandTilde } from './cwd'
 import { AutomationRunner, fileHeartbeat } from './automation-runner'
 import { isAutomationOverlap, isAutomationRun } from '../shared/automation'
@@ -71,7 +72,6 @@ import { pendingStatus, type StatusSample } from './receptionist/spaceterm-statu
 import { CodexSessionFileWatcher, findCodexSessionFile } from './codex-session-file-watcher'
 import { CursorSessionFileWatcher, findCursorTranscript } from './cursor-session-file-watcher'
 import { ClaudeStateMachine } from './claude-state'
-import { onlyOpenEndedWork } from './claude-state/background-ledger'
 import { localISOTimestamp } from './timestamp'
 import { FileContentManager } from './file-content-manager'
 import { GitStatusPoller } from './git-status-poller'
@@ -90,6 +90,7 @@ import { PotentialErrorDetector } from './auto-continue'
 import { readTranscript, readWholeTranscript } from './agent-transcript'
 import { NO_LISTENER, Receptionist, VOICE_FOLLOW_MS, type PhoneInstallResult } from './receptionist/receptionist'
 import { jevJudge } from './receptionist/self-interruption'
+import { jevTurnEndJudge } from './receptionist/turn-end'
 import { Backlog, jevBacklogJudge } from './receptionist/backlog'
 import { Watches } from './receptionist/watches'
 import { DeferredReads } from './receptionist/deferred-reads'
@@ -105,6 +106,8 @@ import { ControlImages } from './control-images'
 import { HandleNames, isHandleOf } from './receptionist/transcript-names'
 import { parseRecordLine, type Speakers } from './receptionist/transcript'
 import { SideQuestions, serveSideQuestions } from './side-questions'
+import { Spotify } from './spotify'
+import { aiSpendRunner } from './ai-spend'
 import { nodesNearView, type NearbyNode } from './receptionist/nearby'
 import type { RosterAgent } from './receptionist/roster'
 import { readPeerNames } from './claude-peer-names'
@@ -377,6 +380,8 @@ let receptionistSpeaker: string | undefined
 let agentNames: NameRegistry
 /** Side questions to agents, through Spaceterm's Claude Code plugin. See side-questions.ts. */
 const sideQuestions = new SideQuestions()
+/** Spotify on the Mac, for Control's music tools. */
+const spotify = new Spotify()
 /** Side questions to agents that have ended, run in the login environment a terminal would have. */
 const endedAskDeps = realEndedAskDeps(() => loginEnv.current() ?? process.env)
 let sideQuestionServer: import('http').Server | undefined
@@ -506,6 +511,7 @@ function keepAttention(attention: AttentionKeeper, event: VoiceOperatorEvent): v
 }
 /** The phone's audio and lifecycle record, ~/.spaceterm/mobile-events.jsonl. */
 const mobileEventsLog = new MobileEventsLog()
+const automationEventLog = new AutomationEventLog()
 
 /** Hands-free is registered with Voice Operator only while a desktop or phone client is connected. */
 function updateHandsFreeClients(): void {
@@ -900,7 +906,6 @@ function receptionistAgents(): RosterAgent[] {
       cwd: node.cwd,
       state: node.claudeState,
       ...(isBlocked(node.claudeState) && blockingPrompts.has(node.sessionId) ? { prompt: blockingPrompts.get(node.sessionId)! } : {}),
-      ...(onlyOpenEndedWork(stateManager.getBackgroundLedger(node.sessionId)) ? { openEndedWorkOnly: true as const } : {}),
       transcriptPath: transcriptPathForTerminal(node),
       claudeSessionId: node.claudeSessionHistory.at(-1)?.claudeSessionId,
       unread: node.claudeStatusUnread,
@@ -1636,7 +1641,11 @@ const scriptApi = new ScriptApi({
   // on. `payload` is not read here or anywhere else in this repo.
   emitMod: (modId, event, payload) => broadcastToAll({ type: 'mod', modId, event, payload }),
   capabilitiesFor: (modId) => modRegistry.capabilitiesFor(modId),
-  fireEvent: (eventId, payload) => automationRunner?.fireEvent(eventId, payload, Date.now()) ?? 0,
+  fireEvent: (eventId, payload) => ({
+    matched: automationRunner?.fireEvent(eventId, payload, Date.now()) ?? 0,
+    disabled: automationRunner?.disabledListeners(eventId) ?? 0
+  }),
+  recordEvent: (event) => broadcastToAll({ type: 'automation-event', event: automationEventLog.record(event, Date.now()) }),
   getLocation(askedBy) {
     const located = locationBroker.locate()
     // Said every time, so the log shows who has had the user's position.
@@ -1792,6 +1801,10 @@ function handleIngestMessage(msg: IngestMessage): void {
 
       // Delegate state transition logic to the state machine
       claudeStateMachine.handleHook(msg.surfaceId, hookType, msg.payload as Record<string, unknown>, hookTime)
+      if (hookType === 'Stop') {
+        const nodeId = stateManager.getNodeIdForSession(msg.surfaceId)
+        if (nodeId) receptionist?.agentTurnEnded(nodeId)
+      }
 
       // Process SessionStart hooks for agent session history tracking
       // (session lifecycle management stays here — not state machine concern)
@@ -2604,6 +2617,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'mobile-events': {
       mobileEventsLog.write(msg.events, clientLabel(client))
       send(client.link, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
+    case 'automation-events-query': {
+      send(client.link, { type: 'automation-events-result', seq: msg.seq, events: automationEventLog.list() })
       break
     }
 
@@ -4010,6 +4028,8 @@ async function startServer(): Promise<void> {
     // search box, asked with the receptionist's description instead.
     // Jev weighs whether news that arrives mid-reply should cut it short: see self-interruption.ts.
     judgeInterruption: jevJudge(agentSearchDeps.runJev),
+    // And whether a still-busy agent's message is news for the user: see turn-end.ts.
+    judgeTurnEnd: jevTurnEndJudge(agentSearchDeps.runJev),
     // Kept on disk: what Control set aside outlasts its compacted memory. Jev picks what comes next: see backlog.ts.
     backlog: receptionistBacklog,
     // Kept on disk too: a restart must not cost the user an answer Control promised them.
@@ -4117,6 +4137,8 @@ async function startServer(): Promise<void> {
     restartServer: () => restartServer('Control'),
     reloadPages: () => broadcastToAll({ type: 'reload-page' }),
     installPhoneApp: installPhoneAppForControl,
+    agentUsage: aiSpendRunner(() => loginEnv.current() ?? process.env),
+    spotify: (command) => spotify.command(command),
     log: appendReceptionistLog,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     voiceTick: () => new Promise((resolve) => setTimeout(resolve, VOICE_FOLLOW_MS)),

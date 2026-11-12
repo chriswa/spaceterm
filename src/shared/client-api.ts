@@ -147,6 +147,8 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       automationAdd: (parentId, x, y) => client.automationAdd(parentId, x, y),
       automationUpdate: (nodeId, patch) => client.automationUpdate(nodeId, patch),
       automationClearQueue: (nodeId) => client.automationClearQueue(nodeId),
+      automationEvents: () => client.automationEvents(),
+      onAutomationEvent: (cb) => on('automation-event', (m) => cb(m.event)),
       cacheTimerMute: (nodeId, muted) => client.cacheTimerMute(nodeId, muted),
       setClaudeStatusUnread: (sessionId, unread) => client.setClaudeStatusUnread(sessionId, unread),
       setClaudeStatusAsleep: (sessionId, asleep) => client.setClaudeStatusAsleep(sessionId, asleep),

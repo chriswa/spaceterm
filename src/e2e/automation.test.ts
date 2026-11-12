@@ -92,4 +92,21 @@ describeE2E('automation cards', () => {
     await launched.window.evaluate((nodeId) => window.api.node.automationClearQueue(nodeId as never), id)
     await launched.window.waitForSelector(`${card} .automation-card__queue:has-text("0 queued")`, { timeout: 30_000 })
   })
+
+  it('lists events in the toolbar log, heard or not, and adds new ones while open', async () => {
+    launched = await launchApp()
+    await automationWithChild(launched, 'custom_e2e_log', 'queue')
+    await fire(launched.home, 'custom_e2e_log', { n: 1 })
+    await fire(launched.home, 'custom_e2e_typo')
+    await fire(launched.home, 'no_prefix')
+
+    const { window } = launched
+    await window.click('[aria-label="Automation events"]')
+    await window.waitForSelector('.event-log__row:has-text("no_prefix"):has-text("rejected")', { timeout: 30_000 })
+    await window.waitForSelector('.event-log__row:has-text("custom_e2e_typo"):has-text("no card listening")')
+    await window.waitForSelector('.event-log__row:has-text("custom_e2e_log"):has-text("1 card"):has-text("{\\"n\\":1}")')
+
+    await fire(launched.home, 'custom_e2e_live')
+    await window.waitForSelector('.event-log__row:has-text("custom_e2e_live")', { timeout: 30_000 })
+  })
 })

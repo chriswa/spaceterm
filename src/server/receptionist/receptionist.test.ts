@@ -4,6 +4,7 @@ import type { ClaudeState, NodeData } from '../../shared/state'
 import type { TranscriptMessage } from '../agent-transcript'
 import type { SpeechBackend, SpeechContent, SpeechStatus } from '../voice-operator'
 import type { SideQuestionResult } from '../side-questions'
+import type { SpotifyOutcome } from '../spotify'
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import { ASK_AGENT_REMINDER, BACK_REQUEST, HANDOVER_PROMPT, HEARD_AGAIN, LISTENING_AGAIN, RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
@@ -113,6 +114,10 @@ function harness(opts: {
   restartRefused?: string
   /** How install_phone_app's install goes; by default it never finishes. */
   phoneInstall?: () => Promise<PhoneInstallResult>
+  /** What ai-spend prints, or the error it fails with. */
+  agentUsage?: string | Error
+  /** What Spotify answers every command with. */
+  spotify?: SpotifyOutcome
   /** Where Control speaks to begin with, in place of the recording fake. */
   speech?: SpeechBackend
   /** What the user is looking at; by default nothing has said. */
@@ -177,8 +182,8 @@ function harness(opts: {
   readsStore?: NameRegistryStore
   /** The record as an earlier server left it, carried on; by default empty. */
   record?: RecordedMessage[]
-  /** Agents whose background work is only shells and monitors; by default none. Changed in place as a test goes on. */
-  openEndedWorkOnly?: Set<NodeId>
+  /** Jev's probability that a still-busy agent's message is news; by default it cannot say. */
+  judgeTurnEnd?: ReceptionistDeps['judgeTurnEnd']
   /** Transcripts in place of the usual ones, by path. */
   transcripts?: Record<string, TranscriptMessage[]>
   /** What each agent's last PermissionRequest asked, shown while it is blocked; by default nothing is known. Changed in place as a test goes on. */
@@ -196,7 +201,6 @@ function harness(opts: {
     { nodeId: SALLY_ID, title: 'login page', cwd: '/src/web', state: states.get(SALLY_ID)!, stateSince: world.since.get(SALLY_ID), transcriptPath: '/t/sally.jsonl', claudeSessionId: 'sally-session' },
   ].filter(agent => !gone.has(agent.nodeId))
     .map(agent => unread.has(agent.nodeId) ? { ...agent, unread: true } : agent)
-    .map(agent => opts.openEndedWorkOnly?.has(agent.nodeId) ? { ...agent, openEndedWorkOnly: true as const } : agent)
     .map(agent => isBlocked(agent.state) && opts.prompts?.has(agent.nodeId) ? { ...agent, prompt: opts.prompts.get(agent.nodeId)! } : agent)
   /** Every message sent, in order, with the session it went to. */
   const turns: SessionTurn[] = []
@@ -350,6 +354,7 @@ function harness(opts: {
     nodes: () => CANVAS,
     rootCwd: () => '/Users/me',
     judgeInterruption: opts.judgeInterruption ?? (async () => 0),
+    judgeTurnEnd: opts.judgeTurnEnd ?? (async () => { throw new Error('no judge') }),
     backlog,
     watches: new Watches({ store: opts.watchStore ?? memoryStore() }),
     deferredReads: new DeferredReads({ store: opts.readsStore ?? memoryStore() }),
@@ -376,6 +381,15 @@ function harness(opts: {
     restartServer: () => { wire.push('restart server'); return opts.restartRefused },
     reloadPages: () => wire.push('reload pages'),
     installPhoneApp: () => { wire.push('install phone app'); return opts.phoneInstall?.() ?? new Promise(() => {}) },
+    agentUsage: async () => {
+      wire.push('ai-spend')
+      if (opts.agentUsage instanceof Error) throw opts.agentUsage
+      return opts.agentUsage ?? '{"omittedAccounts":["Claude: Spare"],"providers":[]}'
+    },
+    spotify: async (command) => {
+      wire.push(`spotify ${command.command}${command.command === 'volume' ? ` ${command.percent}` : ''}`)
+      return opts.spotify ?? { ok: true, state: 'playing', volume: 50, track: { name: 'Plaza', artist: 'Lyst' } }
+    },
     userView: opts.userView ?? (() => undefined),
     spawn: (parent, title, prompt) => {
       wire.push(`spawn ${parent} ${title}: ${prompt}`)
@@ -2778,6 +2792,74 @@ describe('Receptionist', () => {
     expect(h.focused).toEqual([KEVIN_ID, DIR_ID, NOTE_ID])
   })
 
+  it('runs the Spotify tools before speaking, and tells the model what Spotify is doing now', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Skipped, and the music is at 40 percent.' }], [{ tool: 'spotify_next' }, { tool: 'spotify_volume', percent: 40 }]),
+        (turn) => {
+          expect(turn.prompt).toContain('spotify_next: Spotify is now playing "Plaza" by Lyst')
+          expect(turn.prompt).toContain('spotify_volume: the music volume is 50%')
+          return reply([{ from: 'control', text: 'Sure.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('next song, and turn the music down to 40', 'spoken')
+    await flush()
+    expect(h.wire).toEqual(['spotify next', 'spotify volume 40'])
+    await h.receptionist.hear('thanks', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it('hands the JSON from ai-spend to the model for agent_usage, as a lookup, and says when it fails', async () => {
+    const h = harness({
+      agentUsage: '{"omittedAccounts":["Claude: Spare"],"providers":[{"id":"claude","account":"Personal"}]}',
+      replies: [
+        reply([], [{ tool: 'agent_usage' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('agent_usage (AI Spend Tracker\'s latest readings, from ai-spend):\n{"omittedAccounts":["Claude: Spare"],"providers":[{"id":"claude","account":"Personal"}]}')
+          return reply([{ from: 'control', text: 'Your personal Claude week is at 77 percent.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('how is my Claude usage?', 'spoken')
+    await flush()
+    expect(h.wire).toEqual(['ai-spend'])
+    expect(h.turns).toHaveLength(2)
+
+    const failing = harness({
+      agentUsage: new Error('ai-spend: AI Spend Tracker.app not found'),
+      replies: [
+        reply([], [{ tool: 'agent_usage' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('agent_usage failed: ai-spend: AI Spend Tracker.app not found')
+          return reply([{ from: 'control', text: 'I could not read your usage.' }])
+        },
+      ],
+    })
+    await failing.receptionist.hear('what are my agents costing?', 'spoken')
+    await flush()
+    expect(failing.turns).toHaveLength(2)
+  })
+
+  it('tells the model when Spotify is not open, so it can say the music did not change', async () => {
+    const h = harness({
+      spotify: { ok: false, problem: 'not-running' },
+      replies: [
+        reply([{ from: 'control', text: 'Paused.' }], [{ tool: 'spotify_pause' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('spotify_pause: Spotify is not open on the Mac, so nothing changed')
+          return reply([{ from: 'control', text: 'Spotify is not open, so that did not work.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('pause the music', 'spoken')
+    await flush()
+    await h.receptionist.hear('ok', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
   it('refuses a camera target that is nothing, before anything moves', async () => {
     const h = harness({
       replies: [
@@ -2808,7 +2890,7 @@ describe('Receptionist', () => {
   })
 })
 
-describe('Receptionist: a tentative stop, with only shells and monitors left running', () => {
+describe('Receptionist: a turn ended while background work keeps the agent busy', () => {
   /** Waits that end at once, except a tentative stop's hold, which ends when `release` is called. */
   function heldTentativeStops() {
     const holds: Array<() => void> = []
@@ -2824,22 +2906,59 @@ describe('Receptionist: a tentative stop, with only shells and monitors left run
       { role: 'assistant', text: '[agent tool activity, not speech] Ran: python3 listener.py' },
     ],
   }
+  /** Sally, watched, ends a turn with a subagent still running. */
+  async function sallyEndsATurn(h: ReturnType<typeof harness>, holds: ReturnType<typeof heldTentativeStops>) {
+    h.setState(SALLY_ID, 'working_background')
+    h.receptionist.agentTurnEnded(SALLY_ID)
+    holds.release()
+    await flush()
+  }
 
-  it('tells a watched agent as possibly done once per stretch, and keeps watching it when Control says nothing', async () => {
-    // Stella, as it happened: she ended her turn leaving a listener shell and
-    // a monitor running, sat waiting on a background task, and was never told.
+  it('tells a message judged to be news, each turn it ends, and keeps watching when Control says nothing', async () => {
+    // Ivy, as it happened: an orchestrator with a subagent running for the
+    // whole session answered Control with her next finding, and was never told.
     const holds = heldTentativeStops()
+    const judged: string[] = []
     const h = harness({
       sleep: holds.sleep,
-      openEndedWorkOnly: new Set([SALLY_ID]),
+      judgeTurnEnd: async (message) => { judged.push(message); return 0.9 },
       replies: [
         watchSally,
         (turn) => {
           expect(turn.prompt).toMatch(namedToken(SALLY, ' is now possibly done'))
           expect(turn.prompt).toContain('It last said: Working on the login form validation.')
-          // Not worth saying: its last words say it is waiting on that work.
+          // Not worth saying: its last words say it is still at work.
           return reply([], [])
         },
+        (turn) => {
+          expect(turn.prompt).toMatch(namedToken(SALLY, ' is now possibly done'))
+          return reply([{ from: 'control', text: `{${SALLY}} has news.` }])
+        },
+      ],
+    })
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
+    await flush()
+    await sallyEndsATurn(h, holds)
+    expect(judged).toEqual(['Working on the login form validation.'])
+    expect(h.turns).toHaveLength(2)
+    // Its next turn, woken by its subagent, is judged afresh.
+    h.setState(SALLY_ID, 'working')
+    await sallyEndsATurn(h, holds)
+    expect(judged).toHaveLength(2)
+    expect(h.turns).toHaveLength(3)
+    // Told, the watch is used up: a later turn is not judged.
+    h.setState(SALLY_ID, 'working')
+    await sallyEndsATurn(h, holds)
+    expect(judged).toHaveLength(2)
+  })
+
+  it('says nothing of a message judged to be progress, and keeps watching for the real stop', async () => {
+    const holds = heldTentativeStops()
+    const h = harness({
+      sleep: holds.sleep,
+      judgeTurnEnd: async () => 0.3,
+      replies: [
+        watchSally,
         (turn) => {
           expect(turn.prompt).toMatch(namedToken(SALLY, ' is now stopped'))
           return reply([{ from: 'control', text: `{${SALLY}} has finished.` }])
@@ -2848,62 +2967,54 @@ describe('Receptionist: a tentative stop, with only shells and monitors left run
     })
     await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
-    h.setState(SALLY_ID, 'working_background')
-    await flush()
+    await sallyEndsATurn(h, holds)
     expect(h.turns).toHaveLength(1)
-    holds.release()
-    await flush()
-    expect(h.turns).toHaveLength(2)
-    // Still in the same stretch: not told again.
-    holds.release()
-    await flush()
-    expect(h.turns).toHaveLength(2)
     h.setState(SALLY_ID, 'stopped')
     await flush()
-    expect(h.turns).toHaveLength(3)
+    expect(h.turns).toHaveLength(2)
   })
 
-  it('says nothing while the agent\'s last act is a tool call, not a final message', async () => {
+  it('judges nothing while the agent\'s last act is a tool call, not a final message', async () => {
     const holds = heldTentativeStops()
-    const h = harness({ sleep: holds.sleep, openEndedWorkOnly: new Set([SALLY_ID]), transcripts: SALLY_AT_A_TOOL, replies: [watchSally] })
+    let judged = 0
+    const h = harness({ sleep: holds.sleep, judgeTurnEnd: async () => { judged++; return 1 }, transcripts: SALLY_AT_A_TOOL, replies: [watchSally] })
+    await h.receptionist.hear('let me know when Sally is done', 'spoken')
+    await flush()
+    await sallyEndsATurn(h, holds)
+    expect(judged).toBe(0)
+    expect(h.turns).toHaveLength(1)
+  })
+
+  it('judges nothing when the agent wakes within the hold, as a monitor\'s ping wakes it', async () => {
+    const holds = heldTentativeStops()
+    let judged = 0
+    const h = harness({ sleep: holds.sleep, judgeTurnEnd: async () => { judged++; return 1 }, replies: [watchSally] })
     await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
     h.setState(SALLY_ID, 'working_background')
+    h.receptionist.agentTurnEnded(SALLY_ID)
+    h.setState(SALLY_ID, 'working')
     holds.release()
     await flush()
-    expect(h.turns).toHaveLength(1)
+    expect(judged).toBe(0)
   })
 
-  it('says nothing while a subagent or workflow is still running', async () => {
+  it('judges nothing of an agent it is not watching', async () => {
+    const holds = heldTentativeStops()
+    let judged = 0
+    const h = harness({ sleep: holds.sleep, judgeTurnEnd: async () => { judged++; return 1 }, replies: [] })
+    await sallyEndsATurn(h, holds)
+    expect(judged).toBe(0)
+    expect(h.turns).toHaveLength(0)
+  })
+
+  it('says nothing when Jev cannot judge', async () => {
     const holds = heldTentativeStops()
     const h = harness({ sleep: holds.sleep, replies: [watchSally] })
     await h.receptionist.hear('let me know when Sally is done', 'spoken')
     await flush()
-    h.setState(SALLY_ID, 'working_background')
-    holds.release()
-    await flush()
+    await sallyEndsATurn(h, holds)
     expect(h.turns).toHaveLength(1)
-  })
-
-  it('says nothing when the agent wakes within the hold, as a monitor\'s ping wakes it', async () => {
-    const holds = heldTentativeStops()
-    const h = harness({ sleep: holds.sleep, openEndedWorkOnly: new Set([SALLY_ID]), replies: [watchSally] })
-    await h.receptionist.hear('let me know when Sally is done', 'spoken')
-    await flush()
-    h.setState(SALLY_ID, 'working_background')
-    h.setState(SALLY_ID, 'working')
-    holds.release()
-    await flush()
-    expect(h.turns).toHaveLength(1)
-  })
-
-  it('says nothing of an agent it is not watching', async () => {
-    const holds = heldTentativeStops()
-    const h = harness({ sleep: holds.sleep, openEndedWorkOnly: new Set([SALLY_ID]), replies: [] })
-    h.setState(SALLY_ID, 'working_background')
-    holds.release()
-    await flush()
-    expect(h.turns).toHaveLength(0)
   })
 })
 

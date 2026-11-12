@@ -5,6 +5,7 @@ import type {
   ReceptionistApi, ReceptionistBacklog, ReceptionistStatus, HandsFreeApi, ControlTranscriptPage
 } from '../../../../shared/api'
 import type { SystemMetricsSample } from '../../../../shared/system-metrics'
+import type { AutomationEventRecord } from '../../../../shared/automation'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
 import type { ControlTranscriptEntry, SnapshotMessage, SpeakOutcome } from '../../../../shared/protocol'
 import type { NodeData, ReceptionistHolder, ServerState } from '../../../../shared/state'
@@ -102,6 +103,7 @@ export interface FakeBridgeResponses {
   agentSearch: AgentSearchResponse
   /** Bytes reported by the toolbar's agent-memory poll; `null` = no daemon. */
   agentMemoryBytes: number | null
+  automationEvents: AutomationEventRecord[]
   /** The page `receptionist.transcript(before)` resolves to. */
   controlTranscript: (before?: number) => ControlTranscriptPage
   /** What `receptionist.image(id, size)` resolves to; undefined rejects, as for a picture no longer kept. */
@@ -144,6 +146,7 @@ export class FakeBridge implements Api {
     restartFlag: { required: false, reason: '' },
     usageReport: null,
     agentMemoryBytes: null,
+    automationEvents: [],
     controlTranscript: () => ({ entries: [], more: false }),
     controlImage: () => undefined
   }
@@ -168,6 +171,7 @@ export class FakeBridge implements Api {
   private readonly savedViewports = new Set<(v: Record<string, CameraBounds>) => void>()
   private readonly rootCwd = new Set<(cwd: string | undefined) => void>()
   private readonly autoStampsEnabled = new Set<(enabled: boolean) => void>()
+  private readonly automationEvent = new Set<(event: AutomationEventRecord) => void>()
   private readonly restartRequired = new Set<(required: boolean, reason: string) => void>()
   private readonly serverRestarting = new Set<() => void>()
   private readonly usageReport = new Set<(snapshot: UsageSnapshot) => void>()
@@ -254,6 +258,9 @@ export class FakeBridge implements Api {
     },
     autoStampsEnabled: (enabled: boolean): void => {
       for (const fn of this.autoStampsEnabled) fn(enabled)
+    },
+    automationEvent: (event: AutomationEventRecord): void => {
+      for (const fn of this.automationEvent) fn(event)
     },
     rootCwd: (cwd: string | undefined): void => {
       for (const fn of this.rootCwd) fn(cwd)
@@ -405,6 +412,8 @@ export class FakeBridge implements Api {
       this.reply('node.automationAdd', { nodeId: this.responses.newNodeId }, parentId, x, y),
     automationUpdate: (nodeId, patch) => this.reply('node.automationUpdate', undefined, nodeId, patch),
     automationClearQueue: (nodeId) => this.reply('node.automationClearQueue', undefined, nodeId),
+    automationEvents: () => this.reply('node.automationEvents', this.responses.automationEvents),
+    onAutomationEvent: (cb) => subscribe(this.automationEvent, cb),
     cacheTimerMute: (nodeId, muted) => this.reply('node.cacheTimerMute', undefined, nodeId, muted),
 
     setClaudeStatusUnread: (sessionId, unread) =>

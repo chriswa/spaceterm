@@ -8,6 +8,18 @@ import type { ReactElement } from 'react'
  * props and no state; grouping them is not a design, just tidiness.
  */
 
+export function EventLogIcon() {
+  // A lightning bolt, for an event arriving, beside the lines of a log.
+  return (
+    <svg viewBox="0 0 18 18" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      <path d="M6 2 L2 9.5 L5 9.5 L4 16 L9 7.5 L6 7.5 Z" fill="currentColor" fillOpacity="0.2" />
+      <line x1="11" y1="4" x2="16" y2="4" />
+      <line x1="11" y1="9" x2="16" y2="9" />
+      <line x1="11" y1="14" x2="16" y2="14" />
+    </svg>
+  )
+}
+
 export function KeycastIcon() {
   // Vintage keyboard key from the front, slightly above.
   // Cap: front face (rectangle) + thin top surface strip visible from above.

@@ -4,6 +4,7 @@ import { SCRIPT_EVENTS, SCRIPT_PROTOCOL_VERSION, MIN_SCRIPT_PROTOCOL_VERSION } f
 import type { ScriptMessage } from '../shared/protocol'
 import type { ModCapability } from '../shared/mod-manifest'
 import type { Located } from './location-broker'
+import type { IncomingAutomationEvent } from './automation-event-log'
 import type { NodeData, TerminalNodeData } from '../shared/state'
 import { asNodeId, asPtySessionId, ROOT_NODE_ID, type NodeId, type PtySessionId } from '../shared/ids'
 
@@ -100,9 +101,14 @@ class FakeHost implements ScriptHost {
   /** Events fired at automation cards, and how many cards each matches. */
   readonly firedEvents: Array<{ eventId: string; payload: unknown }> = []
   listeners = 0
-  fireEvent(eventId: string, payload: unknown): number {
+  disabledListeners = 0
+  fireEvent(eventId: string, payload: unknown): { matched: number; disabled: number } {
     this.firedEvents.push({ eventId, payload })
-    return this.listeners
+    return { matched: this.listeners, disabled: this.disabledListeners }
+  }
+  readonly recordedEvents: IncomingAutomationEvent[] = []
+  recordEvent(event: IncomingAutomationEvent): void {
+    this.recordedEvents.push(event)
   }
   locateResult: Promise<Located> = new Promise(() => {})
   readonly locationAskers: string[] = []
@@ -528,6 +534,31 @@ describe('script-fire-event', () => {
     expect(h.host.firedEvents).toEqual([])
     expect(h.conn.only.error).toContain('payload')
   })
+
+  describe('the event log', () => {
+    it('records a heard event with how many cards heard it', () => {
+      const h = harness((host) => { host.listeners = 2 })
+      h.send({ type: 'script-fire-event', seq: 1, eventId: 'custom_x', payload: { a: 1 } })
+      expect(h.host.recordedEvents).toEqual([
+        { eventId: 'custom_x', payload: { a: 1 }, source: undefined, outcome: { kind: 'fired', matched: 2 } }
+      ])
+    })
+
+    it('records an event nothing was listening for, counting cards switched off', () => {
+      const h = harness((host) => { host.disabledListeners = 1 })
+      h.send({ type: 'script-fire-event', seq: 1, eventId: 'custom_typo' })
+      expect(h.host.recordedEvents[0].outcome).toEqual({ kind: 'unheard', disabled: 1 })
+    })
+
+    it('records a malformed id and an oversized payload as rejected', () => {
+      const h = harness()
+      h.send({ type: 'script-fire-event', seq: 1, eventId: 'linear' })
+      const big = harness()
+      big.send({ type: 'script-fire-event', seq: 1, eventId: 'custom_x', payload: 'x'.repeat(70_000) })
+      expect(h.host.recordedEvents[0]).toMatchObject({ eventId: 'linear', outcome: { kind: 'rejected', error: expect.stringContaining('custom_') } })
+      expect(big.host.recordedEvents[0]).toMatchObject({ eventId: 'custom_x', outcome: { kind: 'rejected', error: expect.stringContaining('payload') } })
+    })
+  })
 })
 
 describe('script-get-location', () => {
@@ -726,6 +757,19 @@ describe('capability scoping', () => {
     // Naming the capability is the difference between a fixable message and a
     // mystery: the manifest edit is right there in the text.
     expect(String(h.conn.only.error)).toContain('emit-mod')
+  })
+
+  it('enters an event it refuses in the event log, naming the mod', () => {
+    const h = harness((host) => { host.manifests.set('chatter', ['read-nodes']) })
+    identify(h, 'chatter')
+
+    h.send({ type: 'script-fire-event', seq: 2, eventId: 'custom_x', payload: 1 })
+
+    expect(h.host.firedEvents).toEqual([])
+    expect(h.host.recordedEvents).toEqual([{
+      eventId: 'custom_x', payload: 1, source: 'chatter',
+      outcome: { kind: 'rejected', error: expect.stringContaining('fire-events') }
+    }])
   })
 
   it('never refuses the handshake itself', () => {

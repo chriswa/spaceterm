@@ -19,6 +19,7 @@ import { NOTHING_PENDING, sameStatus, statusOf, statusToTell, type SpacetermStat
 import type { CameraBounds, ControlImage, ControlTrace, ControlTraceKind, ControlTranscriptEntry } from '../../shared/protocol'
 import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
 import type { EndedAnswer } from '../ended-side-question'
+import type { SpotifyCommand, SpotifyOutcome } from '../spotify'
 import {
   FORMAT_REMINDER, HANDOVER_CHARS, IMAGE_CAPTION_CHARS, IMAGE_CAPTIONS_TOLD, HANDOVER_HEADING, HANDOVER_PROMPT, mergeNews, RECEPTIONIST_SYSTEM_PROMPT, renderEvent, renderTurnBody,
   type BlockedAgent, type ReceptionistEvent, type ReturnNews,
@@ -27,8 +28,8 @@ import {
   CONVERSATION_WORDS, decideInterruption, HANG_ON, lastWords, splitAtOffset, type InterruptionContext, type InterruptionVerdict,
 } from './self-interruption'
 import {
-  actionHeadline, CONTROL, heardLengths, isAction, playedLengths, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, letsGo,
-  type LetGoTool, type Reply, type SayPart, type SpokenPart, type ToolCall,
+  actionHeadline, CONTROL, heardLengths, isAction, playedLengths, isBlocking, isBookkeeping, isLookup, isSpotifyCall, parseReply, redactSpoken, renderSpeech, showToolCall, letsGo,
+  type LetGoTool, type Reply, type SayPart, type SpokenPart, type SpotifyCall, type SpotifyTool, type ToolCall,
 } from './reply'
 import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
 import { decidePause, INTERRUPTION_QUIET_MS, PAUSE_WAIT_MS, pauseDialogue, type PauseJudgement, type PauseVerdict } from './backlog-pause'
@@ -37,6 +38,7 @@ import { FORGOTTEN_MS, type BackBurner } from './back-burner'
 import type { EndedAgent, EndedAgents } from './ended-agents'
 import type { Asking, PendingNews } from './pending-news'
 import { RESTARTED_MID_REPLY, type CarryOver } from './carry-over'
+import { TURN_END_THRESHOLD } from './turn-end'
 import { COMPACT_ABOVE_TOKENS, compactionTrace, type Compaction } from './compaction'
 import { describeBlock, isBlocked } from './blocked'
 import {
@@ -151,6 +153,8 @@ export interface ReceptionistDeps {
    * that arrived while it was speaking: see self-interruption.ts.
    */
   judgeInterruption(ctx: InterruptionContext): Promise<number>
+  /** Jev's probability that an agent's final message hands the user news though it is still busy: see turn-end.ts. */
+  judgeTurnEnd(message: string): Promise<number>
   /** Things Control set aside to bring up with the user later: see backlog.ts. */
   backlog: Pick<Backlog, 'size' | 'ready' | 'all' | 'add' | 'heard' | 'take' | 'restore' | 'settle' | 'held' | 'hold'>
   /** The agents being watched for their next stop, kept across server restarts: see watches.ts. */
@@ -310,6 +314,10 @@ export interface ReceptionistDeps {
    * Mac's network. Takes minutes; resolves with how it went.
    */
   installPhoneApp(): Promise<PhoneInstallResult>
+  /** `ai-spend`'s JSON: Claude usage windows and agent spend. Rejects with why it could not run: see ai-spend.ts. */
+  agentUsage(): Promise<string>
+  /** Play, pause or skip Spotify on the Mac, or set its volume: see spotify.ts. Never rejects. */
+  spotify(command: SpotifyCommand): Promise<SpotifyOutcome>
   /**
    * What the user is looking at: the screen of the device holding Control
    * (or, failing that, the one that last moved), and the nodes nearest
@@ -384,6 +392,9 @@ const BUSY_RETRIES = 30
  */
 const RECAP_MESSAGES = 10
 const RECAP_MESSAGE_CHARS = 1_500
+/** What each Spotify tool that takes nothing asks Spotify to do. */
+const SPOTIFY_COMMANDS: Record<SpotifyTool, 'play' | 'pause' | 'next'> = { spotify_play: 'play', spotify_pause: 'pause', spotify_next: 'next' }
+
 /** The tools that take an agent that is no longer live. */
 const ENDED_TOOLS: ReadonlySet<ToolCall['tool']> = new Set(['read', 'ask_agent', 'unarchive_agent'])
 /** Agents `find_agent` reports, best first. */
@@ -474,14 +485,14 @@ function restartLast(calls: readonly ToolCall[]): ToolCall[] {
  */
 export const STOP_HOLD_MS = 2_000
 /**
- * How long a watched agent must sit in a tentative stop before it is reported:
- * see `holdTentativeStop`. Longer than `STOP_HOLD_MS`, because a background
+ * How long a watched agent must sit in a tentative stop before its message is
+ * judged: see `agentTurnEnded`. Longer than `STOP_HOLD_MS`, because a background
  * shell's completion or a monitor's ping often wakes the agent within seconds.
  */
 export const TENTATIVE_STOP_HOLD_MS = 5_000
 /** What a tentative stop is told as: the agent "is now …". */
-export const TENTATIVE_STOP_WORDS = 'possibly done: it ended its turn with a final message, but shells or monitors it started in the background ' +
-  'are still running and may wake it again. Judge from its last words whether it is finished or waiting on that work'
+export const TENTATIVE_STOP_WORDS = 'possibly done: it ended its turn with what looks like news for the user, but work it started in the background ' +
+  'is still running and may wake it again. Judge from its last words whether it is finished or waiting on that work'
 /** Characters of what a forgotten agent last said that its backlog item keeps: see `forgetLater`. */
 const FORGOTTEN_LAST_SAID_CHARS = 300
 /** Told when the user takes an agent over: see `userTookOver`. */
@@ -628,6 +639,8 @@ export class Receptionist {
   private readonly monitors: Watches
   /** Watched agents whose stop is being held before it is reported, each with its own hold: see `holdStop`. */
   private readonly holding = new Map<NodeId, object>()
+  /** Watched agents whose last message is waiting to be judged, each with its own hold: see `agentTurnEnded`. */
+  private readonly judgingTurns = new Map<NodeId, object>()
   /** Agents the user is working with directly: `deps.backBurner`, which outlives the server. See `userTookOver`. */
   private readonly burner: BackBurner
   /** Settled agents on the back burner, each with its own wait to be counted forgotten: see `forgetLater`. */
@@ -1489,7 +1502,6 @@ export class Receptionist {
       // Back at work while its stop was held: that was no stop. See `STOP_HOLD_MS`.
       this.holding.delete(nodeId)
       if (waiting.kind === 'after-work') this.monitors.set(nodeId, { ...waiting, kind: 'next-stop' })
-      else if (state === 'working_background') void this.holdTentativeStop(nodeId)
       return
     }
     if (waiting.kind === 'after-work') return
@@ -1563,27 +1575,41 @@ export class Receptionist {
   }
 
   /**
-   * A watched agent ended its turn with nothing but shells or monitors still
-   * running: it may be done and only leaving a listener up, or waiting on that
-   * work for a result. Its state stays "waiting on a background task", which
-   * a watch never fires on, so Control is told of it as a possible finish once
-   * it has held for `TENTATIVE_STOP_HOLD_MS`, and only if the agent's last act
-   * was a final message rather than a tool call.
+   * An agent's Stop hook fired: its turn ended with a message. One that ended
+   * it with background work still running stays "waiting on a background
+   * task", which a watch never fires on, so once that has held for
+   * `TENTATIVE_STOP_HOLD_MS` a watched agent's final message is judged
+   * (turn-end.ts), and told to Control as a possible finish only if it hands
+   * the user something: a finding, a question, or finished work.
    *
-   * Once per stretch in that state: the hold starts only on the way into it.
-   * Told, the watch is used up as by any stop; passed over in silence, it is
-   * kept (`keepWatchingUntold`) for the agent's real stop.
+   * Every turn is judged as it ends, so a message is never weighed twice and
+   * none from before the watch is. Told, the watch is used up as by any stop;
+   * passed over in silence, it is kept (`keepWatchingUntold`) for the next.
    */
-  private async holdTentativeStop(nodeId: NodeId): Promise<void> {
+  agentTurnEnded(nodeId: NodeId): void {
+    void this.judgeTurnEnd(nodeId)
+  }
+
+  private async judgeTurnEnd(nodeId: NodeId): Promise<void> {
     const hold = {}
-    this.holding.set(nodeId, hold)
+    this.judgingTurns.set(nodeId, hold)
     await this.deps.sleep(TENTATIVE_STOP_HOLD_MS)
-    if (this.holding.get(nodeId) !== hold) return
-    this.holding.delete(nodeId)
+    const current = () => this.judgingTurns.get(nodeId) === hold && this.monitors.get(nodeId)?.kind === 'next-stop' && !this.warming.has(nodeId)
+      && this.deps.agents().find(candidate => candidate.nodeId === nodeId)?.state === 'working_background'
+    if (!current()) return
     const agent = this.deps.agents().find(candidate => candidate.nodeId === nodeId)
-    if (this.monitors.get(nodeId)?.kind !== 'next-stop' || agent?.state !== 'working_background' || !agent.openEndedWorkOnly) return
-    if (!agent.transcriptPath || !finalAgentMessage(this.deps.readTranscript(agent.transcriptPath))) return
-    this.fireMonitor(nodeId, agent.state, TENTATIVE_STOP_WORDS)
+    const message = agent?.transcriptPath ? finalAgentMessage(this.deps.readTranscript(agent.transcriptPath)) : ''
+    if (!message) return
+    let probability: number
+    try {
+      probability = await this.deps.judgeTurnEnd(message)
+    } catch (err) {
+      this.deps.log({ event: 'turn-end', nodeId, error: err instanceof Error ? err.message : String(err) })
+      return
+    }
+    const told = probability >= TURN_END_THRESHOLD && current()
+    this.deps.log({ event: 'turn-end', nodeId, probability, told })
+    if (told) this.fireMonitor(nodeId, 'working_background', TENTATIVE_STOP_WORDS)
   }
 
   /**
@@ -2500,6 +2526,10 @@ export class Receptionist {
         results.push(this.nearby(agents, handles))
         continue
       }
+      if (call.tool === 'agent_usage') {
+        results.push(await this.agentUsage())
+        continue
+      }
       if (call.tool === 'force_user_camera') {
         const nodeId = this.resolveTarget(call.target, handles, agents)
         if (!nodeId) {
@@ -2526,6 +2556,10 @@ export class Receptionist {
       }
       // Taken down by `stageReads`, with the turn it waits on.
       if (call.tool === 'mark_read') continue
+      if (isSpotifyCall(call)) {
+        done.push(await this.spotify(call))
+        continue
+      }
       if (letsGo(call)) {
         // Away first, so that nothing more is said, whatever happens next.
         serverLog(`[receptionist] ${call.tool}: letting go of Control`)
@@ -2610,6 +2644,36 @@ export class Receptionist {
       this.deps.log({ event: 'tool', ...call, nodeId: agent.nodeId })
     }
     return { results, done }
+  }
+
+  /** The agent_usage tool: ai-spend's JSON as it printed it, for the model to summarize. */
+  private async agentUsage(): Promise<string> {
+    try {
+      return `agent_usage (AI Spend Tracker's latest readings, from ai-spend):\n${await this.deps.agentUsage()}`
+    } catch (err) {
+      return `agent_usage failed: ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+
+  /** A Spotify tool, and the line saying what Spotify is doing now, or why nothing changed. */
+  private async spotify(call: SpotifyCall): Promise<string> {
+    const command: SpotifyCommand = call.tool === 'spotify_volume'
+      ? { command: 'volume', percent: call.percent }
+      : { command: SPOTIFY_COMMANDS[call.tool] }
+    const outcome = await this.deps.spotify(command)
+    this.deps.log({ event: 'tool', ...call, outcome })
+    if (!outcome.ok) {
+      return outcome.problem === 'not-running'
+        ? `${call.tool}: Spotify is not open on the Mac, so nothing changed`
+        : `${call.tool} failed: ${outcome.message}`
+    }
+    const track = outcome.track ? `"${outcome.track.name}" by ${outcome.track.artist}` : 'nothing'
+    switch (call.tool) {
+      case 'spotify_play': return `spotify_play: Spotify is playing ${track}`
+      case 'spotify_pause': return 'spotify_pause: Spotify is paused'
+      case 'spotify_next': return `spotify_next: Spotify is now playing ${track}`
+      case 'spotify_volume': return `spotify_volume: the music volume is ${outcome.volume}%`
+    }
   }
 
   /**

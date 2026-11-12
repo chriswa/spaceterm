@@ -4,6 +4,7 @@ import type { CrabEntry } from '../../lib/crab-nav'
 import { CrabGroup, type CrabNavEvent } from './CrabGroup'
 import { PowerMonitor } from './PowerMonitor'
 import { ControlButton } from './ControlButtons'
+import { AutomationEventsButton } from './AutomationEventsButton'
 import { HandsFreeButton } from '../../../../../mobile/HandsFreeButton'
 import { handsFreeBlocker } from '../../lib/desktop-hands-free'
 import {
@@ -18,7 +19,6 @@ import {
   HelpButton,
   InstallAppButton,
   ActionButtonSetupButton,
-  KeycastToggle,
   NotificationSoundToggle,
   AutoStampToggle,
   ReloadClientButton,
@@ -146,15 +146,17 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
     id: 'debug',
     slot: 'buttons',
     kind: 'host',
-    render: (h) => <DebugDropdown onDebugCapture={h.onDebugCapture} onInertiaLogDump={h.onInertiaLogDump} />
+    render: (h) => (
+      <DebugDropdown
+        onDebugCapture={h.onDebugCapture}
+        onInertiaLogDump={h.onInertiaLogDump}
+        keycastEnabled={h.keycastEnabled}
+        onKeycastToggle={h.onKeycastToggle}
+      />
+    )
   },
   { id: 'theme', slot: 'buttons', kind: 'standalone', render: () => <ThemePicker /> },
-  {
-    id: 'keycast',
-    slot: 'buttons',
-    kind: 'host',
-    render: (h) => <KeycastToggle enabled={h.keycastEnabled} onToggle={h.onKeycastToggle} />
-  },
+  { id: 'automation-events', slot: 'buttons', kind: 'standalone', render: () => <AutomationEventsButton /> },
   { id: 'notification-sound', slot: 'buttons', kind: 'standalone', render: () => <NotificationSoundToggle /> },
   { id: 'auto-stamp', slot: 'buttons', kind: 'standalone', render: () => <AutoStampToggle /> },
   { id: 'copy-cleanup', slot: 'buttons', kind: 'standalone', render: () => <CopyCleanupToggle /> },

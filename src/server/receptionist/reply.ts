@@ -46,6 +46,8 @@ export type ToolCall = (
   | { tool: 'agent_details'; agent: string }
   | { tool: 'find_agent'; query: string }
   | { tool: 'nearby' }
+  /** AI Spend Tracker's Claude usage and agent spend, as `ai-spend` prints it: see ai-spend.ts. */
+  | { tool: 'agent_usage' }
   | { tool: 'force_user_camera'; target: string }
   | { tool: 'restart_server' }
   | { tool: 'refresh_clients' }
@@ -56,7 +58,19 @@ export type ToolCall = (
   | { tool: 'mark_read'; agent: string }
   /** `about` describes a particular item to take, rather than whichever matters most. */
   | { tool: 'backlog_next'; about?: string }
+  | { tool: SpotifyTool }
+  /** `percent`: 0 to 100. */
+  | { tool: 'spotify_volume'; percent: number }
 )
+
+/** The Spotify tools that take nothing: see spotify.ts. */
+const SPOTIFY_TOOLS = ['spotify_play', 'spotify_pause', 'spotify_next'] as const
+export type SpotifyTool = typeof SPOTIFY_TOOLS[number]
+export type SpotifyCall = Extract<ToolCall, { tool: SpotifyTool | 'spotify_volume' }>
+
+export function isSpotifyCall(call: ToolCall): call is SpotifyCall {
+  return (SPOTIFY_TOOLS as readonly string[]).includes(call.tool) || call.tool === 'spotify_volume'
+}
 
 export interface Reply {
   say: SayPart[]
@@ -84,7 +98,7 @@ export function letsGo(call: ToolCall): call is { tool: LetGoTool } {
  */
 export function isLookup(call: ToolCall): boolean {
   return call.tool === 'read' || call.tool === 'recall' || call.tool === 'list_agents' || call.tool === 'list_nodes' || call.tool === 'agent_details' || call.tool === 'find_agent' || call.tool === 'nearby' ||
-    call.tool === 'backlog_next'
+    call.tool === 'agent_usage' || call.tool === 'backlog_next'
 }
 
 /**
@@ -133,6 +147,10 @@ export function actionHeadline(call: ToolCall): string {
     case 'restart_server': return 'RESTARTED THE SERVER'
     case 'refresh_clients': return 'REFRESHED EVERY PAGE'
     case 'install_phone_app': return 'STARTED INSTALLING THE IPHONE APP'
+    case 'spotify_play': return 'PLAYED SPOTIFY'
+    case 'spotify_pause': return 'PAUSED SPOTIFY'
+    case 'spotify_next': return 'SKIPPED TO THE NEXT SONG'
+    case 'spotify_volume': return `SET THE MUSIC VOLUME TO ${call.percent}%`
     default: return showToolCall(call)
   }
 }
@@ -182,9 +200,10 @@ function parseSayPart(value: unknown): SayPart {
 /** Every tool, so a wrong name is answered with the right ones rather than a guess at its fields. */
 const TOOL_NAMES: Record<ToolCall['tool'], true> = {
   read: true, ask_agent: true, monitor: true, send: true, interrupt: true, answer_permission: true, archive_agent: true, unarchive_agent: true,
-  spawn: true, rename_agent: true, recall: true, list_agents: true, list_nodes: true, agent_details: true, find_agent: true, nearby: true, force_user_camera: true,
+  spawn: true, rename_agent: true, recall: true, list_agents: true, list_nodes: true, agent_details: true, find_agent: true, nearby: true, agent_usage: true, force_user_camera: true,
   restart_server: true, refresh_clients: true, install_phone_app: true,
   backlog_add: true, backlog_next: true, mark_read: true,
+  spotify_play: true, spotify_pause: true, spotify_next: true, spotify_volume: true,
 }
 const TOOL_LIST = Object.keys(TOOL_NAMES).join(', ')
 
@@ -202,7 +221,16 @@ function parseToolCall(value: unknown): ToolCall {
   // The shape of a native tool call, which a model without its instructions falls back on.
   if ('input' in value) throw new Error(`a tool call's fields go beside "tool", not under "input"`)
   if (value.tool === 'nearby') return { tool: 'nearby' }
+  if (value.tool === 'agent_usage') return { tool: 'agent_usage' }
   if ((LET_GO_TOOLS as readonly string[]).includes(value.tool)) return { tool: value.tool as LetGoTool }
+  if ((SPOTIFY_TOOLS as readonly string[]).includes(value.tool)) return { tool: value.tool as SpotifyTool }
+  if (value.tool === 'spotify_volume') {
+    const percent = value.percent
+    if (typeof percent !== 'number' || !Number.isFinite(percent) || percent < 0 || percent > 100) {
+      throw new Error('"spotify_volume" needs a "percent" from 0 to 100, such as 40')
+    }
+    return { tool: 'spotify_volume', percent: Math.round(percent) }
+  }
   if (value.tool === 'backlog_next') {
     const about = typeof value.about === 'string' ? value.about.trim() : ''
     return about ? { tool: 'backlog_next', about } : { tool: 'backlog_next' }

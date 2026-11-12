@@ -601,6 +601,110 @@ html, body, #root {
   color: #b06880;
 }
 
+/* The automation event log: wide, so anchored to its button's left edge rather
+   than centred, which would run it off the side of the window. */
+.toolbar__menu--events {
+  left: 0;
+  transform: none;
+  width: min(560px, calc(100vw - 24px));
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+}
+
+.event-log__empty {
+  padding: 6px 12px 10px;
+  font-size: 12px;
+  color: #888;
+}
+
+.event-log__empty code,
+.event-log__id,
+.event-log__summary,
+.event-log__payload {
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+}
+
+.event-log__row {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  background: transparent;
+  color: #cdd6f4;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.event-log__row:hover {
+  background: rgba(255,255,255,0.08);
+}
+
+.event-log__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.event-log__time {
+  flex: none;
+  color: #888;
+  font-size: 11px;
+}
+
+.event-log__id {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event-log__outcome {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.event-log__outcome--fired { color: #a6e3a1; }
+.event-log__outcome--unheard { color: #ffc94d; }
+.event-log__outcome--rejected { color: #ff8a80; }
+
+.event-log__summary {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #888;
+}
+
+.event-log__detail {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #ff8a80;
+}
+
+.event-log__source {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #888;
+}
+
+.event-log__payload {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  max-height: 240px;
+  overflow: auto;
+  border-radius: 4px;
+  background: rgba(0,0,0,0.3);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  cursor: text;
+}
+
 /* Power monitor — a debug readout, so it is deliberately quieter than fps/zoom */
 .toolbar__power {
   display: inline-flex;

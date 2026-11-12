@@ -613,6 +613,12 @@ export interface AgentMemoryQueryMessage {
   seq: number
 }
 
+/** The automation event log. Replies `automation-events-result`. */
+export interface AutomationEventsQueryMessage {
+  type: 'automation-events-query'
+  seq: number
+}
+
 export interface TerminalResizeMessage {
   type: 'terminal-resize'
   seq: number
@@ -1368,6 +1374,7 @@ export type ClientMessage =
   | AppBehindMessage
   | MobileEventsMessage
   | AgentMemoryQueryMessage
+  | AutomationEventsQueryMessage
   | TerminalBorrowSizeMessage
   | TerminalReturnSizeMessage
   | TerminalBufferTextMessage
@@ -1685,7 +1692,7 @@ export interface ExitMessage {
 // --- Server → Client node state messages ---
 
 import type { ServerState, NodeData, NodeStamp, ReceptionistHolder } from './state'
-import type { AutomationPatch } from './automation'
+import type { AutomationEventRecord, AutomationPatch } from './automation'
 import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 import type { UsageSnapshot } from './usage-report'
 import type { SystemStatsSnapshot } from './system-stats'
@@ -2368,8 +2375,23 @@ export interface AgentMemoryResultMessage {
   bytes: number | null
 }
 
+export interface AutomationEventsResultMessage {
+  type: 'automation-events-result'
+  seq: number
+  /** Oldest first. */
+  events: AutomationEventRecord[]
+}
+
+/** A script sent an event, whatever became of it. Broadcast as each one arrives. */
+export interface AutomationEventMessage {
+  type: 'automation-event'
+  event: AutomationEventRecord
+}
+
 export type ServerMessage =
   | AgentMemoryResultMessage
+  | AutomationEventsResultMessage
+  | AutomationEventMessage
   | DictationStartedMessage
   | DictationResumedMessage
   | DictationResultMessage

@@ -117,6 +117,11 @@ export function decideFiring(
   }
 }
 
+function listensFor(automation: AutomationNodeData, eventId: string): boolean {
+  const trigger = parseTrigger(automation.trigger)
+  return trigger.kind === 'event' && trigger.eventId === eventId
+}
+
 export class AutomationRunner {
   /** Everything up to here has been looked at for cron slots. Undefined until `start`. */
   private checkedUntil: number | undefined
@@ -167,12 +172,16 @@ export class AutomationRunner {
   fireEvent(eventId: string, payload: unknown, now: number): number {
     let matched = 0
     for (const automation of this.enabledAutomations()) {
-      const trigger = parseTrigger(automation.trigger)
-      if (trigger.kind !== 'event' || trigger.eventId !== eventId) continue
+      if (!listensFor(automation, eventId)) continue
       matched++
       this.fire(automation, { kind: 'event', at: now, eventId, ...(payload !== undefined ? { payload } : {}) })
     }
     return matched
+  }
+
+  /** How many switched-off cards would have heard `eventId`. */
+  disabledListeners(eventId: string): number {
+    return this.host.automations().filter((a) => !isAutomationEnabled(a) && listensFor(a, eventId)).length
   }
 
   /**
