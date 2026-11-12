@@ -234,6 +234,10 @@ done last session; kept so the reasoning is not lost.
    like a product bug. The fix is bounded: give `createSurface` a settle step,
    or have it wait on the persisted size, so every caller measures a card that
    has stopped moving. Nothing else about the resize tests changes.
+7. **A server restart can garble long-running surfaces.** The server rebuilds
+   each screen from the daemon's 1MB ring, which loses the screen state once
+   it wraps, and Claude Code's diff renderer never repaints the stale cells.
+   Diagnosis and fix ideas: `docs/investigations/daemon-ring-replay.md`.
 
 ### Robustness
 
