@@ -120,6 +120,12 @@ export interface ScriptHost {
    */
   getLocation(askedBy: string): Promise<Located>
   /**
+   * Raise a notification on the user's phone, from that agent: its title is
+   * the notification's, and tapping it opens its terminal. Never rejects:
+   * resolves to how it went, worded for the agent.
+   */
+  notifyUser(nodeId: NodeId, body: string): Promise<{ reached: boolean; outcome: string }>
+  /**
    * Fire a custom event at every automation card listening for it. Returns how
    * many were, and how many more would have been had they not been switched off.
    */
@@ -149,6 +155,7 @@ const REQUIRED_CAPABILITY: { readonly [T in ScriptMessage['type']]: ModCapabilit
   'script-fork-claude': 'fork-session',
   'script-fire-event': 'fire-events',
   'script-get-location': 'read-location',
+  'script-notify': 'notify-user',
 }
 
 /** Why a script's event cannot be fired, or undefined when it can. */
@@ -401,6 +408,21 @@ export class ScriptApi {
           ({ device, fix }) => reply({ type: 'script-get-location-result', seq: msg.seq, location: { ...fix, device } }),
           (err: unknown) => reply({ type: 'script-get-location-result', seq: msg.seq, error: err instanceof Error ? err.message : String(err) })
         )
+        return
+      }
+
+      case 'script-notify': {
+        const body = typeof msg.body === 'string' ? msg.body.trim() : ''
+        if (!body) {
+          reply({ type: 'script-notify-result', seq: msg.seq, reached: false, outcome: 'nothing to say: the body is empty' })
+          return
+        }
+        const nodeId = msg.surfaceId ? this.host.getNodeIdForSession(msg.surfaceId) : undefined
+        if (!nodeId) {
+          reply({ type: 'script-notify-result', seq: msg.seq, reached: false, outcome: 'only an agent in a Spaceterm surface can send one: no surface is known by that id' })
+          return
+        }
+        void this.host.notifyUser(nodeId, body).then(({ reached, outcome }) => reply({ type: 'script-notify-result', seq: msg.seq, reached, outcome }))
         return
       }
 

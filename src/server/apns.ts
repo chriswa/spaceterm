@@ -4,8 +4,11 @@
  * signed with the key the user saved in `~/.spaceterm/`
  * (src/mobile/README.md, "Told when an agent is blocked").
  *
- * Never throws and never rejects: a push that cannot be sent is reported as
- * `false`, for the caller to fall back on the socket.
+ * Never throws and never rejects: a push that cannot be sent is reported with
+ * its reason, for the caller to log and to fall back on the socket. Every
+ * reason is said, and so is every push sent: on 2026-11-12 a missing key sent
+ * nothing for a day, and the log, which only spoke of Apple's refusals, could
+ * not tell that apart from pushes that had gone and were never shown.
  */
 
 import { sign } from 'crypto'
@@ -35,6 +38,17 @@ export interface ApnsCredentials {
 export interface ApnsResponse {
   status: number
   reason?: string
+}
+
+/** Whether any phone was reached, and if not, why not. */
+export type ApnsOutcome = { sent: true } | { sent: false; why: string }
+
+export interface ApnsAlert {
+  nodeId: NodeId
+  title: string
+  body: string
+  /** Shown even on that agent's own terminal: see `BlockAlertMessage.always`. */
+  always?: boolean
 }
 
 export interface ApnsDeps {
@@ -77,8 +91,7 @@ export class ApnsSender {
     this.deps.log(`[apns] Registered ${deviceId}`)
   }
 
-  /** Whether any phone was reached. */
-  alert(alert: { nodeId: NodeId; title: string; body: string }, now = Date.now()): Promise<boolean> {
+  alert(alert: ApnsAlert, now = Date.now()): Promise<ApnsOutcome> {
     return this.deliver({
       'apns-push-type': 'alert',
       'apns-priority': '10',
@@ -87,11 +100,12 @@ export class ApnsSender {
     }, {
       aps: { alert: { title: capped(alert.title, TITLE_CHARS), body: capped(alert.body, BODY_CHARS) }, sound: 'default' },
       nodeId: alert.nodeId,
+      ...(alert.always ? { always: true } : {}),
     }, now)
   }
 
   /** A quiet push asking the app to take that agent's notification away. iOS may delay or drop it. */
-  clear(nodeId: NodeId, now = Date.now()): Promise<boolean> {
+  clear(nodeId: NodeId, now = Date.now()): Promise<ApnsOutcome> {
     return this.deliver(
       { 'apns-push-type': 'background', 'apns-priority': '5' },
       { aps: { 'content-available': 1 }, clearNodeId: nodeId },
@@ -99,12 +113,19 @@ export class ApnsSender {
     )
   }
 
-  private async deliver(headers: Record<string, string>, payload: object, now: number): Promise<boolean> {
+  private async deliver(headers: Record<string, string>, payload: object, now: number): Promise<ApnsOutcome> {
+    const outcome = await this.tryDeliver(headers, payload, now)
+    const what = headers['apns-push-type'] === 'alert' ? 'notification' : 'quiet push'
+    this.deps.log(outcome.sent ? `[apns] Sent a ${what}` : `[apns] No ${what} sent: ${outcome.why}`)
+    return outcome
+  }
+
+  private async tryDeliver(headers: Record<string, string>, payload: object, now: number): Promise<ApnsOutcome> {
     const devices = Object.entries(this.devices)
-    if (devices.length === 0) return false
+    if (devices.length === 0) return { sent: false, why: 'no phone has registered for pushes' }
     try {
       const credentials = this.deps.credentials()
-      if (!credentials) return false
+      if (!credentials) return { sent: false, why: 'no APNs key (AuthKey_<id>.p8) saved in ~/.spaceterm' }
       const authorized = {
         ...headers,
         authorization: `bearer ${this.providerToken(credentials, now)}`,
@@ -112,13 +133,13 @@ export class ApnsSender {
       }
       const body = JSON.stringify(payload)
       const sent = await Promise.all(devices.map(([deviceId, token]) => this.send(deviceId, token, authorized, body)))
-      return sent.some(Boolean)
+      return sent.some(Boolean) ? { sent: true } : { sent: false, why: 'Apple refused it or could not be reached' }
     } catch (err) {
-      this.deps.log(`[apns] Could not send: ${err instanceof Error ? err.message : String(err)}`)
-      return false
+      return { sent: false, why: err instanceof Error ? err.message : String(err) }
     }
   }
 
+  /** Whether that phone was reached; its failures are logged here, by device. */
   private async send(deviceId: string, token: string, headers: Record<string, string>, body: string): Promise<boolean> {
     try {
       const { status, reason } = await this.deps.post(`/3/device/${token}`, headers, body)

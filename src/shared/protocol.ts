@@ -1589,17 +1589,24 @@ export interface MobileBuildChangedMessage {
 
 /**
  * Unsolicited broadcast: an agent has just stopped on a prompt only the user
- * can answer. A phone raises a notification (src/mobile/block-alerts.ts); the
- * Mac ignores it. Sent once per block and never replayed on connect, so it is
- * an event, not state: `claudeState` on the node is what stays true.
+ * can answer, or sent the user a notification on purpose (`notify_user`). A
+ * phone raises a notification (src/mobile/block-alerts.ts); the Mac ignores
+ * it. Sent once and never replayed on connect, so it is an event, not state:
+ * `claudeState` on the node is what stays true.
  */
 export interface BlockAlertMessage {
   type: 'block-alert'
   nodeId: NodeId
   /** Which agent: its surface's title. */
   title: string
-  /** What it waits on, in full enough to decide whether to go and answer. */
+  /** What it waits on, in full enough to decide whether to go and answer, or what it chose to say. */
   body: string
+  /**
+   * Shown even when the user is looking at that agent's terminal. A prompt is
+   * already on screen there; a notification the agent sent on purpose is the
+   * point in itself.
+   */
+  always?: boolean
 }
 
 /** Unsolicited broadcast: that block is over, so its notification should go. */
@@ -2214,6 +2221,18 @@ export interface ScriptGetLocationMessage {
   surfaceId?: PtySessionId
 }
 
+/**
+ * A notification on the user's phone, from an agent (`notify_user`): through
+ * Apple where it can be, else over the socket to a connected phone.
+ */
+export interface ScriptNotifyMessage {
+  type: 'script-notify'
+  seq: number
+  /** The sending agent's SPACETERM_SURFACE_ID: the notification's title, and where tapping it goes. */
+  surfaceId?: PtySessionId
+  body: string
+}
+
 export type ScriptMessage =
   | ScriptModEmitMessage
   | ScriptHelloMessage
@@ -2226,6 +2245,7 @@ export type ScriptMessage =
   | ScriptResolveHandoffMessage
   | ScriptFireEventMessage
   | ScriptGetLocationMessage
+  | ScriptNotifyMessage
 
 // --- Script socket responses ---
 
@@ -2304,6 +2324,15 @@ export interface ScriptGetLocationResult {
   error?: string
 }
 
+export interface ScriptNotifyResult {
+  type: 'script-notify-result'
+  seq: number
+  /** How it went, in words for the agent to pass on: by which route, or why it reached no phone. */
+  outcome: string
+  /** False when no phone was reached at all. */
+  reached: boolean
+}
+
 export type ScriptResponse =
   | ScriptModEmitResult
   | ScriptHelloResult
@@ -2315,6 +2344,7 @@ export type ScriptResponse =
   | ScriptResolveHandoffResult
   | ScriptFireEventResult
   | ScriptGetLocationResult
+  | ScriptNotifyResult
 
 export interface DictationStartedMessage {
   type: 'dictation-started'

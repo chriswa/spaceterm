@@ -4,7 +4,7 @@ import * as path from 'path'
 import { execFile } from 'child_process'
 import { SOCKET_DIR, DEFAULT_SOCKET_DIR, isOperatorHome, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR, CLIENT_PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL_VERSION } from '../shared/protocol'
 import { checkProtocolVersion } from '../shared/protocol-handshake'
-import type { ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, CameraBounds, ClaudeSessionEntry, ClientDevice, ControlImage, ControlTranscriptEntry } from '../shared/protocol'
+import type { BlockAlertMessage, ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, CameraBounds, ClaudeSessionEntry, ClientDevice, ControlImage, ControlTranscriptEntry } from '../shared/protocol'
 import { ScriptApi, type ScriptConnection } from './script-api'
 import { ModRegistry } from './mod-registry'
 import { respawnTerminal, type TerminalRespawnDeps, type SpawnedPty } from './terminal-respawn'
@@ -873,25 +873,44 @@ const blockingPrompts = new Map<PtySessionId, BlockingPrompt>()
 /** Reaches a phone through Apple, with its app suspended or not running. */
 const apns = new ApnsSender(realApnsDeps(SOCKET_DIR, path.resolve(__dirname, '..', '..'), serverLog))
 
+/** What the user calls an agent: a notification's title. */
+function agentTitle(nodeId: NodeId): string {
+  const node = stateManager.getNode(nodeId)
+  return node?.type === 'terminal' ? agentSurfaceTitle(node) : UNTITLED_AGENT
+}
+
+/** Phones connected now: every client but the Mac's own. */
+function connectedPhones(): number {
+  return [...clients].filter((client) => client.device && client.device.id !== DESKTOP_DEVICE.deviceId).length
+}
+
 /**
- * Tells the phones when an agent stops on a prompt only the user can answer.
- * Through Apple where it can be, which reaches a connected phone as well, so
- * the socket's own alert is only for when it cannot: no key on this Mac, no
- * phone registered, or Apple refused or could not be reached.
+ * A notification on the user's phone. Through Apple where it can be, which
+ * reaches a connected phone as well, so the socket's own alert is only for
+ * when it cannot: no key on this Mac, no phone registered, or Apple refused or
+ * could not be reached. Resolves to how it went, in words for an agent.
  */
+async function notifyPhones(alert: BlockAlertMessage): Promise<{ reached: boolean; outcome: string }> {
+  const apple = await apns.alert(alert)
+  if (apple.sent) return { reached: true, outcome: 'sent through Apple’s push service' }
+  broadcastToAll(alert)
+  const phones = connectedPhones()
+  return phones > 0
+    ? { reached: true, outcome: `not through Apple (${apple.why}), so sent to the ${phones === 1 ? 'phone' : `${phones} phones`} connected now, which shows it only while the app is open or kept awake` }
+    : { reached: false, outcome: `reached no phone: not through Apple (${apple.why}), and no phone is connected` }
+}
+
+/** Tells the phones when an agent stops on a prompt only the user can answer. */
 const blockAlerts = new BlockAlerts({
   send: (msg) => {
     if (msg.type === 'block-alert-cleared') {
       broadcastToAll(msg)
       void apns.clear(msg.nodeId)
     } else {
-      void apns.alert(msg).then((sent) => { if (!sent) broadcastToAll(msg) })
+      void notifyPhones(msg)
     }
   },
-  title: (nodeId) => {
-    const node = stateManager.getNode(nodeId)
-    return node?.type === 'terminal' ? agentSurfaceTitle(node) : UNTITLED_AGENT
-  },
+  title: agentTitle,
 })
 
 /** Live Claude Code surfaces: everything the receptionist knows about. */
@@ -1655,6 +1674,7 @@ const scriptApi = new ScriptApi({
     )
     return located
   },
+  notifyUser: (nodeId, body) => notifyPhones({ type: 'block-alert', nodeId, title: agentTitle(nodeId), body, always: true }),
 
   shipIt: shipToSession,
 

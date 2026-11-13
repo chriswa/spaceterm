@@ -40,6 +40,8 @@ export const MOD_CAPABILITIES = [
   'subscribe-events',
   /** Read the user's position from a client device. */
   'read-location',
+  /** Raise a notification on the user's phone. */
+  'notify-user',
   /** Fire custom events at automation cards, which start agents. */
   'fire-events',
 ] as const

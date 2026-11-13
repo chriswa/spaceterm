@@ -32,7 +32,7 @@ function make(overrides: Partial<ApnsDeps> & { respond?: () => ApnsResponse; dev
 describe('ApnsSender', () => {
   it('sends an alert addressed to the phone, for the app', async () => {
     const { sender, posts } = make()
-    expect(await sender.alert(alert)).toBe(true)
+    expect(await sender.alert(alert)).toEqual({ sent: true })
     expect(posts[0].path).toBe(`/3/device/${TOKEN}`)
     expect(posts[0].headers).toMatchObject({ 'apns-topic': 'com.example.app', 'apns-push-type': 'alert', 'apns-priority': '10', 'apns-collapse-id': nodeId })
     expect(JSON.parse(posts[0].body)).toEqual({ aps: { alert: { title: alert.title, body: alert.body }, sound: 'default' }, nodeId })
@@ -71,26 +71,39 @@ describe('ApnsSender', () => {
     expect(JSON.parse(posts[0].body)).toEqual({ aps: { 'content-available': 1 }, clearNodeId: nodeId })
   })
 
-  it('reports nothing sent with no key saved', async () => {
-    const { sender, posts } = make({ credentials: () => null })
-    expect(await sender.alert(alert)).toBe(false)
+  it('reports nothing sent with no key saved, and says so in the log', async () => {
+    const { sender, posts, logs } = make({ credentials: () => null })
+    expect(await sender.alert(alert)).toMatchObject({ sent: false, why: expect.stringContaining('AuthKey') })
     expect(posts).toEqual([])
+    expect(logs.at(-1)).toContain('AuthKey')
+  })
+
+  it('logs each notification sent', async () => {
+    const { sender, logs } = make()
+    await sender.alert(alert)
+    expect(logs.at(-1)).toContain('Sent a notification')
+  })
+
+  it('marks a notification to show even on its own terminal', async () => {
+    const { sender, posts } = make()
+    await sender.alert({ ...alert, always: true })
+    expect(JSON.parse(posts[0].body)).toMatchObject({ nodeId, always: true })
   })
 
   it('reports nothing sent with no phone registered', async () => {
     const { sender, posts } = make({ devices: {} })
-    expect(await sender.alert(alert)).toBe(false)
+    expect((await sender.alert(alert)).sent).toBe(false)
     expect(posts).toEqual([])
   })
 
   it('reports nothing sent when the network fails, and does not reject', async () => {
     const { sender } = make({ post: async () => { throw new Error('offline') } })
-    expect(await sender.alert(alert)).toBe(false)
+    expect((await sender.alert(alert)).sent).toBe(false)
   })
 
   it('reports nothing sent for a key it cannot read', async () => {
     const { sender } = make({ credentials: () => ({ keyId: 'K', teamId: 'T', topic: 'x', key: 'garbage' }) })
-    expect(await sender.alert(alert)).toBe(false)
+    expect((await sender.alert(alert)).sent).toBe(false)
   })
 
   it.each([
@@ -98,7 +111,7 @@ describe('ApnsSender', () => {
     [{ status: 400, reason: 'BadDeviceToken' }],
   ])('forgets a phone Apple no longer knows: %j', async (response) => {
     const { sender, posts, saved } = make({ respond: () => response })
-    expect(await sender.alert(alert)).toBe(false)
+    expect((await sender.alert(alert)).sent).toBe(false)
     expect(saved.at(-1)).toEqual({})
     await sender.alert(alert)
     expect(posts).toHaveLength(1)

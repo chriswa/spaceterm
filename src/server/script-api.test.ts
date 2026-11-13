@@ -116,6 +116,11 @@ class FakeHost implements ScriptHost {
     this.locationAskers.push(askedBy)
     return this.locateResult
   }
+  readonly notifications: Array<{ nodeId: NodeId; body: string }> = []
+  notifyUser(nodeId: NodeId, body: string): Promise<{ reached: boolean; outcome: string }> {
+    this.notifications.push({ nodeId, body })
+    return Promise.resolve({ reached: true, outcome: 'sent through Apple' })
+  }
   log(line: string): void { this.logs.push(line) }
 }
 
@@ -584,6 +589,27 @@ describe('script-get-location', () => {
     await Promise.resolve()
     expect(h.host.locationAskers).toEqual(['a script'])
     expect(h.conn.only).toEqual({ type: 'script-get-location-result', seq: 1, error: 'iPhone: denied' })
+  })
+})
+
+describe('script-notify', () => {
+  it('notifies from the sending agent and passes on how it went', async () => {
+    const h = harness((host) => host.add(terminal({ id: 'a', sessionId: sid('pty-a') })))
+    h.send({ type: 'script-notify', seq: 2, surfaceId: sid('pty-a'), body: '  The build is green  ' })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(h.host.notifications).toEqual([{ nodeId: nid('a'), body: 'The build is green' }])
+    expect(h.conn.only).toEqual({ type: 'script-notify-result', seq: 2, reached: true, outcome: 'sent through Apple' })
+  })
+
+  it.each([
+    ['with no surface', { body: 'hi' }],
+    ['with an empty body', { surfaceId: sid('pty-a'), body: '   ' }],
+  ])('refuses %s', (_, fields) => {
+    const h = harness((host) => host.add(terminal({ id: 'a', sessionId: sid('pty-a') })))
+    h.send({ type: 'script-notify', seq: 1, ...fields } as ScriptMessage)
+    expect(h.host.notifications).toEqual([])
+    expect(h.conn.only).toMatchObject({ type: 'script-notify-result', seq: 1, reached: false })
   })
 })
 

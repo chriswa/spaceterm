@@ -47,7 +47,7 @@ final class NativeNotifications: NSObject, WKScriptMessageHandler, @preconcurren
             content.title = body["title"] as? String ?? "Spaceterm"
             content.body = body["body"] as? String ?? ""
             content.sound = .default
-            content.userInfo = ["nodeId": id]
+            content.userInfo = ["nodeId": id, "always": body["always"] as? Bool == true]
             center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { error in
                 DispatchQueue.main.async {
                     self.events?.record("native-notification", ["kind": "show", "error": error?.localizedDescription ?? ""])
@@ -84,12 +84,14 @@ final class NativeNotifications: NSObject, WKScriptMessageHandler, @preconcurren
     }
 
     /// Shown with the app in front too, unless that terminal is what is on screen.
+    /// One an agent sent on purpose (`always`, from `notify_user`) is shown regardless.
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         let alert: UNNotificationPresentationOptions = [.banner, .list, .sound]
+        if notification.request.content.userInfo["always"] as? Bool == true { return completionHandler(alert) }
         guard let webView else { return completionHandler(alert) }
         webView.callAsyncJavaScript(
             "const page = window.spacetermNativeNotifications; return !!(page && page.lookingAt(id))",

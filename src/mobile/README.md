@@ -285,7 +285,13 @@ ad hoc build would need the production one.
 Without a key, or if Apple refuses, the server tells connected phones over the
 socket instead (`block-alert`), and the app raises the notification itself.
 That needs the page running: on screen, or kept awake by holding Control or by
-hands-free.
+hands-free. The server log says which it was for every one (`[apns] Sent a
+notification`, or `[apns] No notification sent: <why>`).
+
+An agent can also notify you on purpose, with its `notify_user` tool. That goes
+the same way and says back whether a phone was reached. Unlike a prompt, it is
+shown even on the terminal you are looking at (`always`), which needs an app
+built after 2026-11-12; an older one treats it as a prompt.
 
 Taking a notification away from a suspended app is a quiet push, which iOS may
 delay or drop, and which never reaches an app that was swiped away, so one can
@@ -971,6 +977,7 @@ or an app built before this, it is the browser's `navigator.geolocation`.
 
 - Text size is a hard-coded constant (`SCALE` in TerminalView.tsx, 0.94 —
   about 50 columns on a 393-pt phone); there is no control for it yet.
-- No push notifications: an app swiped away hears nothing from Control until it is opened.
+- Control's own replies are not pushed: an app swiped away hears nothing from
+  Control until it is opened. Only blocked agents and `notify_user` are.
 - A reconnect reloads the page (as the desktop does); drafts and the open
   surface survive it.

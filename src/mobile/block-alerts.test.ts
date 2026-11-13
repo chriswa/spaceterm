@@ -43,6 +43,13 @@ describe('block alerts', () => {
     expect(posted).toEqual([{ kind: 'ready' }])
   })
 
+  it('shows an agent’s own notification even on its terminal', () => {
+    const { posted, emit } = setup()
+    useSurfacePresenterStore.getState().publishFocusedTerminal(a)
+    emit('block-alert', { nodeId: a, title: 'T', body: 'B', always: true })
+    expect(posted.at(-1)).toEqual({ kind: 'show', id: a, title: 'T', body: 'B', always: true })
+  })
+
   it('still shows another terminal than the one on screen', () => {
     const { posted, emit } = setup()
     useSurfacePresenterStore.getState().publishFocusedTerminal(asNodeId('b'))
