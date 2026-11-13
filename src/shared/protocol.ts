@@ -1606,7 +1606,11 @@ export interface BlockAlertMessage {
   nodeId: NodeId
   /** For the toolbar's history; the phone does not read it. */
   kind: NotificationKind
-  /** Which agent: its surface's title. */
+  /**
+   * Which agent: its surface's title. On the phone, led by the Mac's name in
+   * brackets (`[Work] …`, `src/server/mac-name.ts`), since one phone hears from
+   * several Macs, each on its own tailnet.
+   */
   title: string
   /** What it waits on, in full enough to decide whether to go and answer, or what it chose to say. */
   body: string
@@ -1616,11 +1620,6 @@ export interface BlockAlertMessage {
    * point in itself.
    */
   always?: boolean
-  /**
-   * Which Mac it came from (`src/server/mac-name.ts`), shown under the title:
-   * one phone hears from several Macs, each on its own tailnet.
-   */
-  source?: string
 }
 
 /** Unsolicited broadcast: that block is over, so its notification should go. */

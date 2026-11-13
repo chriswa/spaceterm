@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { macName, type MacNameSources } from './mac-name'
+import { fromMac, macName, type MacNameSources } from './mac-name'
 
 function sources(overrides: Partial<MacNameSources> = {}): MacNameSources {
   return { chosen: () => null, computerName: () => 'Chris’s MacBook Pro\n', hostname: () => 'chriss-mbp.local', ...overrides }
@@ -17,5 +17,11 @@ describe('macName', () => {
 
   it('falls back to the host name', () => {
     expect(macName(sources({ computerName: () => null }))).toBe('chriss-mbp')
+  })
+})
+
+describe('fromMac', () => {
+  it('leads the title with the Mac, in brackets', () => {
+    expect(fromMac('Work', 'Fix the build')).toBe('[Work] Fix the build')
   })
 })

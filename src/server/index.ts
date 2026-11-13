@@ -60,7 +60,7 @@ import type { ClientLink } from './client-link'
 import { startWebGateway, loadOrCreateWebToken, DEFAULT_WEB_PORT } from './web-gateway'
 import { BlockAlerts } from './block-alerts'
 import { ApnsSender, realApnsDeps } from './apns'
-import { realMacName } from './mac-name'
+import { fromMac, realMacName } from './mac-name'
 import { refreshMobileBuild, realMobileBuildDeps, MobileBuildKeeper, watchMobileSources } from './mobile-build'
 import { LineParser } from './line-parser'
 import { CacheWarmthTracker } from './cache-warmth'
@@ -904,7 +904,7 @@ async function notifyPhones(alert: BlockAlertMessage): Promise<{ reached: boolea
 }
 
 async function sendToPhones(unsourced: BlockAlertMessage): Promise<{ reached: boolean; outcome: string }> {
-  const alert = { ...unsourced, source: macName() }
+  const alert = { ...unsourced, title: fromMac(macName(), unsourced.title) }
   const apple = await apns.alert(alert)
   if (apple.sent) return { reached: true, outcome: 'sent through Apple’s push service' }
   broadcastToAll(alert)

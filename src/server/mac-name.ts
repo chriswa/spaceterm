@@ -1,5 +1,6 @@
 /**
- * What the phone calls this Mac: the subtitle of every notification it sends.
+ * What the phone calls this Mac: in brackets before the title of every
+ * notification it sends (`[Work] Fix the build`).
  * One phone hears from several Macs (src/mobile/ios/macs.local), so a
  * notification has to say whose agent is asking.
  *
@@ -25,6 +26,11 @@ export function macName(sources: MacNameSources): string {
   const chosen = sources.chosen()?.trim()
   if (chosen) return chosen
   return sources.computerName()?.trim() || sources.hostname().replace(/\.local$/, '')
+}
+
+/** A notification's title, led by the Mac that sent it. */
+export function fromMac(mac: string, title: string): string {
+  return `[${mac}] ${title}`
 }
 
 export function realMacName(dir: string): () => string {

@@ -288,8 +288,8 @@ That needs the page running: on screen, or kept awake by holding Control or by
 hands-free. The server log says which it was for every one (`[apns] Sent a
 notification`, or `[apns] No notification sent: <why>`).
 
-Each Mac the app reaches (`ios/macs.local`) sends its own, and each says
-which Mac it is under the title: the line in `~/.spaceterm/mac-name` if there
+Each Mac the app reaches (`ios/macs.local`) sends its own, and each title
+starts with which Mac it is, in brackets (`[Work] …`): the line in `~/.spaceterm/mac-name` if there
 is one ("Work"), else the Mac's name from System Settings → Sharing
 (`src/server/mac-name.ts`). Apple carries them, so the phone need not be on
 that Mac's tailnet to get one — but each Mac needs its own copy of the key, and
