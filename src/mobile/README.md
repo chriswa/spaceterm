@@ -298,6 +298,14 @@ reinstall that changes the token, a Mac stays silent until the phone has
 visited its tailnet once. Tapping one opens the terminal only if the app is
 connected to the Mac that sent it.
 
+The key reaches another Mac through this repo, sealed with a password
+(`src/cli/push-key.ts`): `npm run mobile:push-key -- seal` on the Mac that has
+it writes `ios/push-key.sealed.json` to commit, and `npm run mobile:push-key --
+unseal` after a pull on the other writes the key to `~/.spaceterm/`, and
+`ios/Local.xcconfig` if that Mac has none. The repo is public, so anyone can
+try passwords against the sealed file offline: use a long passphrase, and if it
+ever leaks, revoke the key at Apple and seal a new one.
+
 An agent can also notify you on purpose, with its `notify_user` tool. That goes
 the same way and says back whether a phone was reached. Unlike a prompt, it is
 shown even on the terminal you are looking at (`always`), which needs an app
