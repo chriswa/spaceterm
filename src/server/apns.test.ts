@@ -38,6 +38,12 @@ describe('ApnsSender', () => {
     expect(JSON.parse(posts[0].body)).toEqual({ aps: { alert: { title: alert.title, body: alert.body }, sound: 'default' }, nodeId })
   })
 
+  it('says which Mac it came from, under the title', async () => {
+    const { sender, posts } = make()
+    await sender.alert({ ...alert, source: 'Work' })
+    expect(JSON.parse(posts[0].body).aps.alert).toEqual({ title: alert.title, subtitle: 'Work', body: alert.body })
+  })
+
   it('signs with the key, as Apple requires', async () => {
     const { sender, posts } = make()
     await sender.alert(alert, 5_000_000)

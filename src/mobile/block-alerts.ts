@@ -15,7 +15,7 @@ import { recordMobileEvent } from './mobile-events'
  * page's part is only to hand the server the app's push token and say what is
  * on screen. A `block-alert` over the socket means Apple could not be used.
  *
- *   page → app:  `{kind: 'ready'}`, `{kind: 'show', id, title, body, always?}`, `{kind: 'clear', id}`
+ *   page → app:  `{kind: 'ready'}`, `{kind: 'show', id, title, subtitle?, body, always?}`, `{kind: 'clear', id}`
  *
  * `always` (an agent's own `notify_user`) is shown even on that agent's
  * terminal; a prompt is not, as it is already on screen there.
@@ -59,10 +59,10 @@ function openAgent(nodeId: NodeId): void {
 export function installBlockAlerts(client: Pick<ServerClient, 'on' | 'onLifecycle' | 'registerPushToken'>, deviceId: string): void {
   const app = handler()
   if (!app) return
-  client.on('block-alert', ({ nodeId, title, body, always }) => {
+  client.on('block-alert', ({ nodeId, title, body, always, source }) => {
     const shown = always === true || !lookingAt(nodeId)
     recordMobileEvent('block-alert', { nodeId, shown, ...(always ? { always } : {}) })
-    if (shown) app.postMessage({ kind: 'show', id: nodeId, title, body, ...(always ? { always } : {}) })
+    if (shown) app.postMessage({ kind: 'show', id: nodeId, title, ...(source ? { subtitle: source } : {}), body, ...(always ? { always } : {}) })
   })
   client.on('block-alert-cleared', ({ nodeId }) => app.postMessage({ kind: 'clear', id: nodeId }))
   let token: string | undefined

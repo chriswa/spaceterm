@@ -49,6 +49,8 @@ export interface ApnsAlert {
   body: string
   /** Shown even on that agent's own terminal: see `BlockAlertMessage.always`. */
   always?: boolean
+  /** Which Mac sent it, shown as the subtitle: see `BlockAlertMessage.source`. */
+  source?: string
 }
 
 export interface ApnsDeps {
@@ -98,7 +100,14 @@ export class ApnsSender {
       // A second prompt from the same agent replaces the first.
       'apns-collapse-id': alert.nodeId,
     }, {
-      aps: { alert: { title: capped(alert.title, TITLE_CHARS), body: capped(alert.body, BODY_CHARS) }, sound: 'default' },
+      aps: {
+        alert: {
+          title: capped(alert.title, TITLE_CHARS),
+          ...(alert.source ? { subtitle: capped(alert.source, TITLE_CHARS) } : {}),
+          body: capped(alert.body, BODY_CHARS),
+        },
+        sound: 'default',
+      },
       nodeId: alert.nodeId,
       ...(alert.always ? { always: true } : {}),
     }, now)

@@ -288,6 +288,16 @@ That needs the page running: on screen, or kept awake by holding Control or by
 hands-free. The server log says which it was for every one (`[apns] Sent a
 notification`, or `[apns] No notification sent: <why>`).
 
+Each Mac the app reaches (`ios/macs.local`) sends its own, and each says
+which Mac it is under the title: the line in `~/.spaceterm/mac-name` if there
+is one ("Work"), else the Mac's name from System Settings → Sharing
+(`src/server/mac-name.ts`). Apple carries them, so the phone need not be on
+that Mac's tailnet to get one — but each Mac needs its own copy of the key, and
+learns where the phone is only when the app has connected to it, so after a
+reinstall that changes the token, a Mac stays silent until the phone has
+visited its tailnet once. Tapping one opens the terminal only if the app is
+connected to the Mac that sent it.
+
 An agent can also notify you on purpose, with its `notify_user` tool. That goes
 the same way and says back whether a phone was reached. Unlike a prompt, it is
 shown even on the terminal you are looking at (`always`), which needs an app

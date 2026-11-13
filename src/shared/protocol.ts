@@ -1616,6 +1616,11 @@ export interface BlockAlertMessage {
    * point in itself.
    */
   always?: boolean
+  /**
+   * Which Mac it came from (`src/server/mac-name.ts`), shown under the title:
+   * one phone hears from several Macs, each on its own tailnet.
+   */
+  source?: string
 }
 
 /** Unsolicited broadcast: that block is over, so its notification should go. */

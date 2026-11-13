@@ -4,7 +4,7 @@ import WebKit
 
 /// Notifications of agents blocked on the user (src/mobile/block-alerts.ts).
 ///
-///   page → app:  `{kind: "ready"}`, `{kind: "show", id, title, body}`, `{kind: "clear", id}`
+///   page → app:  `{kind: "ready"}`, `{kind: "show", id, title, subtitle?, body}`, `{kind: "clear", id}`
 ///   app → page:  `window.spacetermNativeNotifications.tapped(id)`, `.lookingAt(id)`, `.pushToken(token)`
 ///
 /// Most arrive through Apple, sent by the server (src/server/apns.ts), which
@@ -45,6 +45,7 @@ final class NativeNotifications: NSObject, WKScriptMessageHandler, @preconcurren
             guard let id = body["id"] as? String else { return }
             let content = UNMutableNotificationContent()
             content.title = body["title"] as? String ?? "Spaceterm"
+            content.subtitle = body["subtitle"] as? String ?? ""
             content.body = body["body"] as? String ?? ""
             content.sound = .default
             content.userInfo = ["nodeId": id, "always": body["always"] as? Bool == true]

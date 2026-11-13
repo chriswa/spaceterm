@@ -60,6 +60,7 @@ import type { ClientLink } from './client-link'
 import { startWebGateway, loadOrCreateWebToken, DEFAULT_WEB_PORT } from './web-gateway'
 import { BlockAlerts } from './block-alerts'
 import { ApnsSender, realApnsDeps } from './apns'
+import { realMacName } from './mac-name'
 import { refreshMobileBuild, realMobileBuildDeps, MobileBuildKeeper, watchMobileSources } from './mobile-build'
 import { LineParser } from './line-parser'
 import { CacheWarmthTracker } from './cache-warmth'
@@ -875,6 +876,8 @@ const blockingPrompts = new Map<PtySessionId, BlockingPrompt>()
 
 /** Reaches a phone through Apple, with its app suspended or not running. */
 const apns = new ApnsSender(realApnsDeps(SOCKET_DIR, path.resolve(__dirname, '..', '..'), serverLog))
+/** This Mac's name on the phone's notifications, which come from several Macs. */
+const macName = realMacName(SOCKET_DIR)
 
 /** What the user calls an agent: a notification's title. */
 function agentTitle(nodeId: NodeId): string {
@@ -900,7 +903,8 @@ async function notifyPhones(alert: BlockAlertMessage): Promise<{ reached: boolea
   return result
 }
 
-async function sendToPhones(alert: BlockAlertMessage): Promise<{ reached: boolean; outcome: string }> {
+async function sendToPhones(unsourced: BlockAlertMessage): Promise<{ reached: boolean; outcome: string }> {
+  const alert = { ...unsourced, source: macName() }
   const apple = await apns.alert(alert)
   if (apple.sent) return { reached: true, outcome: 'sent through Apple’s push service' }
   broadcastToAll(alert)
