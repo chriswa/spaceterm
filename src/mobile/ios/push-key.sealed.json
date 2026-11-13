@@ -1,0 +1,12 @@
+{
+  "format": "spaceterm-sealed-push-key-1",
+  "scrypt": {
+    "N": 131072,
+    "r": 8,
+    "p": 1
+  },
+  "salt": "xUtBTyPw6wUoIQJndBzJZA==",
+  "iv": "YKIR7Iza36jM2gL0",
+  "tag": "Krc3j8+b5/Dtu8n8TpUjew==",
+  "ciphertext": "yyuewMuf/RzYNVVlVemC+6RYvhTA/BgzqviicSzZTMYJKNmRme024JA0FZE8X0QJBJRmlpO6yP2H8/2EXRpwm5YRa/cac91v2sPRX0a74WznB/iHIqYE4k+16ZgPn9dxmyyyvut/F5Wg5DemTL1q2/MNw9oFfPgDHBdnr48DuakXySj6ITn4ltdSwY5GK8gvPETP9A+Txynt3v33VJ/AJikp0+3CATbRR6q5CNFOVO4mDjHAZP/AuOWIpGoa3YdgDnY8CvXK+brbU4X6E0ZD9y/Y6rON/gG/3SD6loonwQftvrDbyZQsl6ACe1U2rGvdQHuv407A1/1UV7i1tvC24SBKwFWG1ePKxDqbhMsYElplauuJscg2cTG1GBQ5brzheX7VKsqU3hM+P6G3iews41D2VVMMXz7xqDQMjb9wk3m9Ix67NSygHFkH3i+TnO5AWuonYUYawkAUojRJkJdRShIUpA=="
+}
