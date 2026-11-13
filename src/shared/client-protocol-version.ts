@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 36
+export const CLIENT_PROTOCOL_VERSION = 37
 
 /**
  * Oldest client protocol this build still serves.
@@ -159,5 +159,8 @@ export const CLIENT_PROTOCOL_VERSION = 36
  *
  * v35 cannot show the automation event log (`automation-events-query`) and
  * ignores `automation-event`; it loses nothing else.
+ *
+ * v36 cannot show the history of notifications sent (`notifications-query`)
+ * and ignores `notification-sent`; it loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

@@ -667,6 +667,36 @@ html, body, #root {
 }
 
 .event-log__outcome--fired { color: #a6e3a1; }
+
+/* The notification history: the event log's rows, one line each. */
+.toolbar__menu--notifications {
+  width: min(440px, calc(100vw - 24px));
+}
+
+.notification-log__kind {
+  flex: none;
+  width: 72px;
+  font-size: 11px;
+}
+
+.notification-log__kind--permission { color: #ffc94d; }
+.notification-log__kind--question { color: #89b4fa; }
+.notification-log__kind--plan { color: #cba6f7; }
+.notification-log__kind--manual { color: #a6e3a1; }
+
+.notification-log__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notification-log__unreached {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+  color: #ff8a80;
+}
 .event-log__outcome--unheard { color: #ffc94d; }
 .event-log__outcome--rejected { color: #ff8a80; }
 

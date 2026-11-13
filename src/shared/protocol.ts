@@ -613,6 +613,12 @@ export interface AgentMemoryQueryMessage {
   seq: number
 }
 
+/** The history of notifications sent towards the phone. Replies `notifications-result`. */
+export interface NotificationsQueryMessage {
+  type: 'notifications-query'
+  seq: number
+}
+
 /** The automation event log. Replies `automation-events-result`. */
 export interface AutomationEventsQueryMessage {
   type: 'automation-events-query'
@@ -1375,6 +1381,7 @@ export type ClientMessage =
   | MobileEventsMessage
   | AgentMemoryQueryMessage
   | AutomationEventsQueryMessage
+  | NotificationsQueryMessage
   | TerminalBorrowSizeMessage
   | TerminalReturnSizeMessage
   | TerminalBufferTextMessage
@@ -1597,6 +1604,8 @@ export interface MobileBuildChangedMessage {
 export interface BlockAlertMessage {
   type: 'block-alert'
   nodeId: NodeId
+  /** For the toolbar's history; the phone does not read it. */
+  kind: NotificationKind
   /** Which agent: its surface's title. */
   title: string
   /** What it waits on, in full enough to decide whether to go and answer, or what it chose to say. */
@@ -1700,6 +1709,7 @@ export interface ExitMessage {
 
 import type { ServerState, NodeData, NodeStamp, ReceptionistHolder } from './state'
 import type { AutomationEventRecord, AutomationPatch } from './automation'
+import type { NotificationKind, NotificationRecord } from './notifications'
 import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 import type { UsageSnapshot } from './usage-report'
 import type { SystemStatsSnapshot } from './system-stats'
@@ -2412,6 +2422,19 @@ export interface AutomationEventsResultMessage {
   events: AutomationEventRecord[]
 }
 
+export interface NotificationsResultMessage {
+  type: 'notifications-result'
+  seq: number
+  /** Oldest first. */
+  notifications: NotificationRecord[]
+}
+
+/** A notification was sent towards the phone, reached or not. Broadcast as each is sent. */
+export interface NotificationSentMessage {
+  type: 'notification-sent'
+  notification: NotificationRecord
+}
+
 /** A script sent an event, whatever became of it. Broadcast as each one arrives. */
 export interface AutomationEventMessage {
   type: 'automation-event'
@@ -2422,6 +2445,8 @@ export type ServerMessage =
   | AgentMemoryResultMessage
   | AutomationEventsResultMessage
   | AutomationEventMessage
+  | NotificationsResultMessage
+  | NotificationSentMessage
   | DictationStartedMessage
   | DictationResumedMessage
   | DictationResultMessage

@@ -11,7 +11,14 @@
 import type { NodeId } from '../shared/ids'
 import type { BlockAlertClearedMessage, BlockAlertMessage } from '../shared/protocol'
 import type { ClaudeState } from '../shared/state'
+import type { NotificationKind } from '../shared/notifications'
 import { describeBlock, isBlocked, type BlockingPrompt, type BlockedState } from './receptionist/blocked'
+
+const KIND: Record<BlockedState, NotificationKind> = {
+  waiting_permission: 'permission',
+  waiting_question: 'question',
+  waiting_plan: 'plan',
+}
 
 export interface BlockAlertsDeps {
   send(message: BlockAlertMessage | BlockAlertClearedMessage): void
@@ -42,6 +49,6 @@ export class BlockAlerts {
     if (repeat) return
     this.alerted.set(nodeId, { state, prompt })
     const said = describeBlock(state, prompt)
-    this.deps.send({ type: 'block-alert', nodeId, title: this.deps.title(nodeId), body: said[0].toUpperCase() + said.slice(1) })
+    this.deps.send({ type: 'block-alert', nodeId, kind: KIND[state], title: this.deps.title(nodeId), body: said[0].toUpperCase() + said.slice(1) })
   }
 }

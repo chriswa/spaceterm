@@ -151,6 +151,20 @@ export function LockIcon() {
   )
 }
 
+export function NotificationLogIcon() {
+  // A small bell beside the lines of a log, as the event log has a bolt.
+  return (
+    <svg viewBox="0 0 18 18" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>
+      <path d="M2 9.5a3.5 3.5 0 0 1 7 0c0 2.2 1 3.3 1 3.3H1s1-1.1 1-3.3" fill="currentColor" fillOpacity="0.2" />
+      <path d="M4.3 13a1.3 1.3 0 0 0 2.4 0" />
+      <line x1="5.5" y1="4.5" x2="5.5" y2="6" />
+      <line x1="12" y1="4" x2="17" y2="4" />
+      <line x1="12" y1="9" x2="17" y2="9" />
+      <line x1="12" y1="14" x2="17" y2="14" />
+    </svg>
+  )
+}
+
 export function BellIcon() {
   return (
     <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" style={{ display: 'block' }}>

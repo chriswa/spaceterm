@@ -34,6 +34,7 @@ import { isAgentSurface } from '../shared/node-utils'
 import { serverLog, serverLogSync, sanitizeForLog } from './server-log'
 import { MobileEventsLog } from './mobile-events'
 import { AutomationEventLog } from './automation-event-log'
+import { NotificationLog } from './notification-log'
 import { expandTilde } from './cwd'
 import { AutomationRunner, fileHeartbeat } from './automation-runner'
 import { isAutomationOverlap, isAutomationRun } from '../shared/automation'
@@ -512,6 +513,8 @@ function keepAttention(attention: AttentionKeeper, event: VoiceOperatorEvent): v
 /** The phone's audio and lifecycle record, ~/.spaceterm/mobile-events.jsonl. */
 const mobileEventsLog = new MobileEventsLog()
 const automationEventLog = new AutomationEventLog()
+/** Every notification sent towards the phone, for the toolbar's history. */
+const notificationLog = new NotificationLog()
 
 /** Hands-free is registered with Voice Operator only while a desktop or phone client is connected. */
 function updateHandsFreeClients(): void {
@@ -891,6 +894,13 @@ function connectedPhones(): number {
  * could not be reached. Resolves to how it went, in words for an agent.
  */
 async function notifyPhones(alert: BlockAlertMessage): Promise<{ reached: boolean; outcome: string }> {
+  const result = await sendToPhones(alert)
+  const { nodeId, kind, title, body } = alert
+  broadcastToAll({ type: 'notification-sent', notification: notificationLog.record({ nodeId, kind, title, body, reached: result.reached }, Date.now()) })
+  return result
+}
+
+async function sendToPhones(alert: BlockAlertMessage): Promise<{ reached: boolean; outcome: string }> {
   const apple = await apns.alert(alert)
   if (apple.sent) return { reached: true, outcome: 'sent through Apple’s push service' }
   broadcastToAll(alert)
@@ -1674,7 +1684,7 @@ const scriptApi = new ScriptApi({
     )
     return located
   },
-  notifyUser: (nodeId, body) => notifyPhones({ type: 'block-alert', nodeId, title: agentTitle(nodeId), body, always: true }),
+  notifyUser: (nodeId, body) => notifyPhones({ type: 'block-alert', nodeId, kind: 'manual', title: agentTitle(nodeId), body, always: true }),
 
   shipIt: shipToSession,
 
@@ -2637,6 +2647,11 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     case 'mobile-events': {
       mobileEventsLog.write(msg.events, clientLabel(client))
       send(client.link, { type: 'mutation-ack', seq: msg.seq })
+      break
+    }
+
+    case 'notifications-query': {
+      send(client.link, { type: 'notifications-result', seq: msg.seq, notifications: notificationLog.list() })
       break
     }
 

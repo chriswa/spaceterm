@@ -18,6 +18,12 @@ describe('BlockAlerts', () => {
     expect(sent[0]).toMatchObject({ type: 'block-alert', nodeId: node, title: 'Fix the build' })
   })
 
+  it.each([['waiting_permission', 'permission'], ['waiting_question', 'question'], ['waiting_plan', 'plan']] as const)('names %s as a %s notification', (state, kind) => {
+    const { alerts, sent } = make()
+    alerts.observe(node, 'working', state, undefined)
+    expect(sent[0]).toMatchObject({ kind })
+  })
+
   it('says what the agent wants', () => {
     const { alerts, sent } = make()
     alerts.observe(node, 'working', 'waiting_permission', { tool: 'Bash', input: { command: 'rm -rf build' } })

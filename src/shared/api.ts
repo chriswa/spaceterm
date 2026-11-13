@@ -32,6 +32,7 @@ import type {
 } from './protocol'
 import type { LaunchPrefs } from './launch-prefs'
 import type { AutomationEventRecord, AutomationPatch } from './automation'
+import type { NotificationRecord } from './notifications'
 import type { NodeData, NodeStamp, ReceptionistHolder, ServerState } from './state'
 import type { SystemMetricsSample } from './system-metrics'
 import type { UndoEntry } from './undo-types'
@@ -176,6 +177,10 @@ export interface NodeApi {
   automationEvents(): Promise<AutomationEventRecord[]>
   /** Each event a script sends from now on, whatever became of it. */
   onAutomationEvent(callback: (event: AutomationEventRecord) => void): () => void
+  /** Every notification sent towards the phone that the history still holds, oldest first. */
+  notifications(): Promise<NotificationRecord[]>
+  /** Each notification sent from now on, reached or not. */
+  onNotificationSent(callback: (notification: NotificationRecord) => void): () => void
   /** Mute or watch a surface's cache countdown. Muting a cold surface does nothing. */
   cacheTimerMute(nodeId: NodeId, muted: boolean): Promise<void>
 

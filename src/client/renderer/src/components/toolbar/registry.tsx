@@ -5,6 +5,7 @@ import { CrabGroup, type CrabNavEvent } from './CrabGroup'
 import { PowerMonitor } from './PowerMonitor'
 import { ControlButton } from './ControlButtons'
 import { AutomationEventsButton } from './AutomationEventsButton'
+import { NotificationsButton } from './NotificationsButton'
 import { HandsFreeButton } from '../../../../../mobile/HandsFreeButton'
 import { handsFreeBlocker } from '../../lib/desktop-hands-free'
 import {
@@ -157,6 +158,7 @@ export const TOOLBAR_WIDGETS: readonly ToolbarWidget[] = [
   },
   { id: 'theme', slot: 'buttons', kind: 'standalone', render: () => <ThemePicker /> },
   { id: 'automation-events', slot: 'buttons', kind: 'standalone', render: () => <AutomationEventsButton /> },
+  { id: 'notifications', slot: 'buttons', kind: 'standalone', render: () => <NotificationsButton /> },
   { id: 'notification-sound', slot: 'buttons', kind: 'standalone', render: () => <NotificationSoundToggle /> },
   { id: 'auto-stamp', slot: 'buttons', kind: 'standalone', render: () => <AutoStampToggle /> },
   { id: 'copy-cleanup', slot: 'buttons', kind: 'standalone', render: () => <CopyCleanupToggle /> },
