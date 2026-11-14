@@ -2,18 +2,22 @@ import {
   SCRIPT_EVENTS,
   SCRIPT_PROTOCOL_VERSION,
   MIN_SCRIPT_PROTOCOL_VERSION,
+  type ScriptCardPosition,
   type ScriptEvent,
   type ScriptMessage,
   type ScriptResponse
 } from '../shared/protocol'
 import type { NodeData, TerminalNodeData } from '../shared/state'
-import type { NodeId, PtySessionId } from '../shared/ids'
-import { ancestorsOf } from '../shared/node-ancestry'
+import { ROOT_NODE_ID, type NodeId, type PtySessionId } from '../shared/ids'
+import { ancestorsOf, wouldCreateCycle } from '../shared/node-ancestry'
 import { unhandledVariant } from '../shared/exhaustive'
 import { checkProtocolVersion } from '../shared/protocol-handshake'
 import type { ModCapability } from '../shared/mod-manifest'
 import type { Located } from './location-broker'
-import { CUSTOM_EVENT_PREFIX, MAX_EVENT_PAYLOAD_BYTES, isCustomEventId } from '../shared/automation'
+import {
+  CUSTOM_EVENT_PREFIX, MAX_EVENT_PAYLOAD_BYTES, isCustomEventId, parseAutomationPatch, parseTrigger,
+  type AutomationPatch,
+} from '../shared/automation'
 import type { IncomingAutomationEvent } from './automation-event-log'
 
 /** What this build serves on the scripts socket. */
@@ -81,6 +85,11 @@ interface ConnectionIdentity {
   capabilities: ReadonlySet<ModCapability>
 }
 
+export interface CardPosition {
+  x: number
+  y: number
+}
+
 export interface ScriptHost {
   getNode(nodeId: NodeId): NodeData | undefined
   /** The surface's agent name, if it has one. Must never assign one. */
@@ -132,6 +141,33 @@ export interface ScriptHost {
   fireEvent(eventId: string, payload: unknown): { matched: number; disabled: number }
   /** Enter an event in the event log. Called once for every `script-fire-event`, whatever became of it. */
   recordEvent(event: IncomingAutomationEvent): void
+
+  // Card writes. Arguments arrive validated. None of these counts as the user
+  // interacting with the card: the agent wrote it, not them.
+
+  /**
+   * Create a markdown card under `parentId` holding `content`, at `position`
+   * or, without one, the usual spot below the parent. Returns its id.
+   */
+  addMarkdown(parentId: NodeId, content: string, position: CardPosition | undefined): NodeId
+  /** Replace a markdown card's content, writing the file a file-backed card mirrors. */
+  setMarkdown(nodeId: NodeId, content: string): void
+  /** Create an automation card under `parentId`, placed as `addMarkdown` places one, then apply `patch`. Returns its id. */
+  addAutomation(parentId: NodeId, patch: AutomationPatch, position: CardPosition | undefined): NodeId
+  /** Apply a patch to an automation card, as the card's own edits are applied. */
+  updateAutomation(nodeId: NodeId, patch: AutomationPatch): void
+  /**
+   * Archive a node and its subtree as the card's archive button does, shutting
+   * down every terminal in it. Returns how many nodes left the canvas.
+   */
+  archive(nodeId: NodeId): number
+  /**
+   * Put a node under `newParentId` as dragging it onto a card does. The parent
+   * arrives checked: it exists and would not make a cycle.
+   */
+  reparent(nodeId: NodeId, newParentId: NodeId): void
+  /** Set one card's position. */
+  move(nodeId: NodeId, position: CardPosition): void
   log(line: string): void
 }
 
@@ -156,6 +192,13 @@ const REQUIRED_CAPABILITY: { readonly [T in ScriptMessage['type']]: ModCapabilit
   'script-fire-event': 'fire-events',
   'script-get-location': 'read-location',
   'script-notify': 'notify-user',
+  'script-add-markdown': 'write-nodes',
+  'script-set-markdown': 'write-nodes',
+  'script-add-automation': 'write-nodes',
+  'script-update-automation': 'write-nodes',
+  'script-reparent': 'write-nodes',
+  'script-move': 'write-nodes',
+  'script-archive': 'archive-nodes',
 }
 
 /** Why a script's event cannot be fired, or undefined when it can. */
@@ -167,6 +210,28 @@ function fireEventError(eventId: unknown, payload: unknown): string | undefined 
     return `payload is larger than ${MAX_EVENT_PAYLOAD_BYTES} bytes of JSON`
   }
   return undefined
+}
+
+/** A script's card position: both coordinates, neither, or why it is unusable. */
+function readPosition(msg: ScriptCardPosition): { ok: true; position: CardPosition | undefined } | { ok: false; error: string } {
+  const { x, y } = msg
+  if (x === undefined && y === undefined) return { ok: true, position: undefined }
+  if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) {
+    return { ok: false, error: 'x and y must both be given, as finite numbers' }
+  }
+  return { ok: true, position: { x, y } }
+}
+
+/**
+ * An automation patch from a script. Stricter than the card's own path on one
+ * point: the card stores a trigger as it is typed, half-finished or not, but a
+ * script's trigger is its final answer, so one that does not parse is refused.
+ */
+function readScriptAutomationPatch(msg: Parameters<typeof parseAutomationPatch>[0]): ReturnType<typeof parseAutomationPatch> {
+  const parsed = parseAutomationPatch(msg)
+  if (!parsed.ok || parsed.patch.trigger === undefined) return parsed
+  const trigger = parseTrigger(parsed.patch.trigger)
+  return trigger.kind === 'invalid' ? { ok: false, error: `invalid trigger: ${trigger.error}` } : parsed
 }
 
 interface ScriptSubscriber {
@@ -426,6 +491,87 @@ export class ScriptApi {
         return
       }
 
+      case 'script-add-markdown': {
+        const fail = (error: string): void => reply({ type: 'script-add-markdown-result', seq: msg.seq, error })
+        const where = readPosition(msg)
+        if (!where.ok) return fail(where.error)
+        if (typeof msg.content !== 'string') return fail('content must be a string')
+        const parentError = this.parentError(msg.parentId)
+        if (parentError) return fail(parentError)
+        // The card under a file node shows that file, which would replace the
+        // content given here; an agent wanting it changed writes the file.
+        if (this.host.getNode(msg.parentId)?.type === 'file') return fail('parent-is-a-file')
+        reply({ type: 'script-add-markdown-result', seq: msg.seq, nodeId: this.host.addMarkdown(msg.parentId, msg.content, where.position) })
+        return
+      }
+
+      case 'script-set-markdown': {
+        const fail = (error: string): void => reply({ type: 'script-set-markdown-result', seq: msg.seq, ok: false, error })
+        if (typeof msg.content !== 'string') return fail('content must be a string')
+        const nodeError = this.editableError(msg.nodeId, 'markdown')
+        if (nodeError) return fail(nodeError)
+        this.host.setMarkdown(msg.nodeId, msg.content)
+        reply({ type: 'script-set-markdown-result', seq: msg.seq, ok: true })
+        return
+      }
+
+      case 'script-add-automation': {
+        const fail = (error: string): void => reply({ type: 'script-add-automation-result', seq: msg.seq, error })
+        const where = readPosition(msg)
+        if (!where.ok) return fail(where.error)
+        const parsed = readScriptAutomationPatch(msg)
+        if (!parsed.ok) return fail(parsed.error)
+        const parentError = this.parentError(msg.parentId)
+        if (parentError) return fail(parentError)
+        reply({ type: 'script-add-automation-result', seq: msg.seq, nodeId: this.host.addAutomation(msg.parentId, parsed.patch, where.position) })
+        return
+      }
+
+      case 'script-update-automation': {
+        const fail = (error: string): void => reply({ type: 'script-update-automation-result', seq: msg.seq, ok: false, error })
+        const parsed = readScriptAutomationPatch(msg)
+        if (!parsed.ok) return fail(parsed.error)
+        const nodeError = this.editableError(msg.nodeId, 'automation')
+        if (nodeError) return fail(nodeError)
+        this.host.updateAutomation(msg.nodeId, parsed.patch)
+        reply({ type: 'script-update-automation-result', seq: msg.seq, ok: true })
+        return
+      }
+
+      case 'script-archive': {
+        const fail = (error: string): void => reply({ type: 'script-archive-result', seq: msg.seq, ok: false, error })
+        const nodeError = this.movableError(msg.nodeId)
+        if (nodeError) return fail(nodeError)
+        reply({ type: 'script-archive-result', seq: msg.seq, ok: true, archived: this.host.archive(msg.nodeId) })
+        return
+      }
+
+      case 'script-reparent': {
+        const fail = (error: string): void => reply({ type: 'script-reparent-result', seq: msg.seq, ok: false, error })
+        const nodeError = this.movableError(msg.nodeId)
+        if (nodeError) return fail(nodeError)
+        const parentError = this.parentError(msg.newParentId)
+        if (parentError) return fail(parentError === 'unknown-node' ? 'unknown-parent' : 'generated-parent')
+        if (wouldCreateCycle((id) => this.host.getNode(id), msg.nodeId, msg.newParentId)) return fail('would-create-cycle')
+        // Already there: nothing to do, as when a card is dropped on its own parent.
+        if (this.host.getNode(msg.nodeId)?.parentId !== msg.newParentId) this.host.reparent(msg.nodeId, msg.newParentId)
+        reply({ type: 'script-reparent-result', seq: msg.seq, ok: true })
+        return
+      }
+
+      case 'script-move': {
+        const fail = (error: string): void => reply({ type: 'script-move-result', seq: msg.seq, ok: false, error })
+        const where = readPosition(msg)
+        if (!where.ok) return fail(where.error)
+        if (!where.position) return fail('x and y must both be given, as finite numbers')
+        if (msg.nodeId === ROOT_NODE_ID) return fail('root')
+        // A generated card may move: its owner remembers where it was put.
+        if (!this.host.getNode(msg.nodeId)) return fail('unknown-node')
+        this.host.move(msg.nodeId, where.position)
+        reply({ type: 'script-move-result', seq: msg.seq, ok: true })
+        return
+      }
+
       case 'script-mod-emit': {
         // Out to the renderer halves, and to any *other* mod that asked to
         // watch this one. The emitting connection is excluded so a mod does
@@ -458,6 +604,45 @@ export class ScriptApi {
       node.id,
       ...[...ancestorsOf((id) => this.host.getNode(id), node.id)].map((n) => n.id)
     ]
+  }
+
+  /**
+   * Why a script cannot put a card under `parentId`, or undefined when it can.
+   * A generated card is refused as a parent because it is not persisted, so a
+   * child under it would be left dangling after a restart.
+   */
+  private parentError(parentId: NodeId): 'unknown-node' | 'generated-card' | undefined {
+    if (parentId === ROOT_NODE_ID) return undefined
+    const parent = this.host.getNode(parentId)
+    if (!parent) return 'unknown-node'
+    if (parent.ephemeral) return 'generated-card'
+    return undefined
+  }
+
+  /**
+   * Why a script cannot archive or reparent `nodeId`, or undefined when it can.
+   * The root is the canvas itself. A generated card is refused because the
+   * state manager drops either change to one and the script would be told "ok".
+   */
+  private movableError(nodeId: NodeId): 'root' | 'unknown-node' | 'generated-card' | undefined {
+    if (nodeId === ROOT_NODE_ID) return 'root'
+    const node = this.host.getNode(nodeId)
+    if (!node) return 'unknown-node'
+    if (node.ephemeral) return 'generated-card'
+    return undefined
+  }
+
+  /**
+   * Why a script cannot edit `nodeId` as a card of type `type`, or undefined
+   * when it can. A generated card is refused rather than left to the state
+   * manager, which drops the write and would leave the script told "ok".
+   */
+  private editableError(nodeId: NodeId, type: 'markdown' | 'automation'): string | undefined {
+    const node = this.host.getNode(nodeId)
+    if (!node) return 'unknown-node'
+    if (node.type !== type) return type === 'markdown' ? 'not-markdown' : 'not-an-automation'
+    if (node.ephemeral) return 'generated-card'
+    return undefined
   }
 
   /**

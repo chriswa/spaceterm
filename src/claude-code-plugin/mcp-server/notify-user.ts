@@ -18,6 +18,7 @@ export const notifyUserTool = defineTool({
   description:
     "Sends a notification to the user's phone through the Spaceterm iPhone app, titled with this agent's name; tapping it opens this terminal. " +
     'Use it when the user asks to be notified or pinged, or asked to be told when something finishes. ' +
+    'Use it instead of PushNotification, which sends nothing while this terminal has focus; this always goes to the phone. ' +
     'Not for a question you need answered: asking it (AskUserQuestion) already notifies the phone. ' +
     'Says whether a phone was reached, and if not, why.',
   inputSchema: z.object({

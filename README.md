@@ -140,6 +140,26 @@ did nothing happen when I clicked that?" is already on disk.
 full set of subscribable events, which is the handshake a script should perform
 before relying on anything else.
 
+An agent can put cards on the canvas from its shell, which is safer than
+editing `~/.spaceterm/state.json` (the server holds state in memory and
+overwrites the file):
+
+```bash
+id=$(npm run -s cli -- add-markdown "$SPACETERM_NODE_ID" '# Plan')
+npm run -s cli -- set-markdown "$id" - < plan.md
+npm run -s cli -- add-automation "$id" --trigger '0 9 * * 1-5' --overlap single --enabled true
+```
+
+It can also rearrange the canvas. `archive` takes the card's whole subtree with
+it, as the archive button does, and the subtree restores as one from the
+archive; `move` moves only the card named:
+
+```bash
+npm run -s cli -- move "$id" 400 -200
+npm run -s cli -- reparent "$id" root
+npm run -s cli -- archive "$id"
+```
+
 ### Automations
 
 An Automation card (in the add menu) starts a Claude Code surface beneath

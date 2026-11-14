@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ancestorsOf, findAncestor, lookupIn, type NodeLookup } from './node-ancestry'
+import { ancestorsOf, findAncestor, lookupIn, wouldCreateCycle, type NodeLookup } from './node-ancestry'
 import type { NodeData } from './state'
 import { asNodeId, ROOT_NODE_ID, type NodeId } from './ids'
 
@@ -139,5 +139,28 @@ describe('lookupIn', () => {
 
   it('returns undefined for a missing key', () => {
     expect(lookupIn({})(nid('a'))).toBeUndefined()
+  })
+})
+
+describe('wouldCreateCycle', () => {
+  // c's parent is b, b's parent is a.
+  const tree = chain('c', 'b', 'a')
+
+  it('is true for the node itself and anything beneath it', () => {
+    expect(wouldCreateCycle(tree, nid('a'), nid('a'))).toBe(true)
+    expect(wouldCreateCycle(tree, nid('a'), nid('b'))).toBe(true)
+    expect(wouldCreateCycle(tree, nid('a'), nid('c'))).toBe(true)
+  })
+
+  it('is false for an ancestor, the root, and a node in another branch', () => {
+    const nodes = { a: node('a'), b: node('b', nid('a')), x: node('x') }
+    expect(wouldCreateCycle(lookupIn(nodes), nid('b'), nid('a'))).toBe(false)
+    expect(wouldCreateCycle(lookupIn(nodes), nid('b'), ROOT_NODE_ID)).toBe(false)
+    expect(wouldCreateCycle(lookupIn(nodes), nid('b'), nid('x'))).toBe(false)
+  })
+
+  it('terminates on a graph that already has a cycle', () => {
+    const nodes = { a: node('a', nid('b')), b: node('b', nid('a')) }
+    expect(wouldCreateCycle(lookupIn(nodes), nid('x'), nid('a'))).toBe(false)
   })
 })

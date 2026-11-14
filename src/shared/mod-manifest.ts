@@ -44,6 +44,18 @@ export const MOD_CAPABILITIES = [
   'notify-user',
   /** Fire custom events at automation cards, which start agents. */
   'fire-events',
+  /**
+   * Create markdown and automation cards, and edit them. Includes switching an
+   * automation card on, which lets its trigger start agents. Also moving any
+   * card and reparenting it, which rearrange the canvas without removing anything.
+   */
+  'write-nodes',
+  /**
+   * Archive any card with its subtree. Separate from `write-nodes` because it
+   * takes cards off the canvas and shuts down every terminal in the subtree,
+   * ending agents the mod did not start.
+   */
+  'archive-nodes',
 ] as const
 
 /** A capability the base defines. Bare id, fixed list, enforced on the socket. */

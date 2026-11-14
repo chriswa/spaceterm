@@ -5,7 +5,7 @@ import { execFile } from 'child_process'
 import { SOCKET_DIR, DEFAULT_SOCKET_DIR, isOperatorHome, SOCKET_PATH, HOOKS_SOCKET_PATH, SCRIPTS_SOCKET_PATH, HOOK_LOG_DIR, CLIENT_PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL_VERSION } from '../shared/protocol'
 import { checkProtocolVersion } from '../shared/protocol-handshake'
 import type { BlockAlertMessage, ClientMessage, IngestMessage, ScriptMessage, ServerMessage, CreateOptions, CameraBounds, ClaudeSessionEntry, ClientDevice, ControlImage, ControlTranscriptEntry } from '../shared/protocol'
-import { ScriptApi, type ScriptConnection } from './script-api'
+import { ScriptApi, type CardPosition, type ScriptConnection } from './script-api'
 import { ModRegistry } from './mod-registry'
 import { respawnTerminal, type TerminalRespawnDeps, type SpawnedPty } from './terminal-respawn'
 import { RestartRecoveryLedger } from './restart-recovery'
@@ -37,12 +37,12 @@ import { AutomationEventLog } from './automation-event-log'
 import { NotificationLog } from './notification-log'
 import { expandTilde } from './cwd'
 import { AutomationRunner, fileHeartbeat } from './automation-runner'
-import { isAutomationOverlap, isAutomationRun } from '../shared/automation'
+import { isAutomationRun, parseAutomationPatch, type AutomationPatch } from '../shared/automation'
 import { DaemonClient } from './daemon-client'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
 import { receivesSnapshots, owedOnResume } from './snapshot-delivery'
-import { agentSurfaceFootprint, computePlacement, placeDirectlyBelow } from './node-placement'
+import { agentSurfaceFootprint, computePlacement, placeDirectlyBelow, type NewNodeFootprint } from './node-placement'
 import { terminalPixelSize, directoryFolderWidth, clampTerminalSize, clampBorrowedTerminalSize, MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, DIRECTORY_HEIGHT, FILE_WIDTH, FILE_HEIGHT, TITLE_DEFAULT_WIDTH, TITLE_HEIGHT, AUTOMATION_WIDTH, AUTOMATION_HEIGHT } from '../shared/node-size'
 import { setupShellIntegration } from './shell-integration'
 import { shipIt } from './ship-it'
@@ -84,7 +84,7 @@ import { AgentMetaAvailability } from './agent-meta-availability'
 import { SessionStatusObserver, type ObservedSurface } from './claude-state/session-status-observer'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { ancestorsOf, lookupIn } from '../shared/node-ancestry'
-import { DESKTOP_DEVICE, isNodeStamp, type MarkdownNodeData, type NodeData, type ReceptionistHolder, type TerminalNodeData } from '../shared/state'
+import { DESKTOP_DEVICE, isNodeStamp, type AutomationNodeData, type MarkdownNodeData, type NodeData, type ReceptionistHolder, type TerminalNodeData } from '../shared/state'
 import { forkSession, sessionFilePath } from './session-fork'
 import { ForkTitler, forkName, surfaceTitle, FORK_LABEL } from './fork-title'
 import { parse as shellParse } from 'shell-quote'
@@ -1345,6 +1345,68 @@ function startFileBackedWatch(node: MarkdownNodeData): void {
   fileContentManager.startWatching(node.id, parent.id, path)
 }
 
+// Card creation and edits, shared by the client socket and the scripts socket.
+// None of these records an interaction: the client handlers that are a human
+// editing do that themselves, and a script's edits are not the user's.
+
+/** A client's `x`/`y`, which place a card only when both are given. */
+function clientPosition(msg: { x?: number | null; y?: number | null }): CardPosition | undefined {
+  return msg.x != null && msg.y != null ? { x: msg.x, y: msg.y } : undefined
+}
+
+/** `position` when the caller chose one, otherwise the usual spot below `parentId`. */
+function placeCard(parentId: NodeId, footprint: NewNodeFootprint, position: CardPosition | undefined): CardPosition {
+  return position ?? computePlacement(stateManager.getState().nodes, parentId, footprint)
+}
+
+/**
+ * A new markdown card under `parentId`. Under a file node the card mirrors that
+ * file, so it is file-backed and watched from the start.
+ */
+function addMarkdownCard(parentId: NodeId, position: CardPosition | undefined, content?: string): MarkdownNodeData {
+  const pos = placeCard(parentId, { width: MARKDOWN_DEFAULT_WIDTH, height: MARKDOWN_DEFAULT_HEIGHT }, position)
+  const fileBacked = stateManager.getNode(parentId)?.type === 'file'
+  const node = stateManager.createMarkdown(parentId, pos.x, pos.y, content, fileBacked || undefined)
+  if (fileBacked) startFileBackedWatch(node)
+  return node
+}
+
+/** Replace a markdown card's content: in the file it mirrors, if it is file-backed, else in state. */
+function writeMarkdownContent(nodeId: NodeId, content: string): void {
+  if (fileContentManager.isWatched(nodeId)) {
+    fileContentManager.writeContent(nodeId, content)
+  } else {
+    stateManager.updateMarkdownContent(nodeId, content)
+  }
+}
+
+function addAutomationCard(parentId: NodeId, position: CardPosition | undefined): AutomationNodeData {
+  const pos = placeCard(parentId, { width: AUTOMATION_WIDTH, height: AUTOMATION_HEIGHT }, position)
+  return stateManager.createAutomation(parentId, pos.x, pos.y)
+}
+
+function applyAutomationPatch(nodeId: NodeId, patch: AutomationPatch): void {
+  stateManager.updateAutomation(nodeId, patch)
+  // Switching a card back on may let its queue start.
+  if (patch.enabled === true) scheduleAutomationDrain()
+}
+
+/**
+ * Put a node under a new parent. A file-backed markdown card follows the file
+ * node it lands on; under anything else it is left unwatched, which the card
+ * shows as an error.
+ */
+function reparentCard(nodeId: NodeId, newParentId: NodeId): void {
+  const node = stateManager.getNode(nodeId)
+  const fileBacked = node?.type === 'markdown' && node.fileBacked
+  if (fileBacked) fileContentManager.stopWatching(nodeId)
+  stateManager.reparentNode(nodeId, newParentId)
+  // Read back rather than assumed: a refused reparent leaves the card where it
+  // was, still on its own file.
+  const moved = stateManager.getNode(nodeId)
+  if (fileBacked && moved?.type === 'markdown') startFileBackedWatch(moved)
+}
+
 /**
  * Bring the agent back on a terminal that was just restored from the archive:
  * resume its recorded session on a fresh pty.
@@ -1679,6 +1741,18 @@ const scriptApi = new ScriptApi({
     disabled: automationRunner?.disabledListeners(eventId) ?? 0
   }),
   recordEvent: (event) => broadcastToAll({ type: 'automation-event', event: automationEventLog.record(event, Date.now()) }),
+
+  addMarkdown: (parentId, content, position) => addMarkdownCard(parentId, position, content).id,
+  setMarkdown: writeMarkdownContent,
+  addAutomation(parentId, patch, position) {
+    const node = addAutomationCard(parentId, position)
+    applyAutomationPatch(node.id, patch)
+    return node.id
+  },
+  updateAutomation: applyAutomationPatch,
+  archive: archiveNode,
+  reparent: reparentCard,
+  move: (nodeId, { x, y }) => stateManager.moveNode(nodeId, x, y),
   getLocation(askedBy) {
     const located = locationBroker.locate()
     // Said every time, so the log shows who has had the user's position.
@@ -1903,12 +1977,7 @@ function handleIngestMessage(msg: IngestMessage): void {
         serverLog(`[emit-markdown] Unknown surfaceId: ${msg.surfaceId}`)
         break
       }
-      const emPos = computePlacement(
-        stateManager.getState().nodes,
-        parentNodeId,
-        { width: MARKDOWN_DEFAULT_WIDTH, height: MARKDOWN_DEFAULT_HEIGHT }
-      )
-      stateManager.createMarkdown(parentNodeId, emPos.x, emPos.y, msg.content)
+      addMarkdownCard(parentNodeId, undefined, msg.content)
       break
     }
 
@@ -1923,12 +1992,7 @@ function handleIngestMessage(msg: IngestMessage): void {
         console.error(`[emit-markdown-on-parent] No terminal ancestor for ${callerNodeId.slice(0, 8)}`)
         break
       }
-      const empPos = computePlacement(
-        stateManager.getState().nodes,
-        targetNodeId,
-        { width: MARKDOWN_DEFAULT_WIDTH, height: MARKDOWN_DEFAULT_HEIGHT }
-      )
-      stateManager.createMarkdown(targetNodeId, empPos.x, empPos.y, msg.content)
+      addMarkdownCard(targetNodeId, undefined, msg.content)
       break
     }
 
@@ -2775,20 +2839,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'node-reparent': {
-      const reparentNode = stateManager.getNode(msg.nodeId)
-      if (reparentNode?.type === 'markdown' && reparentNode.fileBacked) {
-        const newParent = stateManager.getNode(msg.newParentId)
-        fileContentManager.stopWatching(msg.nodeId)
-        stateManager.reparentNode(msg.nodeId, msg.newParentId)
-        if (newParent?.type === 'file') {
-          const rpCwd = ancestorCwd(stateManager.getState().nodes, newParent.id)
-          const rpPath = resolveFilePath(newParent.filePath, rpCwd)
-          fileContentManager.startWatching(msg.nodeId, newParent.id, rpPath)
-        }
-        // If new parent is not a file node, node stays unwatched (error state on client)
-      } else {
-        stateManager.reparentNode(msg.nodeId, msg.newParentId)
-      }
+      reparentCard(msg.nodeId, msg.newParentId)
       send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
     }
@@ -3095,24 +3146,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'markdown-add': {
-      let posX: number
-      let posY: number
-      if (msg.x != null && msg.y != null) {
-        posX = msg.x
-        posY = msg.y
-      } else {
-        const pos = computePlacement(stateManager.getState().nodes, msg.parentId, { width: MARKDOWN_DEFAULT_WIDTH, height: MARKDOWN_DEFAULT_HEIGHT })
-        posX = pos.x
-        posY = pos.y
-      }
-      const mdParent = stateManager.getNode(msg.parentId)
-      const mdFileBacked = mdParent?.type === 'file'
-      const mdNode = stateManager.createMarkdown(msg.parentId, posX, posY, undefined, mdFileBacked || undefined)
-      if (mdFileBacked && mdParent.type === 'file') {
-        const mdCwd = ancestorCwd(stateManager.getState().nodes, mdParent.id)
-        const mdResolvedPath = resolveFilePath(mdParent.filePath, mdCwd)
-        fileContentManager.startWatching(mdNode.id, mdParent.id, mdResolvedPath)
-      }
+      const mdNode = addMarkdownCard(msg.parentId, clientPosition(msg))
       send(client.link, { type: 'node-add-ack', seq: msg.seq, nodeId: mdNode.id })
       break
     }
@@ -3184,13 +3218,9 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'markdown-content': {
-      if (fileContentManager.isWatched(msg.nodeId)) {
-        fileContentManager.writeContent(msg.nodeId, msg.content)
-      } else {
-        stateManager.updateMarkdownContent(msg.nodeId, msg.content)
-      }
-      // A human edited this markdown — this handler is the human-only path (an
-      // agent's emit_markdown creates a new node instead). Genuine interaction.
+      writeMarkdownContent(msg.nodeId, msg.content)
+      // A human edited this markdown — this handler is the human-only path
+      // (agents write through emit_markdown or the scripts socket). Genuine interaction.
       stateManager.recordInteraction(msg.nodeId, Date.now())
       send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break
@@ -3254,10 +3284,7 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
 
     case 'automation-add': {
       try {
-        const pos = msg.x != null && msg.y != null
-          ? { x: msg.x, y: msg.y }
-          : computePlacement(stateManager.getState().nodes, msg.parentId, { width: AUTOMATION_WIDTH, height: AUTOMATION_HEIGHT })
-        const node = stateManager.createAutomation(msg.parentId, pos.x, pos.y)
+        const node = addAutomationCard(msg.parentId, clientPosition(msg))
         send(client.link, { type: 'node-add-ack', seq: msg.seq, nodeId: node.id })
       } catch (err: any) {
         console.error(`automation-add failed: ${err.message}`)
@@ -3267,21 +3294,12 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
     }
 
     case 'automation-update': {
-      if (msg.overlap !== undefined && !isAutomationOverlap(msg.overlap)) {
-        send(client.link, { type: 'server-error', message: `automation-update: unknown overlap ${String(msg.overlap)}` })
+      const parsed = parseAutomationPatch(msg)
+      if (!parsed.ok) {
+        send(client.link, { type: 'server-error', message: `automation-update: ${parsed.error}` })
         break
       }
-      if (msg.prompt !== undefined && typeof msg.prompt !== 'string') {
-        send(client.link, { type: 'server-error', message: 'automation-update: prompt must be a string' })
-        break
-      }
-      if (msg.enabled !== undefined && typeof msg.enabled !== 'boolean') {
-        send(client.link, { type: 'server-error', message: 'automation-update: enabled must be a boolean' })
-        break
-      }
-      stateManager.updateAutomation(msg.nodeId, { trigger: msg.trigger, overlap: msg.overlap, prompt: msg.prompt, enabled: msg.enabled })
-      // Switching a card back on may let its queue start.
-      if (msg.enabled === true) scheduleAutomationDrain()
+      applyAutomationPatch(msg.nodeId, parsed.patch)
       stateManager.recordInteraction(msg.nodeId, Date.now())
       send(client.link, { type: 'mutation-ack', seq: msg.seq })
       break

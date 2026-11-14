@@ -67,8 +67,14 @@ at all: it speaks the scripts socket instead.
 Three extension surfaces, none of them called that:
 
 **1. The scripts socket — this is already a mod API.**
-`~/.spaceterm/scripts.sock`, JSON-lines, eight message types (`ScriptMessage` in
-`protocol.ts`). It supports subscribing to a documented event set
+`~/.spaceterm/scripts.sock`, JSON-lines, the message types in `ScriptMessage` in
+`protocol.ts`. Besides reading nodes and typing into terminals, a script can
+create and edit markdown and automation cards (`script-add-markdown`,
+`script-set-markdown`, `script-add-automation`, `script-update-automation`)
+and rearrange any card (`script-move`, `script-reparent`), all gated on the
+`write-nodes` capability. `script-archive` archives a card with its whole
+subtree, shutting down the terminals in it, and needs `archive-nodes` instead.
+It supports subscribing to a documented event set
 (`ScriptSubscribeMessage` → `ScriptApi.broadcast`), and it now announces itself:
 `script-hello` reports the served protocol range and the complete event list.
 There are **eight tools written against it**, in

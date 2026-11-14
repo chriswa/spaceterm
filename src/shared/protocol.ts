@@ -2248,6 +2248,79 @@ export interface ScriptNotifyMessage {
   body: string
 }
 
+/**
+ * Where a script puts a new card: both coordinates, or neither for the usual
+ * spot below the parent (`computePlacement`).
+ */
+export interface ScriptCardPosition {
+  x?: number
+  y?: number
+}
+
+/** A new markdown card under `parentId`, holding `content`. */
+export interface ScriptAddMarkdownMessage extends ScriptCardPosition {
+  type: 'script-add-markdown'
+  seq: number
+  parentId: NodeId
+  content: string
+}
+
+/** Replace a markdown card's content. A card mirroring a file writes the file. */
+export interface ScriptSetMarkdownMessage {
+  type: 'script-set-markdown'
+  seq: number
+  nodeId: NodeId
+  content: string
+}
+
+/**
+ * A new automation card under `parentId`, with any of the patch fields set.
+ * Unlike the card, a script's trigger must parse (`parseTrigger`).
+ */
+export type ScriptAddAutomationMessage = AutomationPatch & ScriptCardPosition & {
+  type: 'script-add-automation'
+  seq: number
+  parentId: NodeId
+}
+
+/** Change any of an automation card's patch fields, validated as for `script-add-automation`. */
+export type ScriptUpdateAutomationMessage = AutomationPatch & {
+  type: 'script-update-automation'
+  seq: number
+  nodeId: NodeId
+}
+
+/**
+ * Archive a node and everything beneath it, as the card's archive button does:
+ * the subtree leaves the canvas as one archive entry, which restores whole, and
+ * every terminal in it is shut down. The root cannot be archived.
+ */
+export interface ScriptArchiveMessage {
+  type: 'script-archive'
+  seq: number
+  nodeId: NodeId
+}
+
+/**
+ * Put a node, with its subtree, under `newParentId`. A new parent that is the
+ * node or beneath it is refused, since that would make a cycle.
+ */
+export interface ScriptReparentMessage {
+  type: 'script-reparent'
+  seq: number
+  nodeId: NodeId
+  newParentId: NodeId
+}
+
+/** Set one card's position. Its children stay where they are. */
+export interface ScriptMoveMessage {
+  type: 'script-move'
+  seq: number
+  nodeId: NodeId
+  x: number
+  y: number
+}
+
 export type ScriptMessage =
   | ScriptModEmitMessage
   | ScriptHelloMessage
@@ -2261,6 +2334,13 @@ export type ScriptMessage =
   | ScriptFireEventMessage
   | ScriptGetLocationMessage
   | ScriptNotifyMessage
+  | ScriptAddMarkdownMessage
+  | ScriptSetMarkdownMessage
+  | ScriptAddAutomationMessage
+  | ScriptUpdateAutomationMessage
+  | ScriptArchiveMessage
+  | ScriptReparentMessage
+  | ScriptMoveMessage
 
 // --- Script socket responses ---
 
@@ -2348,8 +2428,38 @@ export interface ScriptNotifyResult {
   reached: boolean
 }
 
+/** A card a script created: its id, or why none was made. */
+export interface ScriptAddCardResult {
+  type: 'script-add-markdown-result' | 'script-add-automation-result'
+  seq: number
+  /** Absent on error. */
+  nodeId?: NodeId
+  error?: string
+}
+
+/** A card a script edited or moved. `error` names why nothing changed. */
+export interface ScriptEditCardResult {
+  type: 'script-set-markdown-result' | 'script-update-automation-result' | 'script-reparent-result' | 'script-move-result'
+  seq: number
+  ok: boolean
+  error?: string
+}
+
+/** A node a script archived, or why it was not. */
+export interface ScriptArchiveResult {
+  type: 'script-archive-result'
+  seq: number
+  ok: boolean
+  /** How many nodes left the canvas: the node and its subtree. Absent on error. */
+  archived?: number
+  error?: string
+}
+
 export type ScriptResponse =
   | ScriptModEmitResult
+  | ScriptAddCardResult
+  | ScriptEditCardResult
+  | ScriptArchiveResult
   | ScriptHelloResult
   | ScriptGetAncestorsResult
   | ScriptGetNodeResult

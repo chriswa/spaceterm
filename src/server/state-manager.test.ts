@@ -1075,6 +1075,37 @@ describe('node mutations broadcast their change', () => {
   })
 })
 
+describe('reparentNode', () => {
+  it('moves the node under the new parent', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'a')
+    createTerminal(sm, 'b')
+    sm.reparentNode(nid('b'), nid('a'))
+    expect(sm.getNode(nid('b'))?.parentId).toBe('a')
+  })
+
+  it('refuses a parent beneath the node, which would make a cycle', () => {
+    const { sm, updates } = harness()
+    createTerminal(sm, 'a')
+    const child = sm.createMarkdown(nid('a'), 0, 0, 'child')
+    const grandchild = sm.createMarkdown(child.id, 0, 0, 'grandchild')
+    updates.length = 0
+
+    sm.reparentNode(nid('a'), grandchild.id)
+    sm.reparentNode(nid('a'), nid('a'))
+
+    expect(sm.getNode(nid('a'))?.parentId).toBe(ROOT_NODE_ID)
+    expect(updates).toEqual([])
+  })
+
+  it('refuses a parent that does not exist', () => {
+    const { sm } = harness()
+    createTerminal(sm, 'a')
+    sm.reparentNode(nid('a'), nid('ghost'))
+    expect(sm.getNode(nid('a'))?.parentId).toBe(ROOT_NODE_ID)
+  })
+})
+
 describe('getNearestTerminalAncestor', () => {
   it('skips intermediate non-terminal nodes', () => {
     const { sm } = harness()

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseTrigger, triggerLine, formatLocalTime, isAutomationRun } from './automation'
+import { parseTrigger, parseAutomationPatch, triggerLine, formatLocalTime, isAutomationRun } from './automation'
 import { lookupIn } from './node-ancestry'
 import type { NodeData } from './state'
 
@@ -21,6 +21,24 @@ describe('parseTrigger', () => {
     expect(parseTrigger('custom_').kind).toBe('invalid')
     expect(parseTrigger('custom_has space').kind).toBe('invalid')
     expect(parseTrigger('61 * * * *').kind).toBe('invalid')
+  })
+})
+
+describe('parseAutomationPatch', () => {
+  it('keeps only the patch fields that were given', () => {
+    expect(parseAutomationPatch({ trigger: 'custom_x', enabled: true, ...{ queue: [] } }))
+      .toEqual({ ok: true, patch: { trigger: 'custom_x', enabled: true } })
+  })
+
+  it('accepts a trigger that does not parse yet, which the card saves as it is typed', () => {
+    expect(parseAutomationPatch({ trigger: 'every mor' })).toEqual({ ok: true, patch: { trigger: 'every mor' } })
+  })
+
+  it('names the field with the wrong type', () => {
+    expect(parseAutomationPatch({ trigger: 5 })).toEqual({ ok: false, error: 'trigger must be a string' })
+    expect(parseAutomationPatch({ overlap: 'sometimes' })).toEqual({ ok: false, error: 'unknown overlap sometimes' })
+    expect(parseAutomationPatch({ prompt: null })).toEqual({ ok: false, error: 'prompt must be a string' })
+    expect(parseAutomationPatch({ enabled: 'true' })).toEqual({ ok: false, error: 'enabled must be a boolean' })
   })
 })
 

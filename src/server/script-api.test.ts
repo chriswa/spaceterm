@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { ScriptApi, type ScriptConnection, type ScriptHost, type TranscriptLocation } from './script-api'
+import { ScriptApi, type CardPosition, type ScriptConnection, type ScriptHost, type TranscriptLocation } from './script-api'
 import { SCRIPT_EVENTS, SCRIPT_PROTOCOL_VERSION, MIN_SCRIPT_PROTOCOL_VERSION } from '../shared/protocol'
 import type { ScriptMessage } from '../shared/protocol'
 import type { ModCapability } from '../shared/mod-manifest'
 import type { Located } from './location-broker'
 import type { IncomingAutomationEvent } from './automation-event-log'
+import type { AutomationPatch } from '../shared/automation'
 import type { NodeData, TerminalNodeData } from '../shared/state'
 import { asNodeId, asPtySessionId, ROOT_NODE_ID, type NodeId, type PtySessionId } from '../shared/ids'
 
@@ -33,6 +34,11 @@ function terminal(overrides: Omit<Partial<TerminalNodeData>, 'id'> & { id: strin
     ...rest,
     id: nid(id)
   } as TerminalNodeData
+}
+
+/** Any non-terminal card, with only the fields these tests read. */
+function card(type: 'markdown' | 'automation' | 'file' | 'title', id: string, overrides: Partial<NodeData> = {}): NodeData {
+  return { type, id: nid(id), parentId: ROOT_NODE_ID, x: 0, y: 0, archivedChildren: [], ...overrides } as NodeData
 }
 
 /** Records everything written, and whether the connection was closed. */
@@ -121,6 +127,34 @@ class FakeHost implements ScriptHost {
     this.notifications.push({ nodeId, body })
     return Promise.resolve({ reached: true, outcome: 'sent through Apple' })
   }
+  /** Card writes, in the order the host was asked for them. */
+  readonly cardWrites: Array<
+    | { op: 'add-markdown'; parentId: NodeId; content: string; position: CardPosition | undefined }
+    | { op: 'set-markdown'; nodeId: NodeId; content: string }
+    | { op: 'add-automation'; parentId: NodeId; patch: AutomationPatch; position: CardPosition | undefined }
+    | { op: 'update-automation'; nodeId: NodeId; patch: AutomationPatch }
+    | { op: 'archive'; nodeId: NodeId }
+    | { op: 'reparent'; nodeId: NodeId; newParentId: NodeId }
+    | { op: 'move'; nodeId: NodeId; position: CardPosition }
+  > = []
+  addMarkdown(parentId: NodeId, content: string, position: CardPosition | undefined): NodeId {
+    this.cardWrites.push({ op: 'add-markdown', parentId, content, position })
+    return nid('new-markdown')
+  }
+  setMarkdown(nodeId: NodeId, content: string): void { this.cardWrites.push({ op: 'set-markdown', nodeId, content }) }
+  addAutomation(parentId: NodeId, patch: AutomationPatch, position: CardPosition | undefined): NodeId {
+    this.cardWrites.push({ op: 'add-automation', parentId, patch, position })
+    return nid('new-automation')
+  }
+  updateAutomation(nodeId: NodeId, patch: AutomationPatch): void { this.cardWrites.push({ op: 'update-automation', nodeId, patch }) }
+  /** What `archive` reports as the subtree's size. */
+  archivedCount = 1
+  archive(nodeId: NodeId): number {
+    this.cardWrites.push({ op: 'archive', nodeId })
+    return this.archivedCount
+  }
+  reparent(nodeId: NodeId, newParentId: NodeId): void { this.cardWrites.push({ op: 'reparent', nodeId, newParentId }) }
+  move(nodeId: NodeId, position: CardPosition): void { this.cardWrites.push({ op: 'move', nodeId, position }) }
   log(line: string): void { this.logs.push(line) }
 }
 
@@ -613,6 +647,248 @@ describe('script-notify', () => {
   })
 })
 
+describe('script-add-markdown', () => {
+  it('creates the card under its parent and replies with its id', () => {
+    const h = harness((host) => { host.add(terminal({ id: 'agent' })) })
+    h.send({ type: 'script-add-markdown', seq: 3, parentId: nid('agent'), content: '# Plan' })
+    expect(h.host.cardWrites).toEqual([{ op: 'add-markdown', parentId: nid('agent'), content: '# Plan', position: undefined }])
+    expect(h.conn.only).toEqual({ type: 'script-add-markdown-result', seq: 3, nodeId: nid('new-markdown') })
+    expect(h.conn.closed).toBe(true)
+  })
+
+  it('accepts the root as a parent', () => {
+    const h = harness()
+    h.send({ type: 'script-add-markdown', seq: 1, parentId: ROOT_NODE_ID, content: '' })
+    expect(h.conn.only.nodeId).toBe(nid('new-markdown'))
+  })
+
+  it('passes an explicit position on', () => {
+    const h = harness()
+    h.send({ type: 'script-add-markdown', seq: 1, parentId: ROOT_NODE_ID, content: 'x', x: 10, y: -20 })
+    expect(h.host.cardWrites[0]).toMatchObject({ position: { x: 10, y: -20 } })
+  })
+
+  it('refuses half a position rather than guessing the other coordinate', () => {
+    const h = harness()
+    h.send({ type: 'script-add-markdown', seq: 1, parentId: ROOT_NODE_ID, content: 'x', x: 10 })
+    expect(h.host.cardWrites).toEqual([])
+    expect(h.conn.only.error).toContain('x and y')
+  })
+
+  it('refuses a parent that is missing or a generated card', () => {
+    const h = harness((host) => { host.add(card('markdown', 'meta', { ephemeral: true })) })
+    h.send({ type: 'script-add-markdown', seq: 1, parentId: nid('gone'), content: 'x' })
+    h.send({ type: 'script-add-markdown', seq: 2, parentId: nid('meta'), content: 'x' })
+    expect(h.host.cardWrites).toEqual([])
+    expect(h.conn.sent.map((m) => m.error)).toEqual(['unknown-node', 'generated-card'])
+  })
+
+  it("refuses a file parent, whose card shows the file instead of the content", () => {
+    const h = harness((host) => { host.add(card('file', 'notes')) })
+    h.send({ type: 'script-add-markdown', seq: 1, parentId: nid('notes'), content: 'x' })
+    expect(h.host.cardWrites).toEqual([])
+    expect(h.conn.only).toEqual({ type: 'script-add-markdown-result', seq: 1, error: 'parent-is-a-file' })
+  })
+
+  it('refuses content that is not a string', () => {
+    const h = harness()
+    h.send({ type: 'script-add-markdown', seq: 1, parentId: ROOT_NODE_ID, content: 42 } as unknown as ScriptMessage)
+    expect(h.host.cardWrites).toEqual([])
+    expect(h.conn.only.error).toContain('content')
+  })
+})
+
+describe('script-set-markdown', () => {
+  it("replaces the card's content", () => {
+    const h = harness((host) => { host.add(card('markdown', 'md')) })
+    h.send({ type: 'script-set-markdown', seq: 2, nodeId: nid('md'), content: 'new' })
+    expect(h.host.cardWrites).toEqual([{ op: 'set-markdown', nodeId: nid('md'), content: 'new' }])
+    expect(h.conn.only).toEqual({ type: 'script-set-markdown-result', seq: 2, ok: true })
+  })
+
+  it('distinguishes a missing node, the wrong kind of card, and a generated one', () => {
+    const h = harness((host) => {
+      host.add(card('title', 'heading'))
+      host.add(card('markdown', 'meta', { ephemeral: true }))
+    })
+    for (const nodeId of ['gone', 'heading', 'meta']) {
+      h.send({ type: 'script-set-markdown', seq: 1, nodeId: nid(nodeId), content: 'x' })
+    }
+    expect(h.host.cardWrites).toEqual([])
+    expect(h.conn.sent.map((m) => [m.ok, m.error])).toEqual([
+      [false, 'unknown-node'], [false, 'not-markdown'], [false, 'generated-card'],
+    ])
+  })
+})
+
+describe('script-add-automation', () => {
+  it('creates the card and applies the patch fields given, and nothing else', () => {
+    const h = harness()
+    h.send({ type: 'script-add-automation', seq: 5, parentId: ROOT_NODE_ID, trigger: '0 9 * * 1-5', overlap: 'single', prompt: 'Triage' })
+    expect(h.host.cardWrites).toEqual([{
+      op: 'add-automation', parentId: ROOT_NODE_ID, position: undefined,
+      patch: { trigger: '0 9 * * 1-5', overlap: 'single', prompt: 'Triage' },
+    }])
+    expect(h.conn.only).toEqual({ type: 'script-add-automation-result', seq: 5, nodeId: nid('new-automation') })
+  })
+
+  it("refuses a trigger that does not parse, with the parser's reason, and makes no card", () => {
+    const h = harness()
+    h.send({ type: 'script-add-automation', seq: 1, parentId: ROOT_NODE_ID, trigger: 'custom_has space' })
+    expect(h.host.cardWrites).toEqual([])
+    expect(h.conn.only.error).toBe('invalid trigger: event ids are custom_ followed by letters, digits, _ . : or -')
+  })
+
+  it('accepts an empty trigger, which is a card waiting to be given one', () => {
+    const h = harness()
+    h.send({ type: 'script-add-automation', seq: 1, parentId: ROOT_NODE_ID, trigger: '' })
+    expect(h.conn.only.nodeId).toBe(nid('new-automation'))
+  })
+
+  it('refuses an unknown overlap and a missing parent', () => {
+    const h = harness()
+    h.send({ type: 'script-add-automation', seq: 1, parentId: ROOT_NODE_ID, overlap: 'sometimes' } as unknown as ScriptMessage)
+    h.send({ type: 'script-add-automation', seq: 2, parentId: nid('gone') })
+    expect(h.host.cardWrites).toEqual([])
+    expect(h.conn.sent.map((m) => m.error)).toEqual(['unknown overlap sometimes', 'unknown-node'])
+  })
+})
+
+describe('script-update-automation', () => {
+  it('applies the patch', () => {
+    const h = harness((host) => { host.add(card('automation', 'auto')) })
+    h.send({ type: 'script-update-automation', seq: 7, nodeId: nid('auto'), trigger: 'custom_linear', enabled: true })
+    expect(h.host.cardWrites).toEqual([{ op: 'update-automation', nodeId: nid('auto'), patch: { trigger: 'custom_linear', enabled: true } }])
+    expect(h.conn.only).toEqual({ type: 'script-update-automation-result', seq: 7, ok: true })
+  })
+
+  it('refuses an invalid trigger and a non-boolean enabled, changing nothing', () => {
+    const h = harness((host) => { host.add(card('automation', 'auto')) })
+    h.send({ type: 'script-update-automation', seq: 1, nodeId: nid('auto'), trigger: '61 * * * *' })
+    h.send({ type: 'script-update-automation', seq: 2, nodeId: nid('auto'), enabled: 'yes' } as unknown as ScriptMessage)
+    expect(h.host.cardWrites).toEqual([])
+    expect(h.conn.sent[0].error).toMatch(/^invalid trigger: /)
+    expect(h.conn.sent[1].error).toBe('enabled must be a boolean')
+  })
+
+  it('refuses a node that is not an automation card', () => {
+    const h = harness((host) => { host.add(card('markdown', 'md')) })
+    h.send({ type: 'script-update-automation', seq: 1, nodeId: nid('md'), prompt: 'x' })
+    expect(h.conn.only).toEqual({ type: 'script-update-automation-result', seq: 1, ok: false, error: 'not-an-automation' })
+  })
+})
+
+describe('script-archive', () => {
+  it('archives the node and reports how many nodes went with it', () => {
+    const h = harness((host) => {
+      host.add(card('markdown', 'md'))
+      host.archivedCount = 3
+    })
+    h.send({ type: 'script-archive', seq: 4, nodeId: nid('md') })
+    expect(h.host.cardWrites).toEqual([{ op: 'archive', nodeId: nid('md') }])
+    expect(h.conn.only).toEqual({ type: 'script-archive-result', seq: 4, ok: true, archived: 3 })
+  })
+
+  it('refuses the root, a missing node, and a generated card', () => {
+    const h = harness((host) => { host.add(card('markdown', 'meta', { ephemeral: true })) })
+    for (const nodeId of [ROOT_NODE_ID, nid('gone'), nid('meta')]) {
+      h.send({ type: 'script-archive', seq: 1, nodeId })
+    }
+    expect(h.host.cardWrites).toEqual([])
+    expect(h.conn.sent.map((m) => [m.ok, m.error])).toEqual([
+      [false, 'root'], [false, 'unknown-node'], [false, 'generated-card'],
+    ])
+  })
+})
+
+describe('script-reparent', () => {
+  /** a at the top, b under a, c under b; x in another branch. */
+  const tree = (host: FakeHost): void => {
+    host.add(card('title', 'a'))
+    host.add(card('markdown', 'b', { parentId: nid('a') }))
+    host.add(card('markdown', 'c', { parentId: nid('b') }))
+    host.add(card('markdown', 'x'))
+  }
+
+  it('moves the node under the new parent', () => {
+    const h = harness(tree)
+    h.send({ type: 'script-reparent', seq: 6, nodeId: nid('b'), newParentId: nid('x') })
+    expect(h.host.cardWrites).toEqual([{ op: 'reparent', nodeId: nid('b'), newParentId: nid('x') }])
+    expect(h.conn.only).toEqual({ type: 'script-reparent-result', seq: 6, ok: true })
+  })
+
+  it('accepts the root as the new parent', () => {
+    const h = harness(tree)
+    h.send({ type: 'script-reparent', seq: 1, nodeId: nid('c'), newParentId: ROOT_NODE_ID })
+    expect(h.host.cardWrites).toEqual([{ op: 'reparent', nodeId: nid('c'), newParentId: ROOT_NODE_ID }])
+  })
+
+  it('refuses the node itself and anything beneath it, which would make a cycle', () => {
+    // An immediate child too: the canvas swaps the two when a card is dropped
+    // on its child, but a script asking for a reparent gets a reparent or nothing.
+    const h = harness(tree)
+    for (const target of ['a', 'b', 'c']) {
+      h.send({ type: 'script-reparent', seq: 1, nodeId: nid('a'), newParentId: nid(target) })
+    }
+    expect(h.host.cardWrites).toEqual([])
+    expect(h.conn.sent.map((m) => m.error)).toEqual(['would-create-cycle', 'would-create-cycle', 'would-create-cycle'])
+  })
+
+  it('answers ok without a write when the node is already under that parent', () => {
+    const h = harness(tree)
+    h.send({ type: 'script-reparent', seq: 1, nodeId: nid('c'), newParentId: nid('b') })
+    expect(h.host.cardWrites).toEqual([])
+    expect(h.conn.only.ok).toBe(true)
+  })
+
+  it('names which end is wrong: the node or the new parent', () => {
+    const h = harness((host) => {
+      tree(host)
+      host.add(card('markdown', 'meta', { ephemeral: true }))
+    })
+    const cases: Array<[string, string]> = [
+      ['gone', 'x'], ['meta', 'x'], ['root', 'x'], ['b', 'gone'], ['b', 'meta'],
+    ]
+    for (const [nodeId, newParentId] of cases) {
+      h.send({ type: 'script-reparent', seq: 1, nodeId: nid(nodeId), newParentId: nid(newParentId) })
+    }
+    expect(h.host.cardWrites).toEqual([])
+    expect(h.conn.sent.map((m) => m.error)).toEqual([
+      'unknown-node', 'generated-card', 'root', 'unknown-parent', 'generated-parent',
+    ])
+  })
+})
+
+describe('script-move', () => {
+  it("sets the card's position", () => {
+    const h = harness((host) => { host.add(card('markdown', 'md')) })
+    h.send({ type: 'script-move', seq: 8, nodeId: nid('md'), x: -120, y: 40.5 })
+    expect(h.host.cardWrites).toEqual([{ op: 'move', nodeId: nid('md'), position: { x: -120, y: 40.5 } }])
+    expect(h.conn.only).toEqual({ type: 'script-move-result', seq: 8, ok: true })
+  })
+
+  it('moves a generated card, whose owner remembers where it was put', () => {
+    const h = harness((host) => { host.add(card('markdown', 'meta', { ephemeral: true })) })
+    h.send({ type: 'script-move', seq: 1, nodeId: nid('meta'), x: 1, y: 2 })
+    expect(h.conn.only.ok).toBe(true)
+  })
+
+  it('refuses a missing coordinate, a non-number, the root and a missing node', () => {
+    const h = harness()
+    h.send({ type: 'script-move', seq: 1, nodeId: nid('md'), x: 1 } as unknown as ScriptMessage)
+    h.send({ type: 'script-move', seq: 2, nodeId: nid('md'), x: 1, y: Number.NaN })
+    h.send({ type: 'script-move', seq: 3, nodeId: ROOT_NODE_ID, x: 1, y: 2 })
+    h.send({ type: 'script-move', seq: 4, nodeId: nid('gone'), x: 1, y: 2 })
+    expect(h.host.cardWrites).toEqual([])
+    expect(h.conn.sent.map((m) => m.error)).toEqual([
+      'x and y must both be given, as finite numbers',
+      'x and y must both be given, as finite numbers',
+      'root',
+      'unknown-node',
+    ])
+  })
+})
+
 describe('an unknown message type', () => {
   it('is answered with an error rather than dropped', () => {
     const h = harness()
@@ -796,6 +1072,54 @@ describe('capability scoping', () => {
       eventId: 'custom_x', payload: 1, source: 'chatter',
       outcome: { kind: 'rejected', error: expect.stringContaining('fire-events') }
     }])
+  })
+
+  it('gates every card write on write-nodes', () => {
+    const h = harness((host) => {
+      host.manifests.set('reader', ['read-nodes'])
+      host.add(card('markdown', 'md'))
+      host.add(card('automation', 'auto'))
+    })
+    const writes: ScriptMessage[] = [
+      { type: 'script-add-markdown', seq: 2, parentId: ROOT_NODE_ID, content: 'x' },
+      { type: 'script-set-markdown', seq: 3, nodeId: nid('md'), content: 'x' },
+      { type: 'script-add-automation', seq: 4, parentId: ROOT_NODE_ID },
+      { type: 'script-update-automation', seq: 5, nodeId: nid('auto'), enabled: true },
+    ]
+    for (const msg of writes) {
+      const conn = new FakeConnection()
+      h.api.handle(conn, { type: 'script-hello', seq: 1, protocolVersion: SCRIPT_PROTOCOL_VERSION, modId: 'reader' })
+      conn.sent.length = 0
+      h.api.handle(conn, msg)
+      expect(conn.only).toMatchObject({ type: 'error', error: expect.stringContaining('write-nodes') })
+    }
+    expect(h.host.cardWrites).toEqual([])
+  })
+
+  it('gates reparent and move on write-nodes, and archive on archive-nodes alone', () => {
+    const h = harness((host) => {
+      host.manifests.set('writer', ['write-nodes'])
+      host.manifests.set('archiver', ['archive-nodes'])
+      host.add(card('markdown', 'md'))
+    })
+    const ask = (modId: string, msg: ScriptMessage): Record<string, unknown> => {
+      const conn = new FakeConnection()
+      h.api.handle(conn, { type: 'script-hello', seq: 1, protocolVersion: SCRIPT_PROTOCOL_VERSION, modId })
+      conn.sent.length = 0
+      h.api.handle(conn, msg)
+      return conn.only
+    }
+    const archive: ScriptMessage = { type: 'script-archive', seq: 2, nodeId: nid('md') }
+    const reparent: ScriptMessage = { type: 'script-reparent', seq: 3, nodeId: nid('md'), newParentId: ROOT_NODE_ID }
+    const move: ScriptMessage = { type: 'script-move', seq: 4, nodeId: nid('md'), x: 0, y: 0 }
+
+    expect(ask('writer', archive)).toMatchObject({ type: 'error', error: expect.stringContaining('archive-nodes') })
+    expect(ask('archiver', reparent)).toMatchObject({ type: 'error', error: expect.stringContaining('write-nodes') })
+    expect(ask('archiver', move)).toMatchObject({ type: 'error', error: expect.stringContaining('write-nodes') })
+    expect(h.host.cardWrites).toEqual([])
+
+    expect(ask('archiver', archive)).toMatchObject({ type: 'script-archive-result', ok: true })
+    expect(ask('writer', move)).toMatchObject({ type: 'script-move-result', ok: true })
   })
 
   it('never refuses the handshake itself', () => {
