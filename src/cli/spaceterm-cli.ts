@@ -13,6 +13,13 @@
  *   spaceterm-cli show-images <path> [--caption c] ... [--summary s]  # pictures in Control's transcript
  *   spaceterm-cli fire <custom_event-id> [json-payload]  # trigger automation cards listening for it
  *   spaceterm-cli location                               # the user's position, from their phone or Mac
+ *   spaceterm-cli add-markdown <parent-id> <content|-> [--x X --y Y]    # new markdown card; prints its id
+ *   spaceterm-cli set-markdown <node-id> <content|->                    # replace a markdown card's content
+ *   spaceterm-cli add-automation <parent-id> [--trigger T] [--overlap O] [--prompt P|-] [--enabled B] [--x X --y Y]
+ *   spaceterm-cli update-automation <node-id> [--trigger T] [--overlap O] [--prompt P|-] [--enabled B]
+ *   spaceterm-cli archive <node-id>                                    # archive a card and its whole subtree
+ *   spaceterm-cli reparent <node-id> <new-parent-id>                   # put a card (and subtree) under another
+ *   spaceterm-cli move <node-id> <x> <y>                               # set one card's position
  *
  * Environment:
  *   SPACETERM_NODE_ID   — set automatically in PTY sessions
@@ -28,6 +35,7 @@ import {
   type ScriptEvent,
 } from '../shared/protocol'
 import { probeCapabilities, formatCapabilityReport } from '../server/capabilities'
+import { AUTOMATION_OVERLAPS } from '../shared/automation'
 import { checkImages } from '../claude-code-plugin/mcp-server/show-user-images'
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -63,6 +71,11 @@ function oneshot(msg: Record<string, unknown>, replyType: string): Promise<Serve
           if (parsed.type === replyType) {
             resolve(parsed)
             socket.destroy()
+          } else if (parsed.type === 'error') {
+            // A refusal before dispatch: a capability the mod lacks, or a
+            // message this server is too old to know.
+            reject(new Error(parsed.error ?? 'server refused the message'))
+            socket.destroy()
           }
         } catch { /* ignore malformed */ }
       }
@@ -87,6 +100,64 @@ function fatal(msg: string): never {
   process.stderr.write(`Error: ${msg}\n`)
   process.exit(1)
 }
+
+/**
+ * Split arguments into positionals and `--name value` options. Only a name in
+ * `names` is an option, so markdown that starts with `---` stays a positional.
+ */
+function parseOptions(rest: string[], names: readonly string[]): { positional: string[]; options: Map<string, string> } {
+  const positional: string[] = []
+  const options = new Map<string, string>()
+  for (let i = 0; i < rest.length; i++) {
+    const name = rest[i].startsWith('--') ? rest[i].slice(2) : undefined
+    if (name === undefined || !names.includes(name)) {
+      positional.push(rest[i])
+      continue
+    }
+    if (i + 1 >= rest.length) fatal(`--${name} needs a value`)
+    options.set(name, rest[++i])
+  }
+  return { positional, options }
+}
+
+/** `-` reads stdin to the end, so long markdown need not survive shell quoting. */
+async function textArg(value: string): Promise<string> {
+  if (value !== '-') return value
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer)
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+/** `--x`/`--y` as message fields: both or neither. */
+function positionFields(options: Map<string, string>): { x?: number; y?: number } {
+  const x = options.get('x')
+  const y = options.get('y')
+  if (x === undefined && y === undefined) return {}
+  if (x === undefined || y === undefined) fatal('--x and --y go together')
+  const [nx, ny] = [Number(x), Number(y)]
+  if (!Number.isFinite(nx) || !Number.isFinite(ny)) fatal('--x and --y must be numbers')
+  return { x: nx, y: ny }
+}
+
+/** The automation patch fields named on the command line. The server validates them. */
+async function automationFields(options: Map<string, string>): Promise<Record<string, unknown>> {
+  const fields: Record<string, unknown> = {}
+  const trigger = options.get('trigger')
+  if (trigger !== undefined) fields.trigger = trigger
+  const overlap = options.get('overlap')
+  if (overlap !== undefined) fields.overlap = overlap
+  const prompt = options.get('prompt')
+  if (prompt !== undefined) fields.prompt = await textArg(prompt)
+  const enabled = options.get('enabled')
+  if (enabled !== undefined) {
+    if (enabled !== 'true' && enabled !== 'false') fatal('--enabled is true or false')
+    fields.enabled = enabled === 'true'
+  }
+  return fields
+}
+
+const POSITION_OPTIONS = ['x', 'y'] as const
+const AUTOMATION_OPTIONS = ['trigger', 'overlap', 'prompt', 'enabled'] as const
 
 // ── Commands ─────────────────────────────────────────────────────────
 
@@ -127,6 +198,64 @@ async function forkClaude(nodeId: string, parentId: string): Promise<void> {
   )
   if (reply.error) fatal(reply.error as string)
   process.stdout.write(JSON.stringify({ nodeId: reply.nodeId }) + '\n')
+}
+
+async function addMarkdown(parentId: string, content: string, options: Map<string, string>): Promise<void> {
+  const reply = await oneshot(
+    { type: 'script-add-markdown', seq: 1, parentId, content: await textArg(content), ...positionFields(options) },
+    'script-add-markdown-result'
+  )
+  if (reply.error) fatal(reply.error)
+  process.stdout.write(`${String(reply.nodeId)}\n`)
+}
+
+async function setMarkdown(nodeId: string, content: string): Promise<void> {
+  const reply = await oneshot(
+    { type: 'script-set-markdown', seq: 1, nodeId, content: await textArg(content) },
+    'script-set-markdown-result'
+  )
+  if (reply.error) fatal(reply.error)
+  process.stdout.write(JSON.stringify({ ok: reply.ok }) + '\n')
+}
+
+async function addAutomation(parentId: string, options: Map<string, string>): Promise<void> {
+  const reply = await oneshot(
+    { type: 'script-add-automation', seq: 1, parentId, ...(await automationFields(options)), ...positionFields(options) },
+    'script-add-automation-result'
+  )
+  if (reply.error) fatal(reply.error)
+  process.stdout.write(`${String(reply.nodeId)}\n`)
+}
+
+async function updateAutomation(nodeId: string, options: Map<string, string>): Promise<void> {
+  const fields = await automationFields(options)
+  if (Object.keys(fields).length === 0) fatal(`nothing to change: give one of ${AUTOMATION_OPTIONS.map((o) => `--${o}`).join(', ')}`)
+  const reply = await oneshot(
+    { type: 'script-update-automation', seq: 1, nodeId, ...fields },
+    'script-update-automation-result'
+  )
+  if (reply.error) fatal(reply.error)
+  process.stdout.write(JSON.stringify({ ok: reply.ok }) + '\n')
+}
+
+async function archive(nodeId: string): Promise<void> {
+  const reply = await oneshot({ type: 'script-archive', seq: 1, nodeId }, 'script-archive-result')
+  if (reply.error) fatal(reply.error)
+  process.stdout.write(JSON.stringify({ ok: reply.ok, archived: reply.archived }) + '\n')
+}
+
+async function reparent(nodeId: string, newParentId: string): Promise<void> {
+  const reply = await oneshot({ type: 'script-reparent', seq: 1, nodeId, newParentId }, 'script-reparent-result')
+  if (reply.error) fatal(reply.error)
+  process.stdout.write(JSON.stringify({ ok: reply.ok }) + '\n')
+}
+
+async function move(nodeId: string, x: string, y: string): Promise<void> {
+  const [nx, ny] = [Number(x), Number(y)]
+  if (x.trim() === '' || y.trim() === '' || !Number.isFinite(nx) || !Number.isFinite(ny)) fatal('<x> and <y> must be numbers')
+  const reply = await oneshot({ type: 'script-move', seq: 1, nodeId, x: nx, y: ny }, 'script-move-result')
+  if (reply.error) fatal(reply.error)
+  process.stdout.write(JSON.stringify({ ok: reply.ok }) + '\n')
 }
 
 /**
@@ -308,6 +437,25 @@ function printUsage(): void {
                                                            Show the user pictures in Control's transcript
   spaceterm-cli fire <custom_event-id> [json-payload]       Trigger automation cards listening for the event
   spaceterm-cli location                                   The user's position, read on their phone or Mac
+  spaceterm-cli add-markdown <parent-id> <content> [--x X --y Y]
+                                                           Add a markdown card; prints its id
+  spaceterm-cli set-markdown <node-id> <content>           Replace a markdown card's content
+  spaceterm-cli add-automation <parent-id> [--trigger T] [--overlap O] [--prompt P] [--enabled true|false] [--x X --y Y]
+                                                           Add an automation card; prints its id
+  spaceterm-cli update-automation <node-id> [--trigger T] [--overlap O] [--prompt P] [--enabled true|false]
+                                                           Change an automation card
+  spaceterm-cli archive <node-id>                          Archive a card with its whole subtree, as the
+                                                           card's archive button does: children go too,
+                                                           terminals in it are shut down, and the subtree
+                                                           restores as one from the archive. Not the root.
+  spaceterm-cli reparent <node-id> <new-parent-id>         Put a card, with its subtree, under another card
+                                                           (or root) without moving it; refuses its own
+                                                           descendants
+  spaceterm-cli move <node-id> <x> <y>                     Set one card's position; its children stay put
+
+  <content> and --prompt read stdin when given as -. A trigger is a cron
+  expression or a custom_ event id; --overlap is ${AUTOMATION_OVERLAPS.join(', ')}.
+  An automation card starts switched off unless given --enabled true.
 
 Events: ${SCRIPT_EVENTS.join(', ')}
 `)
@@ -360,6 +508,48 @@ switch (command) {
 
   case 'location':
     location().catch((err) => fatal(err.message))
+    break
+
+  case 'add-markdown': {
+    const { positional, options } = parseOptions(args.slice(1), POSITION_OPTIONS)
+    if (positional.length !== 2) { printUsage(); process.exit(1) }
+    addMarkdown(positional[0], positional[1], options).catch((err) => fatal(err.message))
+    break
+  }
+
+  case 'set-markdown': {
+    if (args.length !== 3) { printUsage(); process.exit(1) }
+    setMarkdown(args[1], args[2]).catch((err) => fatal(err.message))
+    break
+  }
+
+  case 'add-automation': {
+    const { positional, options } = parseOptions(args.slice(1), [...AUTOMATION_OPTIONS, ...POSITION_OPTIONS])
+    if (positional.length !== 1) { printUsage(); process.exit(1) }
+    addAutomation(positional[0], options).catch((err) => fatal(err.message))
+    break
+  }
+
+  case 'update-automation': {
+    const { positional, options } = parseOptions(args.slice(1), AUTOMATION_OPTIONS)
+    if (positional.length !== 1) { printUsage(); process.exit(1) }
+    updateAutomation(positional[0], options).catch((err) => fatal(err.message))
+    break
+  }
+
+  case 'archive':
+    if (args.length !== 2) { printUsage(); process.exit(1) }
+    archive(args[1]).catch((err) => fatal(err.message))
+    break
+
+  case 'reparent':
+    if (args.length !== 3) { printUsage(); process.exit(1) }
+    reparent(args[1], args[2]).catch((err) => fatal(err.message))
+    break
+
+  case 'move':
+    if (args.length !== 4) { printUsage(); process.exit(1) }
+    move(args[1], args[2], args[3]).catch((err) => fatal(err.message))
     break
 
   case 'subscribe': {

@@ -75,3 +75,12 @@ export function findAncestor(
   }
   return undefined
 }
+
+/**
+ * Whether putting `nodeId` under `newParentId` would make a cycle: the new
+ * parent is the node itself or somewhere beneath it. A cycle detaches the
+ * whole loop from the root, so nothing on it is drawn or reachable again.
+ */
+export function wouldCreateCycle(lookup: NodeLookup, nodeId: NodeId, newParentId: NodeId): boolean {
+  return findAncestor(lookup, newParentId, (node) => node.id === nodeId, { includeSelf: true }) !== undefined
+}

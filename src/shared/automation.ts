@@ -88,6 +88,30 @@ export function isAutomationOverlap(value: unknown): value is AutomationOverlap 
 }
 
 /**
+ * Read an automation patch from an untrusted message, keeping only the patch
+ * fields. Checks each field's type, not what a trigger says: the card saves its
+ * trigger field as it is typed, so a half-typed trigger has to be storable.
+ */
+export function parseAutomationPatch(
+  raw: { trigger?: unknown; overlap?: unknown; prompt?: unknown; enabled?: unknown }
+): { ok: true; patch: AutomationPatch } | { ok: false; error: string } {
+  const { trigger, overlap, prompt, enabled } = raw
+  if (trigger !== undefined && typeof trigger !== 'string') return { ok: false, error: 'trigger must be a string' }
+  if (overlap !== undefined && !isAutomationOverlap(overlap)) return { ok: false, error: `unknown overlap ${String(overlap)}` }
+  if (prompt !== undefined && typeof prompt !== 'string') return { ok: false, error: 'prompt must be a string' }
+  if (enabled !== undefined && typeof enabled !== 'boolean') return { ok: false, error: 'enabled must be a boolean' }
+  return {
+    ok: true,
+    patch: {
+      ...(trigger !== undefined ? { trigger } : {}),
+      ...(overlap !== undefined ? { overlap } : {}),
+      ...(prompt !== undefined ? { prompt } : {}),
+      ...(enabled !== undefined ? { enabled } : {}),
+    },
+  }
+}
+
+/**
  * Worded to be read on the closed dropdown, without the others for contrast:
  * how many agents, then what happens to a trigger while one is running. A
  * single agent lasts until it exits (self-terminates, or is archived).

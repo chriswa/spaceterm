@@ -2,6 +2,7 @@ import type { NodeData } from '../../../../shared/state'
 import { COLOR_PRESET_MAP } from './color-presets'
 import type { ColorPreset } from './color-presets'
 import { nodeIdsOf, type NodeId } from '../../../../shared/ids'
+import { lookupIn, wouldCreateCycle } from '../../../../shared/node-ancestry'
 
 /**
  * Collect all descendant IDs of a given node (children, grandchildren, etc.) via BFS.
@@ -134,17 +135,14 @@ export function isImmediateChildOf(
   return !!node && node.parentId === parentId
 }
 
+/**
+ * Whether `nodeId` is `potentialAncestorId` or beneath it: the drop targets a
+ * reparent refuses. The same check the server makes (`wouldCreateCycle`).
+ */
 export function isDescendantOf(
   nodes: Record<string, NodeData>,
   nodeId: NodeId,
   potentialAncestorId: NodeId
 ): boolean {
-  let current = nodeId
-  while (current && current !== 'root') {
-    if (current === potentialAncestorId) return true
-    const node = nodes[current]
-    if (!node) return false
-    current = node.parentId
-  }
-  return false
+  return wouldCreateCycle(lookupIn(nodes), potentialAncestorId, nodeId)
 }

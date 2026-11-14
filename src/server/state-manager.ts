@@ -41,7 +41,7 @@ import {
 import type { AgentType } from '../shared/agent-type'
 import type { AgentEffort } from '../shared/agent-effort'
 import { isDisposable } from '../shared/node-utils'
-import { findAncestor, lookupIn } from '../shared/node-ancestry'
+import { findAncestor, lookupIn, wouldCreateCycle } from '../shared/node-ancestry'
 import { MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH } from '../shared/node-size'
 
 /**
@@ -981,6 +981,16 @@ export class StateManager {
     // parentId would already be on disk pointing at nothing.
     const newParent = this.state.nodes[newParentId]
     if (newParent && this.refuseEphemeral(newParent, 'reparent-onto')) return
+    // Checked here rather than trusted from the caller: a dangling parentId or
+    // a cycle takes the node, and everything under it, off the canvas.
+    if (!newParent && newParentId !== ROOT_NODE_ID) {
+      serverLog(`[reparent] Refused ${nodeId}: unknown parent ${newParentId}`)
+      return
+    }
+    if (wouldCreateCycle(lookupIn(this.state.nodes), nodeId, newParentId)) {
+      serverLog(`[reparent] Refused ${nodeId} onto ${newParentId}: it is beneath ${nodeId}`)
+      return
+    }
     node.parentId = newParentId
     this.onNodeUpdate(nodeId, { parentId: newParentId })
     this.schedulePersist()
