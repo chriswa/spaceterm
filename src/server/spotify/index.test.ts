@@ -32,7 +32,9 @@ function fakeSpotify(opts: { devices?: FakeDevice[]; active?: string; playing?: 
     clientId: 'c'.repeat(32), refreshToken: 'refresh-1', accessToken: 'access-1', expiresAt: Date.now() + 3_600_000, scope: 'user-modify-playback-state',
   }
   const store: TokenStore = { read: () => saved, write: (t) => { saved = t } }
-  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json; charset=utf-8' } })
+  /** What Spotify now answers a command with: 200 and a snapshot id as plain text, rather than 204. */
+  const snapshot = () => new Response('y-870dyliBB4cvLxlbrx', { status: 200, headers: { 'Content-Type': 'text/plain' } })
   const empty = () => new Response(null, { status: 204 })
   const deviceJson = (d: FakeDevice) => ({ ...d, is_active: d.id === active, supports_volume: d.supports_volume ?? true })
 
@@ -71,10 +73,10 @@ function fakeSpotify(opts: { devices?: FakeDevice[]; active?: string; playing?: 
       case 'PUT /v1/me/player/pause':
         if (!playing) return json({ error: { status: 403, message: 'Player command failed: Restriction violated' } }, 403)
         playing = false
-        return empty()
+        return snapshot()
       case 'POST /v1/me/player/next':
         track = (track + 1) % TRACKS.length
-        return empty()
+        return snapshot()
       case 'PUT /v1/me/player/volume':
         if (current) current.volume_percent = Number(url.searchParams.get('volume_percent'))
         return empty()

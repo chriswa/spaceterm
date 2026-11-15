@@ -391,7 +391,8 @@ export class Spotify {
         } catch { /* not JSON */ }
         throw new SpotifyApiError(res.status, reason)
       }
-      return text ? JSON.parse(text) as T : undefined
+      // Commands such as pause and next answer 200 with a bare snapshot id, not JSON; only the reads have a body to parse.
+      return text && /json/i.test(res.headers.get('Content-Type') ?? '') ? JSON.parse(text) as T : undefined
     }
   }
 }
