@@ -120,8 +120,8 @@ export function renderAgentDetails(
   if (agent.takesSideQuestions === false) lines.push(`  ${NO_SIDE_QUESTIONS}`)
   if (agent.startedAt) lines.push(`  started: ${ago(now - agent.startedAt)} ago`)
   if (agent.messagingId) lines.push(`  messaging id: ${agent.messagingId}`)
-  const request = lastUserMessage(messages)
-  if (request) lines.push(`  last asked: ${clip(request, DETAILS_LAST_REQUEST_CHARS)}`)
+  const request = lastAsked(messages)
+  if (request) lines.push(`  last asked: ${request}`)
   const reply = lastAgentProse(messages)
   if (reply) lines.push(`  last said: ${clip(reply, DETAILS_LAST_MESSAGE_CHARS)}`)
   return lines.join('\n')
@@ -265,6 +265,12 @@ function lastUserMessage(messages: readonly TranscriptMessage[]): string | undef
     if (messages[i].role === 'user' && !messages[i].text.trimStart().startsWith('<')) return messages[i].text
   }
   return undefined
+}
+
+/** What the agent was last set to do, flattened and clipped to be quoted. */
+export function lastAsked(messages: readonly TranscriptMessage[]): string | undefined {
+  const request = lastUserMessage(messages)
+  return request ? clip(request, DETAILS_LAST_REQUEST_CHARS) : undefined
 }
 
 function clip(text: string, chars: number): string {

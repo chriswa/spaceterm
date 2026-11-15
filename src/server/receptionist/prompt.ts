@@ -134,9 +134,7 @@ export type ReceptionistEvent = { failures?: number } & (
    * `describeBlock`'s; `userHasIt` when the user has been typing into it themselves.
    */
   | { kind: 'agent-blocked'; agent: string; nodeId: NodeId; since?: number; state: BlockedState; waitingFor: string; lastSaid: string; userHasIt?: true }
-  /** A watched agent's session exited: it ended itself, or was ended. `archived` unless it failed to launch and stayed on the canvas. */
-  /** `cache`: as the agent was when it ended, to say whether ask_agent can still reach it when the news is told. */
-  | { kind: 'agent-ended'; agent: string; archived: boolean; lastSaid: string; cache: EndedCache }
+  | AgentEndedEvent
   /** `beforeUserSpoke`: asked before the user's latest words, which may have changed what they want. */
   /** `ended`: the agent has ended, and was asked from its cache without being brought back. */
   | { kind: 'agent-answer'; agent: string; question: string; answer: string; ended?: true; beforeUserSpoke?: true }
@@ -151,6 +149,38 @@ export type ReceptionistEvent = { failures?: number } & (
   | { kind: 'phone-install'; result: 'download'; sentToPhone: boolean }
   | { kind: 'phone-install'; result: 'failed'; message: string }
 )
+
+/**
+ * A watched agent's session exited: it ended itself, or was ended. `archived`
+ * unless it failed to launch and stayed on the canvas. `cache`: as the agent
+ * was when it ended, to say whether ask_agent can still reach it when the news
+ * is told. `lastAsked`: what it was last set to do.
+ *
+ * `finalUpdate`: what a copy of it said, asked as it ended what it got done
+ * (`FINAL_UPDATE_QUESTION`). An agent told to commit and self-terminate often
+ * ends its last turn on tool calls alone, so its last words are a report on
+ * some earlier task, or nothing, and Control told the user it could not say
+ * whether the commit was made. Its copy has seen what those tool calls
+ * returned, so it can.
+ */
+export interface AgentEndedEvent {
+  kind: 'agent-ended'
+  agent: string
+  archived: boolean
+  lastSaid: string
+  cache: EndedCache
+  lastAsked?: string
+  finalUpdate?: string
+}
+
+/** Asked of a watched agent as it ends, while its cache is warm; see `AgentEndedEvent.finalUpdate`. */
+export const FINAL_UPDATE_QUESTION = 'Your session has just ended. In one or two short sentences, say what you got done in your last turn, ' +
+  'and say plainly if anything you were last asked to do, such as committing or pushing, did not get done.'
+
+/** Follows an ended agent's news when there is no final update to tell: what Control does before saying it does not know. */
+export const ENDED_UNKNOWN = '[Before you tell the user whether it did what it was last asked, find out: ask it with ask_agent while its cache is warm, ' +
+  'or else search its transcript with read, since a plain read leaves out the tool calls that show what it did. ' +
+  'Never tell the user you cannot say what it did without having looked.]'
 
 /** The most captions an `agent-images` event lists, and the most of each. */
 export const IMAGE_CAPTIONS_TOLD = 8
@@ -181,6 +211,18 @@ const USER_HAS_IT = 'The user has been working with it directly and may be at it
 /** Said of a side question's answer that was asked before the user last spoke. */
 export const ASKED_BEFORE_USER_SPOKE = 'You asked this before the user last spoke: weigh it against what they have said since, and leave it unmentioned if it no longer matters.'
 
+function renderEnded(event: AgentEndedEvent): string {
+  const ended = `${event.agent} has ended: its session closed, ${event.archived ? 'and its surface went into the archive' : 'leaving its surface dead on the canvas'}. ` +
+    `It is no longer live, so speak of it in plain words; read still takes its token${event.archived ? ', and unarchive_agent brings it back' : ''}. ` +
+    endedCacheWords(event.cache, Date.now())
+  if (event.finalUpdate) {
+    return `${ended} Asked as it ended what it got done in its last turn, a copy of it answered: ${event.finalUpdate} ${ENDED_ANSWER_REMINDER}`
+  }
+  const asked = event.lastAsked ? ` It was last asked: "${event.lastAsked}".` : ''
+  const said = event.lastSaid ? ` It last said: ${event.lastSaid}` : ` It wrote nothing${event.lastAsked ? ' after that' : ''}.`
+  return `${ended}${asked}${said} ${ENDED_UNKNOWN}`
+}
+
 export function renderEvent(event: ReceptionistEvent): string {
   switch (event.kind) {
     case 'agent-stopped':
@@ -190,9 +232,7 @@ export function renderEvent(event: ReceptionistEvent): string {
         `It last said: ${event.lastSaid || '(nothing yet)'} ${BLOCKED_REMINDERS[event.state]}` +
         `${event.userHasIt ? ` ${USER_HAS_IT}` : ''}`
     case 'agent-ended':
-      return `${event.agent} has ended: its session closed, ${event.archived ? 'and its surface went into the archive' : 'leaving its surface dead on the canvas'}. ` +
-        `It is no longer live, so speak of it in plain words; read still takes its token${event.archived ? ', and unarchive_agent brings it back' : ''}. ` +
-        `${endedCacheWords(event.cache, Date.now())} It last said: ${event.lastSaid || '(nothing)'}`
+      return renderEnded(event)
     case 'agent-answer':
       return `${event.agent} was asked "${event.question}" and answered: ${event.answer} ${event.ended ? ENDED_ANSWER_REMINDER : ASK_AGENT_REMINDER}${event.beforeUserSpoke ? ` ${ASKED_BEFORE_USER_SPOKE}` : ''}`
     case 'agent-answer-failed':

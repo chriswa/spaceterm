@@ -21,8 +21,8 @@ import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
 import type { EndedAnswer } from '../ended-side-question'
 import type { SpotifyCommand, SpotifyOutcome } from '../spotify'
 import {
-  FORMAT_REMINDER, HANDOVER_CHARS, IMAGE_CAPTION_CHARS, IMAGE_CAPTIONS_TOLD, HANDOVER_HEADING, HANDOVER_PROMPT, mergeNews, RECEPTIONIST_SYSTEM_PROMPT, renderEvent, renderTurnBody,
-  type BlockedAgent, type ReceptionistEvent, type ReturnNews,
+  FINAL_UPDATE_QUESTION, FORMAT_REMINDER, HANDOVER_CHARS, IMAGE_CAPTION_CHARS, IMAGE_CAPTIONS_TOLD, HANDOVER_HEADING, HANDOVER_PROMPT, mergeNews, RECEPTIONIST_SYSTEM_PROMPT, renderEvent, renderTurnBody,
+  type AgentEndedEvent, type BlockedAgent, type ReceptionistEvent, type ReturnNews,
 } from './prompt'
 import {
   CONVERSATION_WORDS, decideInterruption, HANG_ON, lastWords, splitAtOffset, type InterruptionContext, type InterruptionVerdict,
@@ -42,7 +42,7 @@ import { TURN_END_THRESHOLD } from './turn-end'
 import { COMPACT_ABOVE_TOKENS, compactionTrace, type Compaction } from './compaction'
 import { describeBlock, isBlocked } from './blocked'
 import {
-  cacheWords, capMessage, endedAskable, endedCacheWords, NO_SIDE_QUESTIONS, readAgent, renderAgentDetails, renderRoster, STATE_WORDS, type RosterAgent,
+  cacheWords, capMessage, endedAskable, endedCacheWords, lastAsked, NO_SIDE_QUESTIONS, readAgent, renderAgentDetails, renderRoster, STATE_WORDS, type RosterAgent,
 } from './roster'
 
 /**
@@ -1699,12 +1699,52 @@ export class Receptionist {
     this.events.drop(isItsStop)
     if (!monitored && !stopUntold) return
     const token = agentToken(handle, this.deps.names.get(nodeId)?.name)
-    const lastSaid = agent.transcriptPath ? lastAgentProse(this.deps.readTranscript(agent.transcriptPath)) : ''
+    const messages = agent.transcriptPath ? this.deps.readTranscript(agent.transcriptPath) : []
+    const lastSaid = lastAgentProse(messages)
     if (monitored) this.trace('fired', `Watch fired: ${token} ended`, lastSaid)
     const { claudeSessionId, cwd, cacheWarmUntil, cacheWarmTokens } = agent
     const cache = { claudeSessionId, cwd, cacheWarmUntil, cacheWarmTokens }
-    this.events.push({ kind: 'agent-ended', agent: token, archived, lastSaid: capMessage(lastSaid), cache })
+    const request = lastAsked(messages)
+    const ending: AgentEndedEvent = {
+      kind: 'agent-ended', agent: token, archived, lastSaid: capMessage(lastSaid), cache, ...(request ? { lastAsked: request } : {}),
+    }
+    if (endedAskable(agent, Date.now())) {
+      this.askFinalUpdate(ending, agent)
+      return
+    }
+    this.events.push(ending)
     this.maybeSpeakUp()
+  }
+
+  /**
+   * Ask an agent that has just ended, from its still-warm cache, what it got
+   * done, and tell its end only with the answer: see
+   * `AgentEndedEvent.finalUpdate`. Held on disk as a side question until
+   * then, so a restart asks it again. If no answer comes, the end is told
+   * without one, which says how to find out.
+   */
+  private askFinalUpdate(ending: AgentEndedEvent, agent: RosterAgent, tries = 1): void {
+    const asking: Asking = { id: randomUUID(), nodeId: agent.nodeId, question: FINAL_UPDATE_QUESTION, ended: true, tries, ending }
+    this.events.asked(asking)
+    void this.deps.askEnded(agent, sideQuestionPrompt(FINAL_UPDATE_QUESTION)).then(({ result, cacheWarmUntil }) => {
+      const warmer = this.endedCacheTouched(agent.nodeId, cacheWarmUntil)
+      const usage = result.ok ? result.usage : undefined
+      const cache = usage ? { read: usage.cache_read_input_tokens ?? 0, written: usage.cache_creation_input_tokens ?? 0, uncached: usage.input_tokens ?? 0 } : undefined
+      this.deps.log({ event: 'final-update', nodeId: agent.nodeId, result, ...(cache ? { cache } : {}) })
+      if (!result.ok) serverLog(`[receptionist] final update from ${ending.agent} failed: ${result.reason}${result.detail ? ` ${result.detail}` : ''}`)
+      const told = { ...ending, ...(warmer ? { cache: { ...ending.cache, cacheWarmUntil: warmer } } : {}) }
+      this.events.push(result.ok ? { ...told, finalUpdate: result.text } : told)
+      this.events.answered(asking.id)
+      this.maybeSpeakUp()
+    })
+  }
+
+  /** A question read an ended agent's cache, which keeps it warm for longer. Returns the new time it goes cold, if later. */
+  private endedCacheTouched(nodeId: NodeId, cacheWarmUntil: number | undefined): number | undefined {
+    const still = this.ended.get(nodeId)
+    if (!still || cacheWarmUntil === undefined || cacheWarmUntil <= (still.agent.cacheWarmUntil ?? 0)) return undefined
+    this.ended.update(nodeId, { ...still.agent, cacheWarmUntil })
+    return cacheWarmUntil
   }
 
   /** Keep an agent that is no longer live among the ended ones; see `ended`. */
@@ -3079,11 +3119,7 @@ export class Receptionist {
     const asking: Asking = { id: randomUUID(), nodeId: agent.nodeId, question, ended: true, tries }
     this.events.asked(asking)
     void this.deps.askEnded(agent, sideQuestionPrompt(question)).then(({ result, cacheWarmUntil }) => {
-      // The question read the cache, which keeps it warm for longer.
-      const still = this.ended.get(agent.nodeId)
-      if (still && cacheWarmUntil !== undefined && cacheWarmUntil > (still.agent.cacheWarmUntil ?? 0)) {
-        this.ended.update(agent.nodeId, { ...still.agent, cacheWarmUntil })
-      }
+      this.endedCacheTouched(agent.nodeId, cacheWarmUntil)
       this.answered(asking.id, agent.nodeId, token, name ?? agent.title, question, result, onsets, true)
     })
     return `ask_agent asked ${token}, which has ended, from its still-warm cache, without bringing it back; the answer will come as an event`
@@ -3124,6 +3160,12 @@ export class Receptionist {
       const live = asking.ended ? undefined : agents.find(agent => agent.nodeId === asking.nodeId)
       const ended = asking.ended ? this.ended.get(asking.nodeId) : undefined
       this.deps.log({ event: 'side-question-resumed', nodeId: asking.nodeId, question: asking.question, tries: asking.tries })
+      if (asking.ending) {
+        // An end held for its final update: asked again while it can be, else told without one.
+        if (asking.tries < MAX_QUESTION_TRIES && ended && endedAskable(ended.agent, Date.now())) this.askFinalUpdate(asking.ending, ended.agent, asking.tries + 1)
+        else this.events.push(asking.ending)
+        continue
+      }
       if (asking.tries < MAX_QUESTION_TRIES && live) {
         void this.askAgent(live, asking.question, handles, asking.tries + 1)
         continue

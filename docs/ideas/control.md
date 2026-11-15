@@ -70,6 +70,14 @@ that transcript for the reasoning behind any item here.
   written, 2 uncached, in about 3.5 seconds. Every ask logs what it read and
   wrote. A cold ended agent is not asked: it has to be unarchived, and only
   when the user agrees.
+- **Final updates**: when a watched agent ends with its cache warm, Spaceterm
+  asks it the same way what it got done in its last turn, and holds the end
+  news until the answer comes, so Control can say whether the commit it was
+  told to make was made. An agent told to commit and self-terminate usually
+  ends on tool calls alone, and without this Control told the user it could
+  not say. Cold, or if the ask fails, the end news quotes what the agent was
+  last asked and tells Control to search its transcript (or ask it, while
+  warm) before saying it does not know.
 - **Sending**: Ship it into the agent's PTY; Escape to interrupt. Every send
   and spawn is logged to `~/.spaceterm/receptionist/log.jsonl` and
   auto-monitored.

@@ -21,7 +21,7 @@ import type { NodeId } from '../../shared/ids'
 import { SOCKET_DIR } from '../../shared/protocol'
 import { serverLog } from '../server-log'
 import { fileStore, type NameRegistryStore } from './name-registry'
-import { mergeNews, type ReceptionistEvent, type ReturnNews } from './prompt'
+import { mergeNews, type AgentEndedEvent, type ReceptionistEvent, type ReturnNews } from './prompt'
 
 export const PENDING_NEWS_FILE = path.join(SOCKET_DIR, 'receptionist', 'pending-news.json')
 
@@ -46,6 +46,12 @@ export interface Asking {
   question: string
   ended: boolean
   tries: number
+  /**
+   * The news of the agent's end, held back for the final update this question
+   * asks for, and told with the answer, or without it if none comes: see
+   * `Receptionist.askFinalUpdate`.
+   */
+  ending?: AgentEndedEvent
 }
 
 interface Taken {
@@ -243,4 +249,5 @@ function isAsking(value: unknown): value is Asking {
   const q = value as Partial<Asking>
   return typeof q.id === 'string' && typeof q.nodeId === 'string' && typeof q.question === 'string'
     && typeof q.ended === 'boolean' && typeof q.tries === 'number'
+    && (q.ending === undefined || (typeof q.ending === 'object' && q.ending !== null && q.ending.kind === 'agent-ended'))
 }

@@ -7,7 +7,8 @@ import type { SideQuestionResult } from '../side-questions'
 import type { SpotifyOutcome } from '../spotify'
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
-import { ASK_AGENT_REMINDER, BACK_REQUEST, HANDOVER_PROMPT, HEARD_AGAIN, LISTENING_AGAIN, RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
+import { ASK_AGENT_REMINDER, BACK_REQUEST, ENDED_UNKNOWN, FINAL_UPDATE_QUESTION, HANDOVER_PROMPT, HEARD_AGAIN, LISTENING_AGAIN, RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
+import type { EndedAnswer } from '../ended-side-question'
 import {
   MAX_TURN_RETRIES, PROMPT_HASH, RETRYING_AFTER_ERROR, TURN_RETRY_MS, Receptionist, SessionBusy, sideQuestionPrompt, STOP_HOLD_MS, TENTATIVE_STOP_HOLD_MS, WARM_UP_MESSAGE, WARM_UP_TIMEOUT_MS, type AgentRanking, type PhoneInstallResult, type ReceptionistDeps, type RecordedMessage, type SavedSession, type SessionTurn,
 } from './receptionist'
@@ -3602,10 +3603,132 @@ describe('Receptionist: agents it started, and agents that end', () => {
       await watchAndEnd(h)
       await h.receptionist.hear('ask Kevin how many litres', 'spoken')
       await flush()
-      expect(h.endedQuestions).toEqual([{ claudeSessionId: 'kevin-session', prompt: sideQuestionPrompt('How many litres?') }])
+      expect(h.endedQuestions).toEqual([
+        { claudeSessionId: 'kevin-session', prompt: sideQuestionPrompt(FINAL_UPDATE_QUESTION) },
+        { claudeSessionId: 'kevin-session', prompt: sideQuestionPrompt('How many litres?') },
+      ])
       expect(h.sideQuestions).toEqual([])
       expect(h.wire).toEqual([])
       expect(h.notices).toEqual(['Control asked Kevin: 38.3k cached, 1.5k new'])
+    })
+
+    describe('its final update', () => {
+      const committed = async (): Promise<EndedAnswer> => ({ result: { ok: true, text: 'I updated the rules file, committed it and pushed.' } })
+      /** What a self-terminate leaves: the instruction, then tool calls and nothing said. */
+      const silentEnd = {
+        '/t/kevin.jsonl': [
+          { role: 'assistant' as const, text: 'Volume is conserved now; I measured 42 litres in the big tank.' },
+          { role: 'user' as const, text: 'Update the rules file, then commit, push and self-terminate.' },
+          { role: 'assistant' as const, text: '[agent tool activity, not speech] 2 calls: Bash, self_terminate.\n- Bash: git commit && git push\n- self_terminate' },
+        ],
+      }
+
+      it('asks a warm one what it got done as it ends, and tells its end with the answer', async () => {
+        const h = harness({
+          kevinCacheWarmUntil: Date.now() + 30 * 60_000,
+          askEnded: committed,
+          transcripts: silentEnd,
+          replies: [
+            reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: KEVIN }]),
+            (turn) => {
+              expect(turn.prompt).toMatch(namedToken(KEVIN, ' has ended: its session closed, and its surface went into the archive'))
+              expect(turn.prompt).toContain('a copy of it answered: I updated the rules file, committed it and pushed.')
+              expect(turn.prompt).toContain('this agent has ended and is still archived')
+              expect(turn.prompt).not.toContain(ENDED_UNKNOWN)
+              return reply([{ from: 'control', text: 'Kevin committed and pushed the rules update, then ended.' }])
+            },
+          ],
+        })
+        await watchAndEnd(h)
+        expect(h.endedQuestions).toEqual([{ claudeSessionId: 'kevin-session', prompt: sideQuestionPrompt(FINAL_UPDATE_QUESTION) }])
+        expect(h.turns).toHaveLength(2)
+        expect(h.wire).toEqual([])
+      })
+
+      it('holds the end until the answer comes', async () => {
+        let answer: (value: EndedAnswer) => void = () => {}
+        const h = harness({
+          kevinCacheWarmUntil: Date.now() + 30 * 60_000,
+          askEnded: () => new Promise<EndedAnswer>((resolve) => { answer = resolve }),
+          replies: [
+            reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: KEVIN }]),
+            (turn) => {
+              expect(turn.prompt).toContain('a copy of it answered: I updated the rules file, committed it and pushed.')
+              return reply([])
+            },
+          ],
+        })
+        await watchAndEnd(h)
+        expect(h.turns).toHaveLength(1)
+        answer(await committed())
+        await flush()
+        expect(h.turns).toHaveLength(2)
+      })
+
+      it('tells a cold one\'s end with what it was last asked, and how to find out whether it did it', async () => {
+        const h = harness({
+          kevinCacheWarmUntil: Date.now() - 60_000,
+          transcripts: silentEnd,
+          replies: [
+            reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: KEVIN }]),
+            (turn) => {
+              expect(turn.prompt).toContain('It was last asked: "Update the rules file, then commit, push and self-terminate.". It wrote nothing after that.')
+              expect(turn.prompt).toContain(ENDED_UNKNOWN)
+              expect(turn.prompt).not.toContain('a copy of it answered')
+              return reply([])
+            },
+          ],
+        })
+        await watchAndEnd(h)
+        expect(h.endedQuestions).toEqual([])
+        expect(h.turns).toHaveLength(2)
+      })
+
+      it('tells the end without an answer when asking fails', async () => {
+        const h = harness({
+          kevinCacheWarmUntil: Date.now() + 30 * 60_000,
+          askEnded: async () => ({ result: { ok: false, reason: 'timeout' } }),
+          replies: [
+            reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: KEVIN }]),
+            (turn) => {
+              expect(turn.prompt).toMatch(namedToken(KEVIN, ' has ended'))
+              expect(turn.prompt).toContain('It last said: Volume is conserved now')
+              expect(turn.prompt).toContain(ENDED_UNKNOWN)
+              return reply([])
+            },
+          ],
+        })
+        await watchAndEnd(h)
+        expect(h.turns).toHaveLength(2)
+      })
+
+      it('asks again after a restart, and tells the end with the answer', async () => {
+        const world = agentWorld()
+        const newsStore = memoryStore()
+        const endedStore = memoryStore()
+        const warm = Date.now() + 30 * 60_000
+        const before = harness({
+          world, newsStore, endedStore, kevinCacheWarmUntil: warm,
+          askEnded: () => new Promise<EndedAnswer>(() => {}),
+          replies: [reply([{ from: 'control', text: 'Watching.' }], [{ tool: 'monitor', agent: KEVIN }])],
+        })
+        await watchAndEnd(before)
+        expect(before.turns).toHaveLength(1)
+
+        const after = harness({
+          world, newsStore, endedStore, kevinCacheWarmUntil: warm,
+          askEnded: committed,
+          replies: [(turn) => {
+            expect(turn.prompt).toContain('has ended')
+            expect(turn.prompt).toContain('a copy of it answered: I updated the rules file, committed it and pushed.')
+            return reply([])
+          }],
+        })
+        after.receptionist.resumeWatches()
+        await flush()
+        expect(after.endedQuestions).toEqual([{ claudeSessionId: 'kevin-session', prompt: sideQuestionPrompt(FINAL_UPDATE_QUESTION) }])
+        expect(after.turns).toHaveLength(1)
+      })
     })
 
     it('does not ask a cold one, and says unarchiving it needs the user', async () => {
