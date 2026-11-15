@@ -109,6 +109,7 @@ import { HandleNames, isHandleOf } from './receptionist/transcript-names'
 import { parseRecordLine, type Speakers } from './receptionist/transcript'
 import { SideQuestions, serveSideQuestions } from './side-questions'
 import { Spotify, type Here } from './spotify'
+import { REAL_MAC_IDLE, REAL_TIMERS, SkipWatcher } from './spotify/watcher'
 import { aiSpendRunner } from './ai-spend'
 import { currentTime } from './receptionist/current-time'
 import { nodesNearView, type NearbyNode } from './receptionist/nearby'
@@ -385,6 +386,18 @@ let agentNames: NameRegistry
 const sideQuestions = new SideQuestions()
 /** Spotify playback on the user's devices, through the Web API, for Control's spotify tool. */
 const spotify = new Spotify()
+/** Skips the user's disliked songs and logs what they listen to: see spotify/watcher.ts. Started with the hooks server, in the operator's home only. */
+const spotifyWatcher = new SkipWatcher({
+  player: spotify,
+  taste: spotify.taste,
+  timers: REAL_TIMERS,
+  now: () => Date.now(),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  macIdleMs: REAL_MAC_IDLE,
+  thisMacName: () => spotify.thisMacName(),
+  log: (message) => serverLog(message),
+})
+spotify.onCommand(() => spotifyWatcher.nudge())
 /**
  * Where the user is talking to Control from, for the spotify tool's plain
  * play and "--on here": whichever device holds Control, which is where its
@@ -4528,6 +4541,7 @@ async function startServer(): Promise<void> {
       setInterval(() => { void voiceOperatorSubscription.check() }, 5_000).unref()
       voiceOperatorHandsFree.check()
       setInterval(() => voiceOperatorHandsFree.check(), 2_000).unref()
+      spotifyWatcher.start()
     } else {
       serverLog(`[voice-operator] not registering: ${SOCKET_DIR} is an isolated home, and Voice Operator's commands belong to ${DEFAULT_SOCKET_DIR}`)
     }

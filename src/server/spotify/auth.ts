@@ -35,6 +35,8 @@ export const REDIRECT_URI = `http://127.0.0.1:${REDIRECT_PORT}/callback`
 export const SCOPES = [
   'user-read-playback-state', 'user-modify-playback-state', 'user-read-currently-playing',
   'user-read-recently-played', 'playlist-read-private', 'playlist-read-collaborative',
+  // Liked Songs, for like and dislike; and playlists the agents will build.
+  'user-library-read', 'user-library-modify', 'playlist-modify-private', 'playlist-modify-public',
 ]
 
 export const TOKEN_FILE = join(SOCKET_DIR, 'spotify.json')

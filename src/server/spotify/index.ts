@@ -1,6 +1,7 @@
 import { execFile } from 'child_process'
 import { fileTokenStore, SignInNeeded, SpotifyAuth, type TokenStore } from './auth'
 import { parseWords, splitWords, type ParsedLine } from './command-line'
+import { diskTasteFiles, stateWords, TasteStore, type TasteFiles, type TrackInfo } from './taste'
 
 /**
  * Control's `spotify` tool: Spotify playback on any of the user's devices,
@@ -52,6 +53,17 @@ export interface SpotifyDeps {
   launchMacApp(): Promise<void>
   /** Epoch ms, for how long ago a song was played; Date.now when absent. */
   now?(): number
+  /** Likes, dislikes and counted listens: see taste.ts. Kept in memory, so nothing is written, when absent. */
+  taste?: TasteStore
+}
+
+/** Lines held in memory: a TasteStore that writes nothing to disk. */
+export function memoryTasteFiles(): TasteFiles {
+  const files = new Map<string, string[]>()
+  return {
+    readLines: (name) => [...(files.get(name) ?? [])],
+    appendLine: (name, line) => { files.set(name, [...(files.get(name) ?? []), line]) },
+  }
 }
 
 function run(file: string, args: string[]): Promise<string | undefined> {
@@ -68,6 +80,7 @@ const REAL_DEPS: SpotifyDeps = {
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   thisMacName: () => (macName ??= run('/usr/sbin/scutil', ['--get', 'ComputerName']).then((name) => name || undefined)),
   launchMacApp: async () => { await run('/usr/bin/open', ['-g', '-a', 'Spotify']) },
+  taste: new TasteStore(diskTasteFiles()),
 }
 
 /** Where the user is talking to Control from, which "here" and a plain play mean. */
@@ -78,7 +91,7 @@ export interface RunContext {
   here?: Here
 }
 
-interface Device {
+export interface Device {
   id: string | null
   is_active: boolean
   is_restricted?: boolean
@@ -88,14 +101,16 @@ interface Device {
   supports_volume?: boolean
 }
 
-interface Item {
+export interface Item {
   uri?: string
   name: string
   artists?: { name: string }[]
   show?: { name: string }
+  album?: { name?: string }
+  duration_ms?: number
 }
 
-interface PlaybackState {
+export interface PlaybackState {
   device: Device
   is_playing: boolean
   progress_ms?: number | null
@@ -122,8 +137,9 @@ type Start =
 class UsageError extends Error {}
 
 /** Spotify refused or failed a request. */
-class SpotifyApiError extends Error {
-  constructor(readonly status: number, readonly reason: string) {
+export class SpotifyApiError extends Error {
+  /** `retryAfterS`: for a 429, the seconds Spotify asked to be left alone, when it said. */
+  constructor(readonly status: number, readonly reason: string, readonly retryAfterS?: number) {
     super(`Spotify answered ${status}: ${reason}`)
   }
 }
@@ -147,6 +163,8 @@ const ON_OPTION = `--on <device> picks the device: "phone", "mac" (this Mac, who
 
 const RECENT_SCOPE = 'user-read-recently-played'
 const PLAYLIST_SCOPES = ['playlist-read-private', 'playlist-read-collaborative']
+const LIBRARY_SCOPES = ['user-library-read', 'user-library-modify']
+const HEARD_DEFAULT = 10
 const RECENT_DEFAULT = 5
 const RECENT_MAX = 50
 const PLAYLIST_PAGE = 50
@@ -230,6 +248,48 @@ const COMMANDS: Command[] = [
     run: (s, _line, args) => s.playlists(args.join(' ')),
   },
   {
+    name: 'like', kind: 'action', usage: 'like',
+    summary: 'the user likes the song playing now: kept in their taste log, and saved to their Liked Songs',
+    details: 'For "I like this song", "love this one" or "save this". Confirm in a word or two, such as "Liked.".',
+    scopes: () => LIBRARY_SCOPES,
+    run: (s) => s.like(),
+  },
+  {
+    name: 'dislike', kind: 'action', usage: 'dislike',
+    summary: 'the user dislikes the song playing now: skipped at once, and never played again (blocked)',
+    details: 'For "I don\'t like this song", "skip this and never play it again" or "ban this one". It is kept in the taste log; a blocked song is skipped whenever it comes up, on any device. If it was in Liked Songs it is taken out. Confirm briefly, such as "Blocked and skipped.". Undo with unblock.',
+    scopes: () => LIBRARY_SCOPES,
+    run: (s, _line, _args, context) => s.dislike(context),
+  },
+  {
+    name: 'blocked', kind: 'lookup', usage: 'blocked',
+    summary: 'the songs the user has disliked, which are skipped whenever they come up',
+    run: async (s) => s.blockedList(),
+  },
+  {
+    name: 'unblock', kind: 'action', usage: 'unblock <words>',
+    summary: 'stop skipping a disliked song, named by words of its title or artist',
+    run: async (s, _line, args) => {
+      if (!args.length) throw new UsageError('unblock needs words from the song\'s name or artist, such as "unblock plaza"')
+      return s.unblock(args.join(' '))
+    },
+  },
+  {
+    name: 'heard', kind: 'lookup', usage: `heard [<count>]`,
+    summary: `the songs the user has actually listened to, newest first, with how often each (${HEARD_DEFAULT} unless a count is given)`,
+    details: 'A song counts as heard once the user listened past its halfway point while around; paused or unattended playback does not count. Unlike recent, this is Spaceterm\'s own log.',
+    run: async (s, _line, args) => {
+      const count = args.length ? Number(args[0]) : HEARD_DEFAULT
+      if (args.length > 1 || !Number.isInteger(count) || count < 1) throw new UsageError('heard takes a count, such as "heard 20"')
+      return s.heard(count)
+    },
+  },
+  {
+    name: 'taste', kind: 'lookup', usage: 'taste',
+    summary: 'a summary of the user\'s taste log: songs liked, disliked and heard, and their most listened artists and songs',
+    run: async (s) => s.tasteSummary(),
+  },
+  {
     name: 'volume', kind: 'action', usage: 'volume <0-100> [--on <device>]',
     summary: "set the music's volume on the device playing it, as a percentage",
     details: `${ON_OPTION} This is Spotify's own volume on that device. Some phones do not let Spotify set it; the answer says so.`,
@@ -272,7 +332,7 @@ export function overallHelp(): string {
     '',
     ON_OPTION,
     '"<command> --help" says more about one command.',
-    'status, devices, recent and playlists only look; the others change the music.',
+    'status, devices, recent, playlists, heard, taste and blocked only look; the others change the music.',
     'There is no radio in Spotify\'s API: play --song plays one song, after which Spotify\'s Autoplay usually carries on with similar ones.',
   ].join('\n')
 }
@@ -401,11 +461,50 @@ function pickDevice(query: string, devices: readonly Device[], macName?: string)
   return `"${query}" could be any of: ${ranked.map(deviceText).join(', ')}. Name one with --on.`
 }
 
+/** A song as the taste log keeps it. */
+function trackInfo(item: Item): TrackInfo {
+  return {
+    uri: item.uri ?? '',
+    name: item.name,
+    artists: item.artists?.map((a) => a.name) ?? [],
+    ...(item.album?.name ? { album: item.album.name } : {}),
+    ...(item.duration_ms ? { durationMs: item.duration_ms } : {}),
+  }
+}
+
+function infoText(track: TrackInfo): string {
+  return track.artists.length ? `"${track.name}" by ${track.artists.join(', ')}` : `"${track.name}"`
+}
+
+/** Where a song was playing, for the taste log. */
+function where(state: PlaybackState): { device?: string; context?: string } {
+  return { device: state.device.name, ...(state.context?.uri ? { context: state.context.uri } : {}) }
+}
+
 export class Spotify {
   private readonly auth: SpotifyAuth
+  readonly taste: TasteStore
+  private readonly listeners = new Set<(command: string) => void>()
 
   constructor(private readonly deps: SpotifyDeps = REAL_DEPS) {
     this.auth = new SpotifyAuth(deps.store, deps.fetch)
+    this.taste = deps.taste ?? new TasteStore(memoryTasteFiles(), deps.now)
+  }
+
+  /** Called after each command Control runs, with its name: the skip watcher's sign that the user is about, and its cue to look again. */
+  onCommand(listener: (command: string) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  /** This Mac's computer name, which its Spotify app is listed under. */
+  thisMacName(): Promise<string | undefined> {
+    return this.deps.thisMacName()
+  }
+
+  /** Whether anyone has signed in on this Mac, so there is a player to watch. */
+  signedIn(): boolean {
+    return !!this.auth.tokens()
   }
 
   /**
@@ -436,13 +535,20 @@ export class Spotify {
     try {
       return await found.command.run(this, line, found.args, context)
     } catch (err) {
-      if (err instanceof UsageError) return `spotify: ${err.message}\n\n${commandHelp(found.command)}`
-      if (err instanceof SignInNeeded) {
-        return `spotify: not signed in to Spotify (${err.message}). The user signs in once on the Mac by running "npm run spotify -- login" in the Spaceterm repo; an agent can do it for them.`
-      }
-      if (err instanceof SpotifyApiError) return `spotify ${found.command.name} failed: ${this.explain(err)}`
-      return `spotify ${found.command.name} failed: ${err instanceof Error ? err.message : String(err)}`
+      return this.failure(found.command, err)
+    } finally {
+      for (const listener of this.listeners) listener(found.command.name)
     }
+  }
+
+  /** A command's failure, as the line Control is answered with. */
+  private failure(command: Command, err: unknown): string {
+    if (err instanceof UsageError) return `spotify: ${err.message}\n\n${commandHelp(command)}`
+    if (err instanceof SignInNeeded) {
+      return `spotify: not signed in to Spotify (${err.message}). The user signs in once on the Mac by running "npm run spotify -- login" in the Spaceterm repo; an agent can do it for them.`
+    }
+    if (err instanceof SpotifyApiError) return `spotify ${command.name} failed: ${this.explain(err)}`
+    return `spotify ${command.name} failed: ${err instanceof Error ? err.message : String(err)}`
   }
 
   private explain(err: SpotifyApiError): string {
@@ -454,7 +560,8 @@ export class Spotify {
 
   async status(): Promise<string> {
     const state = await this.state()
-    if (state) return stateText(state)
+    const uri = state?.item?.uri
+    if (state) return `${stateText(state)}${uri?.startsWith('spotify:track:') ? `. This song: ${stateWords(this.taste.get(uri))}` : ''}`
     return `${stateText(undefined)}. ${await this.devices()}`
   }
 
@@ -621,6 +728,94 @@ export class Spotify {
     return after?.device.id === device.id ? stateText(after) : `Set ${deviceText(device)} to ${percent}% volume`
   }
 
+  /** The song playing now as the taste log keeps it, or why there is none to judge. */
+  private async currentTrack(): Promise<{ state: PlaybackState; track: TrackInfo } | string> {
+    const state = await this.state()
+    const item = state?.item
+    if (!state || !item) return `${stateText(undefined)}, so there is no song to judge.`
+    if (!item.uri?.startsWith('spotify:track:')) return `${trackText(item)} is not a song (a podcast, say), so it is not kept in the taste log.`
+    return { state, track: trackInfo(item) }
+  }
+
+  async like(): Promise<string> {
+    const current = await this.currentTrack()
+    if (typeof current === 'string') return current
+    const { state, track } = current
+    await this.request('PUT', '/me/library', { query: { uris: track.uri } })
+    const was = this.taste.get(track.uri)?.verdict
+    this.taste.setVerdict('like', track, where(state))
+    return `Liked ${trackText(state.item)}: saved to Liked Songs${was === 'dislike' ? ', and no longer blocked' : ''}.`
+  }
+
+  async dislike(context: RunContext): Promise<string> {
+    const current = await this.currentTrack()
+    if (typeof current === 'string') return current
+    const { state, track } = current
+    const saved = await this.request<boolean[]>('GET', '/me/library/contains', { query: { uris: track.uri } })
+    if (saved?.[0]) await this.request('DELETE', '/me/library', { query: { uris: track.uri } })
+    this.taste.setVerdict('dislike', track, where(state))
+    const skipped = await this.next(undefined, context)
+    return `Blocked ${trackText(state.item)}${saved?.[0] ? ', and took it out of Liked Songs' : ''}; it will be skipped whenever it comes up. Skipped: ${skipped}`
+  }
+
+  blockedList(): string {
+    const blocked = this.taste.blocked()
+    if (!blocked.length) return 'No songs are blocked.'
+    return `Blocked songs, skipped whenever they come up:\n${blocked.map((r) => `- ${infoText(r.track)}`).join('\n')}`
+  }
+
+  unblock(query: string): string {
+    const matches = this.taste.blocked().filter((r) => containsAll(`${r.track.name} ${r.track.artists.join(' ')}`, query))
+    if (!matches.length) return `No blocked song matches "${query}". "blocked" lists them.`
+    if (matches.length > 1) return `"${query}" could be any of: ${matches.map((r) => infoText(r.track)).join(', ')}. Ask the user which.`
+    this.taste.setVerdict('unblock', matches[0].track)
+    return `Unblocked ${infoText(matches[0].track)}; it can play again.`
+  }
+
+  heard(count: number): string {
+    const listens = this.taste.recentListens(count)
+    if (!listens.length) return 'No listens are logged yet.'
+    const now = this.deps.now?.() ?? Date.now()
+    return `Listened to most recently, newest first:\n${listens.map((e, i) => {
+      const r = this.taste.get(e.track.uri)
+      return `${i + 1}. ${infoText(e.track)}, ${ago(now - Date.parse(e.at))}; ${stateWords(r)}`
+    }).join('\n')}`
+  }
+
+  tasteSummary(): string {
+    const all = this.taste.all()
+    const heard = all.filter((r) => r.listens > 0)
+    const liked = all.filter((r) => r.verdict === 'like')
+    const disliked = all.filter((r) => r.verdict === 'dislike')
+    const plays = heard.reduce((n, r) => n + r.listens, 0)
+    const byArtist = new Map<string, number>()
+    for (const r of heard) for (const a of r.track.artists) byArtist.set(a, (byArtist.get(a) ?? 0) + r.listens)
+    const topArtists = [...byArtist].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([a, n]) => `${a} (${n})`)
+    const topSongs = [...heard].sort((a, b) => b.listens - a.listens).slice(0, 5).map((r) => `${infoText(r.track)} (${r.listens})`)
+    return [
+      `Taste log: ${liked.length} liked, ${disliked.length} disliked (blocked); ${heard.length} different songs heard, ${plays} listens in all.`,
+      `Heard and liked: ${heard.filter((r) => r.verdict === 'like').length}; heard and disliked: ${heard.filter((r) => r.verdict === 'dislike').length}; heard with no verdict: ${heard.filter((r) => !r.verdict).length}.`,
+      topArtists.length ? `Most listened artists: ${topArtists.join(', ')}.` : '',
+      topSongs.length ? `Most listened songs: ${topSongs.join(', ')}.` : '',
+    ].filter(Boolean).join('\n')
+  }
+
+  /** The player now, for the skip watcher: undefined when nothing is active. Rejects as requests do. */
+  playerState(): Promise<PlaybackState | undefined> {
+    return this.state()
+  }
+
+  /** The song queued after the one playing, for the skip watcher. */
+  async upNext(): Promise<Item | undefined> {
+    const j = await this.request<{ queue?: Item[] }>('GET', '/me/player/queue')
+    return j?.queue?.[0]
+  }
+
+  /** Skip to the next song on the active device, without waiting to see it: the skip watcher checks for itself. */
+  async skipNow(): Promise<void> {
+    await this.request('POST', '/me/player/next')
+  }
+
   /** The device --on names (`id` undefined without --on), or why it names none. */
   private async target(on: string | undefined, context: RunContext): Promise<{ id?: string } | string> {
     if (!on) return {}
@@ -706,7 +901,7 @@ export class Spotify {
         try {
           reason = (JSON.parse(text) as { error?: { message?: string } }).error?.message ?? reason
         } catch { /* not JSON */ }
-        throw new SpotifyApiError(res.status, reason)
+        throw new SpotifyApiError(res.status, reason, res.status === 429 && Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined)
       }
       // Commands such as pause and next answer 200 with a bare snapshot id, not JSON; only the reads have a body to parse.
       return text && /json/i.test(res.headers.get('Content-Type') ?? '') ? JSON.parse(text) as T : undefined

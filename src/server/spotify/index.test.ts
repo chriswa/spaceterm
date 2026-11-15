@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SCOPES, type SpotifyTokens, type TokenStore } from './auth'
-import { commandKind, Spotify } from './index'
+import { commandKind, memoryTasteFiles, Spotify } from './index'
+import { TasteStore } from './taste'
 
 interface FakeDevice {
   id: string
@@ -31,7 +32,7 @@ const NOW = Date.parse('2026-11-15T20:00:00Z')
  * Spotify's Web API as these commands meet it: the devices, one player, and
  * the token endpoint. `staleToken` makes the first API call answer 401.
  */
-function fakeSpotify(opts: {
+function fakeSpotify(opts: { liked?: string[];
   devices?: FakeDevice[]; active?: string; playing?: boolean; tokens?: SpotifyTokens | null; staleToken?: boolean; refreshFails?: boolean
   /** This Mac's computer name; MAC's by default. */
   macName?: string
@@ -50,6 +51,7 @@ function fakeSpotify(opts: {
   let context: string | undefined
   let stale = opts.staleToken ?? false
   const calls: string[] = []
+  const library = new Set<string>(opts.liked ?? [])
   let saved: SpotifyTokens | undefined = opts.tokens === null ? undefined : opts.tokens ?? {
     clientId: 'c'.repeat(32), refreshToken: 'refresh-1', accessToken: 'access-1', expiresAt: Date.now() + 3_600_000, scope: SCOPES.join(' '),
   }
@@ -142,19 +144,28 @@ function fakeSpotify(opts: {
       case 'PUT /v1/me/player/volume':
         if (current) current.volume_percent = Number(url.searchParams.get('volume_percent'))
         return empty()
+      case 'PUT /v1/me/library':
+        library.add(url.searchParams.get('uris') ?? '')
+        return new Response(null, { status: 200 })
+      case 'DELETE /v1/me/library':
+        library.delete(url.searchParams.get('uris') ?? '')
+        return new Response(null, { status: 200 })
+      case 'GET /v1/me/library/contains':
+        return json((url.searchParams.get('uris') ?? '').split(',').map((u) => library.has(u)))
     }
     return json({ error: { status: 404, message: 'Service not found' } }, 404)
   }) as typeof fetch
 
+  const taste = new TasteStore(memoryTasteFiles(), () => NOW)
   const spotify = new Spotify({
-    fetch: fetchFn, store, sleep: async () => {}, now: () => NOW,
+    fetch: fetchFn, store, sleep: async () => {}, now: () => NOW, taste,
     thisMacName: async () => 'macName' in opts ? opts.macName : MAC.name,
     launchMacApp: async () => {
       calls.push('launch Spotify')
       if (opts.launchAdds) devices.push({ ...opts.launchAdds })
     },
   })
-  return { spotify, calls, saved: () => saved }
+  return { spotify, calls, saved: () => saved, library, taste }
 }
 
 describe('Spotify', () => {
@@ -334,9 +345,68 @@ describe('Spotify', () => {
   })
 })
 
+describe('Spotify likes and dislikes', () => {
+  const ALL = { clientId: 'c'.repeat(32), refreshToken: 'refresh-1', accessToken: 'access-1', expiresAt: Date.now() + 3_600_000, scope: SCOPES.join(' ') }
+
+  it('likes the song playing: saved to Liked Songs and to the taste log', async () => {
+    const s = fakeSpotify()
+    expect(await s.spotify.run('like')).toBe('Liked "Plaza" by Lyst: saved to Liked Songs.')
+    expect(s.calls).toContain('PUT /me/library')
+    expect(s.library.has('spotify:track:1')).toBe(true)
+    expect(s.taste.get('spotify:track:1')?.verdict).toBe('like')
+    expect(await s.spotify.run('status')).toContain('This song: never heard, liked')
+  })
+
+  it('dislikes: blocks the song, takes it out of Liked Songs if it was there, and skips it', async () => {
+    const s = fakeSpotify({ liked: ['spotify:track:1'] })
+    const answer = await s.spotify.run('dislike')
+    expect(answer).toContain('Blocked "Plaza" by Lyst, and took it out of Liked Songs')
+    expect(answer).toContain('Playing: "Devil Rides Again"')
+    expect(s.library.has('spotify:track:1')).toBe(false)
+    expect(s.taste.isBlocked('spotify:track:1')).toBe(true)
+    expect(await s.spotify.run('blocked')).toContain('"Plaza" by Lyst')
+    expect(await s.spotify.run('unblock plaza')).toContain('Unblocked "Plaza" by Lyst')
+    expect(s.taste.isBlocked('spotify:track:1')).toBe(false)
+  })
+
+  it('leaves Liked Songs alone when the disliked song was not in it', async () => {
+    const s = fakeSpotify()
+    expect(await s.spotify.run('dislike')).not.toContain('Liked Songs')
+    expect(s.calls).not.toContain('DELETE /me/library')
+  })
+
+  it('asks for a new sign-in before liking when the library was not granted', async () => {
+    const s = fakeSpotify({ tokens: { ...ALL, scope: 'user-read-playback-state user-modify-playback-state' } })
+    expect(await s.spotify.run('like')).toContain('not allowed yet')
+    expect(s.calls).toEqual([])
+  })
+
+  it('tells each command Control runs to its listeners, for the skip watcher', async () => {
+    const s = fakeSpotify()
+    const heard: string[] = []
+    s.spotify.onCommand((name) => heard.push(name))
+    await s.spotify.run('pause')
+    await s.spotify.run('--help')
+    expect(heard).toEqual(['pause'])
+  })
+
+  it('summarizes the taste log, and lists what was heard', async () => {
+    const s = fakeSpotify()
+    s.taste.addListen({ uri: 'spotify:track:1', name: 'Plaza', artists: ['Lyst'] }, 100_000)
+    s.taste.addListen({ uri: 'spotify:track:1', name: 'Plaza', artists: ['Lyst'] }, 100_000)
+    s.taste.addListen({ uri: 'spotify:track:3', name: 'Mr. Brightside', artists: ['The Killers'] }, 100_000)
+    await s.spotify.run('like')
+    const summary = await s.spotify.run('taste')
+    expect(summary).toContain('1 liked, 0 disliked (blocked); 2 different songs heard, 3 listens in all.')
+    expect(summary).toContain('Heard and liked: 1; heard and disliked: 0; heard with no verdict: 1.')
+    expect(summary).toContain('Most listened artists: Lyst (2), The Killers (1).')
+    expect(await s.spotify.run('heard 2')).toMatch(/^Listened to most recently, newest first:\n1\. "Mr\. Brightside" by The Killers, just now; heard 1 time, no verdict\n2\. "Plaza" by Lyst, just now; heard 2 times, liked$/)
+  })
+})
+
 describe('commandKind', () => {
   it('calls looking a lookup and changing the music an action', () => {
-    for (const args of ['status', 'devices', '--help', '', 'play --help', 'shuffle', 'play --on "phone', 'recent', 'recent 10', 'playlists road']) expect(commandKind(args)).toBe('lookup')
-    for (const args of ['play', 'play --on phone', 'pause', 'next', 'previous', 'restart', 'volume 40', 'VOLUME 40', 'play --song "x"', 'play --playlist road']) expect(commandKind(args)).toBe('action')
+    for (const args of ['status', 'devices', '--help', '', 'play --help', 'shuffle', 'play --on "phone', 'recent', 'recent 10', 'playlists road', 'heard', 'taste', 'blocked']) expect(commandKind(args)).toBe('lookup')
+    for (const args of ['play', 'play --on phone', 'pause', 'next', 'previous', 'restart', 'volume 40', 'VOLUME 40', 'play --song "x"', 'play --playlist road', 'like', 'dislike', 'unblock plaza']) expect(commandKind(args)).toBe('action')
   })
 })
