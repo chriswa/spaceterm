@@ -3,6 +3,7 @@ import { holdState, installHeldMicrophone, onHoldStateChange, setHoldMicrophone,
 import { nativeMicrophoneAvailable } from './native-microphone'
 import type { HandsFreeApi } from '../shared/api'
 import { rememberHandsFree, rememberedHandsFree } from './hands-free-memory'
+import { installHandsFreeRequests } from './native-hands-free-request'
 
 /**
  * Hands-free on the phone: the microphone held open (held-microphone.ts) and,
@@ -43,7 +44,14 @@ export function installHandsFreeMode(
     window.api?.log('[hands-free] it was on before this page loaded: on again')
     setHoldMicrophone(true)
   }
+  // "Hey Siri, Space term" (HandsFreeIntents.swift): the app is in front, so it can open its microphone.
+  const offRequests = installHandsFreeRequests(() => {
+    const already = holdState() !== 'off'
+    window.api?.log(`[hands-free] Siri asked for hands-free${already ? ': already on' : ': on'}`)
+    if (!already) setHoldMicrophone(true)
+  })
   return () => {
+    offRequests()
     offRemember()
     offEnded()
     offFollow()

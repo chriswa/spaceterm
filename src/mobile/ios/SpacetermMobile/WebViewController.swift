@@ -73,6 +73,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.userContentController.add(NativeNotifications.shared, name: "nativeNotifications")
         // A shortcut the Mac signed, opened in Shortcuts (action-button-setup.ts).
         config.userContentController.add(shortcutImport, name: "nativeShortcut")
+        // "Hey Siri, Space term": hands-free on (HandsFreeIntents.swift).
+        config.userContentController.add(HandsFreeRequest.shared, name: "nativeHandsFreeRequest")
 
         webView = WKWebView(frame: .zero, configuration: config)
         microphone.webView = webView
@@ -82,6 +84,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         events.webView = webView
         NativeNotifications.shared.webView = webView
         NativeNotifications.shared.events = events
+        HandsFreeRequest.shared.webView = webView
+        HandsFreeRequest.shared.events = events
         webView.uiDelegate = self
         webView.navigationDelegate = self
         webView.isOpaque = false

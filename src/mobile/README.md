@@ -135,6 +135,14 @@ phone is disconnected Control does not speak to it (as Off), and as it
 reconnects it holds Control again, muted or not as before. Hands-free comes
 back on likewise (`hands-free-memory.ts`), except after the app is replaced.
 
+"Hey Siri, Space term" opens the app, launching it if need be, and turns
+hands-free on (`HandsFreeIntents.swift`, `native-hands-free-request.ts`). Siri
+knows the app as "Space" too (`INAlternativeAppNames`), which is what makes
+the phrase `\(.applicationName) term`; "Start hands-free in Spaceterm" does
+the same. The app has to come to the front, since iOS opens no microphone
+from the background, so a locked phone asks to be unlocked first. On a cold
+launch the app holds the request for 90 s while the page loads.
+
 ## Control's transcript
 
 The Control button opens the
