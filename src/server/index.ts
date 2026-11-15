@@ -383,7 +383,7 @@ let receptionistSpeaker: string | undefined
 let agentNames: NameRegistry
 /** Side questions to agents, through Spaceterm's Claude Code plugin. See side-questions.ts. */
 const sideQuestions = new SideQuestions()
-/** Spotify on the Mac, for Control's music tools. */
+/** Spotify playback on the user's devices, through the Web API, for Control's spotify tool. */
 const spotify = new Spotify()
 /** Side questions to agents that have ended, run in the login environment a terminal would have. */
 const endedAskDeps = realEndedAskDeps(() => loginEnv.current() ?? process.env)
@@ -4197,7 +4197,7 @@ async function startServer(): Promise<void> {
     installPhoneApp: installPhoneAppForControl,
     agentUsage: aiSpendRunner(() => loginEnv.current() ?? process.env),
     currentTime: () => currentTime(),
-    spotify: (command) => spotify.command(command),
+    spotify: (args) => spotify.run(args),
     log: appendReceptionistLog,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     voiceTick: () => new Promise((resolve) => setTimeout(resolve, VOICE_FOLLOW_MS)),

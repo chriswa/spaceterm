@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseAgentRef } from './agent-token'
-import { CONTROL, isAction, isBlocking, letsGo, parseReply, playedLengths, redactSpoken, renderSpeech, type Speaker } from './reply'
+import { CONTROL, isAction, isBlocking, isLookup, letsGo, parseReply, playedLengths, redactSpoken, renderSpeech, type Speaker } from './reply'
 
 const KEVIN: Speaker = { name: 'Kevin', voice: 'am_michael' }
 const resolveKevin = (handle: string): Speaker | undefined => handle === 'a1' ? KEVIN : undefined
@@ -22,13 +22,14 @@ describe('parseReply', () => {
     expect(parsed.tools.every(letsGo)).toBe(true)
   })
 
-  it('reads the Spotify tools as actions, and spotify_volume only with a percent from 0 to 100', () => {
-    const parsed = parseReply('{"say":[{"text":"Done."}],"tools":[{"tool":"spotify_play"},{"tool":"spotify_pause"},{"tool":"spotify_next"},{"tool":"spotify_volume","percent":40.4}]}')
-    expect(parsed.tools).toEqual([{ tool: 'spotify_play' }, { tool: 'spotify_pause' }, { tool: 'spotify_next' }, { tool: 'spotify_volume', percent: 40 }])
-    expect(parsed.tools.every(call => isAction(call) && !isBlocking(call) && !letsGo(call))).toBe(true)
-    for (const percent of ['', ',"percent":"40"', ',"percent":101', ',"percent":-1']) {
-      expect(() => parseReply(`{"tools":[{"tool":"spotify_volume"${percent}}]}`)).toThrow('"spotify_volume" needs a "percent" from 0 to 100')
-    }
+  it('reads spotify\'s command line, as a lookup when it only looks and an action when it changes the music', () => {
+    const actions = parseReply('{"say":[{"text":"Done."}],"tools":[{"tool":"spotify","args":" play --on phone "},{"tool":"spotify","args":"volume 40"}]}').tools
+    expect(actions).toEqual([{ tool: 'spotify', args: 'play --on phone' }, { tool: 'spotify', args: 'volume 40' }])
+    expect(actions.every(call => isAction(call) && !isBlocking(call) && !letsGo(call))).toBe(true)
+    const lookups = parseReply('{"tools":[{"tool":"spotify","args":"--help"},{"tool":"spotify","args":"status"},{"tool":"spotify","args":"play --help"},{"tool":"spotify"}]}').tools
+    expect(lookups).toContainEqual({ tool: 'spotify', args: '' })
+    expect(lookups.every(call => isLookup(call) && isBlocking(call))).toBe(true)
+    expect(() => parseReply('{"tools":[{"tool":"spotify","args":["play"]}]}')).toThrow('"spotify" takes its command line as one string in "args"')
   })
 
   it('reads agent_usage, a lookup that takes nothing', () => {

@@ -4,7 +4,6 @@ import type { ClaudeState, NodeData } from '../../shared/state'
 import type { TranscriptMessage } from '../agent-transcript'
 import type { SpeechBackend, SpeechContent, SpeechStatus } from '../voice-operator'
 import type { SideQuestionResult } from '../side-questions'
-import type { SpotifyOutcome } from '../spotify'
 import type { NamedVoice } from './name-voice-table'
 import { RECEPTIONIST_VOICE } from './name-voice-table'
 import { ASK_AGENT_REMINDER, BACK_REQUEST, ENDED_UNKNOWN, FINAL_UPDATE_QUESTION, HANDOVER_PROMPT, HEARD_AGAIN, LISTENING_AGAIN, RECEPTIONIST_SYSTEM_PROMPT } from './prompt'
@@ -119,8 +118,8 @@ function harness(opts: {
   agentUsage?: string | Error
   /** What the Mac's clock reads, or the error reading it fails with. */
   currentTime?: string | Error
-  /** What Spotify answers every command with. */
-  spotify?: SpotifyOutcome
+  /** What Spotify answers every command line with. */
+  spotify?: string
   /** Where Control speaks to begin with, in place of the recording fake. */
   speech?: SpeechBackend
   /** What the user is looking at; by default nothing has said. */
@@ -394,9 +393,9 @@ function harness(opts: {
       if (opts.currentTime instanceof Error) throw opts.currentTime
       return opts.currentTime ?? 'Sunday, November 15, 2026, 12:27 PM, in the Mac\'s time zone, America/Vancouver (MST, UTC-07:00)'
     },
-    spotify: async (command) => {
-      wire.push(`spotify ${command.command}${command.command === 'volume' ? ` ${command.percent}` : ''}`)
-      return opts.spotify ?? { ok: true, state: 'playing', volume: 50, track: { name: 'Plaza', artist: 'Lyst' } }
+    spotify: async (args) => {
+      wire.push(`spotify ${args}`)
+      return opts.spotify ?? 'Playing: "Plaza" by Lyst, on Chris\'s iPhone (Smartphone), at 50% volume'
     },
     userView: opts.userView ?? (() => undefined),
     spawn: (parent, title, prompt) => {
@@ -2800,20 +2799,19 @@ describe('Receptionist', () => {
     expect(h.focused).toEqual([KEVIN_ID, DIR_ID, NOTE_ID])
   })
 
-  it('runs the Spotify tools before speaking, and tells the model what Spotify is doing now', async () => {
+  it('runs spotify\'s commands that change the music before speaking, and tells the model what Spotify is doing now', async () => {
     const h = harness({
       replies: [
-        reply([{ from: 'control', text: 'Skipped, and the music is at 40 percent.' }], [{ tool: 'spotify_next' }, { tool: 'spotify_volume', percent: 40 }]),
+        reply([{ from: 'control', text: 'Playing on your phone.' }], [{ tool: 'spotify', args: 'play --on phone' }]),
         (turn) => {
-          expect(turn.prompt).toContain('spotify_next: Spotify is now playing "Plaza" by Lyst')
-          expect(turn.prompt).toContain('spotify_volume: the music volume is 50%')
+          expect(turn.prompt).toContain('spotify play --on phone: Playing: "Plaza" by Lyst, on Chris\'s iPhone (Smartphone), at 50% volume')
           return reply([{ from: 'control', text: 'Sure.' }])
         },
       ],
     })
-    await h.receptionist.hear('next song, and turn the music down to 40', 'spoken')
+    await h.receptionist.hear('play the music on my phone', 'spoken')
     await flush()
-    expect(h.wire).toEqual(['spotify next', 'spotify volume 40'])
+    expect(h.wire).toEqual(['spotify play --on phone'])
     await h.receptionist.hear('thanks', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
@@ -2881,21 +2879,20 @@ describe('Receptionist', () => {
     expect(failing.turns).toHaveLength(2)
   })
 
-  it('tells the model when Spotify is not open, so it can say the music did not change', async () => {
+  it('runs a spotify status as a silent lookup, handing the model what is playing before it answers', async () => {
     const h = harness({
-      spotify: { ok: false, problem: 'not-running' },
+      spotify: 'Paused: "Plaza" by Lyst, on MacBook Pro (Computer), at 60% volume',
       replies: [
-        reply([{ from: 'control', text: 'Paused.' }], [{ tool: 'spotify_pause' }]),
+        reply([], [{ tool: 'spotify', args: 'status' }]),
         (turn) => {
-          expect(turn.prompt).toContain('spotify_pause: Spotify is not open on the Mac, so nothing changed')
-          return reply([{ from: 'control', text: 'Spotify is not open, so that did not work.' }])
+          expect(turn.prompt).toContain('spotify status: Paused: "Plaza" by Lyst, on MacBook Pro (Computer), at 60% volume')
+          return reply([{ from: 'control', text: 'Plaza by Lyst, paused on the Mac.' }])
         },
       ],
     })
-    await h.receptionist.hear('pause the music', 'spoken')
+    await h.receptionist.hear('what song is this?', 'spoken')
     await flush()
-    await h.receptionist.hear('ok', 'spoken')
-    await flush()
+    expect(h.wire).toEqual(['spotify status'])
     expect(h.turns).toHaveLength(2)
   })
 

@@ -7,6 +7,7 @@
  * keeps a turn near the API's own latency; the price is that the shape is
  * checked here instead of by the API.
  */
+import { commandKind } from '../spotify'
 import { interruptedWordStart, redactUnheard } from '../unheard'
 import { AGENT_TOKEN, stripBraces } from './agent-token'
 import type { VoiceGender } from './name-voice-table'
@@ -60,19 +61,9 @@ export type ToolCall = (
   | { tool: 'mark_read'; agent: string }
   /** `about` describes a particular item to take, rather than whichever matters most. */
   | { tool: 'backlog_next'; about?: string }
-  | { tool: SpotifyTool }
-  /** `percent`: 0 to 100. */
-  | { tool: 'spotify_volume'; percent: number }
+  /** A command line for Spotify playback, such as "play --on phone"; "--help" lists them: see spotify/index.ts. */
+  | { tool: 'spotify'; args: string }
 )
-
-/** The Spotify tools that take nothing: see spotify.ts. */
-const SPOTIFY_TOOLS = ['spotify_play', 'spotify_pause', 'spotify_next'] as const
-export type SpotifyTool = typeof SPOTIFY_TOOLS[number]
-export type SpotifyCall = Extract<ToolCall, { tool: SpotifyTool | 'spotify_volume' }>
-
-export function isSpotifyCall(call: ToolCall): call is SpotifyCall {
-  return (SPOTIFY_TOOLS as readonly string[]).includes(call.tool) || call.tool === 'spotify_volume'
-}
 
 export interface Reply {
   say: SayPart[]
@@ -100,7 +91,9 @@ export function letsGo(call: ToolCall): call is { tool: LetGoTool } {
  */
 export function isLookup(call: ToolCall): boolean {
   return call.tool === 'read' || call.tool === 'recall' || call.tool === 'list_agents' || call.tool === 'list_nodes' || call.tool === 'agent_details' || call.tool === 'find_agent' || call.tool === 'nearby' ||
-    call.tool === 'agent_usage' || call.tool === 'current_time' || call.tool === 'backlog_next'
+    call.tool === 'agent_usage' || call.tool === 'current_time' || call.tool === 'backlog_next' ||
+    // status, devices and help only look; play, pause and the rest change the music.
+    (call.tool === 'spotify' && commandKind(call.args) === 'lookup')
 }
 
 /**
@@ -149,10 +142,7 @@ export function actionHeadline(call: ToolCall): string {
     case 'restart_server': return 'RESTARTED THE SERVER'
     case 'refresh_clients': return 'REFRESHED EVERY PAGE'
     case 'install_phone_app': return 'STARTED INSTALLING THE IPHONE APP'
-    case 'spotify_play': return 'PLAYED SPOTIFY'
-    case 'spotify_pause': return 'PAUSED SPOTIFY'
-    case 'spotify_next': return 'SKIPPED TO THE NEXT SONG'
-    case 'spotify_volume': return `SET THE MUSIC VOLUME TO ${call.percent}%`
+    case 'spotify': return `SPOTIFY: ${call.args}`
     default: return showToolCall(call)
   }
 }
@@ -205,7 +195,7 @@ const TOOL_NAMES: Record<ToolCall['tool'], true> = {
   spawn: true, rename_agent: true, recall: true, list_agents: true, list_nodes: true, agent_details: true, find_agent: true, nearby: true, agent_usage: true, current_time: true, force_user_camera: true,
   restart_server: true, refresh_clients: true, install_phone_app: true,
   backlog_add: true, backlog_next: true, mark_read: true,
-  spotify_play: true, spotify_pause: true, spotify_next: true, spotify_volume: true,
+  spotify: true,
 }
 const TOOL_LIST = Object.keys(TOOL_NAMES).join(', ')
 
@@ -226,13 +216,9 @@ function parseToolCall(value: unknown): ToolCall {
   if (value.tool === 'agent_usage') return { tool: 'agent_usage' }
   if (value.tool === 'current_time') return { tool: 'current_time' }
   if ((LET_GO_TOOLS as readonly string[]).includes(value.tool)) return { tool: value.tool as LetGoTool }
-  if ((SPOTIFY_TOOLS as readonly string[]).includes(value.tool)) return { tool: value.tool as SpotifyTool }
-  if (value.tool === 'spotify_volume') {
-    const percent = value.percent
-    if (typeof percent !== 'number' || !Number.isFinite(percent) || percent < 0 || percent > 100) {
-      throw new Error('"spotify_volume" needs a "percent" from 0 to 100, such as 40')
-    }
-    return { tool: 'spotify_volume', percent: Math.round(percent) }
+  if (value.tool === 'spotify') {
+    if (value.args !== undefined && typeof value.args !== 'string') throw new Error('"spotify" takes its command line as one string in "args", such as "play --on phone"; "--help" lists the commands')
+    return { tool: 'spotify', args: (value.args ?? '').trim() }
   }
   if (value.tool === 'backlog_next') {
     const about = typeof value.about === 'string' ? value.about.trim() : ''

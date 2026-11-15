@@ -19,7 +19,6 @@ import { NOTHING_PENDING, sameStatus, statusOf, statusToTell, type SpacetermStat
 import type { CameraBounds, ControlImage, ControlTrace, ControlTraceKind, ControlTranscriptEntry } from '../../shared/protocol'
 import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
 import type { EndedAnswer } from '../ended-side-question'
-import type { SpotifyCommand, SpotifyOutcome } from '../spotify'
 import {
   FINAL_UPDATE_QUESTION, FORMAT_REMINDER, HANDOVER_CHARS, IMAGE_CAPTION_CHARS, IMAGE_CAPTIONS_TOLD, HANDOVER_HEADING, HANDOVER_PROMPT, mergeNews, RECEPTIONIST_SYSTEM_PROMPT, renderEvent, renderTurnBody,
   type AgentEndedEvent, type BlockedAgent, type ReceptionistEvent, type ReturnNews,
@@ -28,8 +27,8 @@ import {
   CONVERSATION_WORDS, decideInterruption, HANG_ON, lastWords, splitAtOffset, type InterruptionContext, type InterruptionVerdict,
 } from './self-interruption'
 import {
-  actionHeadline, CONTROL, heardLengths, isAction, playedLengths, isBlocking, isBookkeeping, isLookup, isSpotifyCall, parseReply, redactSpoken, renderSpeech, showToolCall, letsGo,
-  type LetGoTool, type Reply, type SayPart, type SpokenPart, type SpotifyCall, type SpotifyTool, type ToolCall,
+  actionHeadline, CONTROL, heardLengths, isAction, playedLengths, isBlocking, isBookkeeping, isLookup, parseReply, redactSpoken, renderSpeech, showToolCall, letsGo,
+  type LetGoTool, type Reply, type SayPart, type SpokenPart, type ToolCall,
 } from './reply'
 import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
 import { decidePause, INTERRUPTION_QUIET_MS, PAUSE_WAIT_MS, pauseDialogue, type PauseJudgement, type PauseVerdict } from './backlog-pause'
@@ -318,8 +317,8 @@ export interface ReceptionistDeps {
   agentUsage(): Promise<string>
   /** The date and time where the Mac is, in words, with its zone. Rejects with why it could not read the clock: see current-time.ts. */
   currentTime(): Promise<string>
-  /** Play, pause or skip Spotify on the Mac, or set its volume: see spotify.ts. Never rejects. */
-  spotify(command: SpotifyCommand): Promise<SpotifyOutcome>
+  /** Run one `spotify` command line, such as "play --on phone", and say what happened: see spotify/index.ts. Never rejects. */
+  spotify(args: string): Promise<string>
   /**
    * What the user is looking at: the screen of the device holding Control
    * (or, failing that, the one that last moved), and the nodes nearest
@@ -394,8 +393,6 @@ const BUSY_RETRIES = 30
  */
 const RECAP_MESSAGES = 10
 const RECAP_MESSAGE_CHARS = 1_500
-/** What each Spotify tool that takes nothing asks Spotify to do. */
-const SPOTIFY_COMMANDS: Record<SpotifyTool, 'play' | 'pause' | 'next'> = { spotify_play: 'play', spotify_pause: 'pause', spotify_next: 'next' }
 
 /** The tools that take an agent that is no longer live. */
 const ENDED_TOOLS: ReadonlySet<ToolCall['tool']> = new Set(['read', 'ask_agent', 'unarchive_agent'])
@@ -2606,8 +2603,11 @@ export class Receptionist {
       }
       // Taken down by `stageReads`, with the turn it waits on.
       if (call.tool === 'mark_read') continue
-      if (isSpotifyCall(call)) {
-        done.push(await this.spotify(call))
+      if (call.tool === 'spotify') {
+        const line = await this.spotify(call.args)
+        // A look (status, devices, help) is for the model now; a change is confirmed with the actions.
+        if (isLookup(call)) results.push(line)
+        else done.push(line)
         continue
       }
       if (letsGo(call)) {
@@ -2714,25 +2714,11 @@ export class Receptionist {
     }
   }
 
-  /** A Spotify tool, and the line saying what Spotify is doing now, or why nothing changed. */
-  private async spotify(call: SpotifyCall): Promise<string> {
-    const command: SpotifyCommand = call.tool === 'spotify_volume'
-      ? { command: 'volume', percent: call.percent }
-      : { command: SPOTIFY_COMMANDS[call.tool] }
-    const outcome = await this.deps.spotify(command)
-    this.deps.log({ event: 'tool', ...call, outcome })
-    if (!outcome.ok) {
-      return outcome.problem === 'not-running'
-        ? `${call.tool}: Spotify is not open on the Mac, so nothing changed`
-        : `${call.tool} failed: ${outcome.message}`
-    }
-    const track = outcome.track ? `"${outcome.track.name}" by ${outcome.track.artist}` : 'nothing'
-    switch (call.tool) {
-      case 'spotify_play': return `spotify_play: Spotify is playing ${track}`
-      case 'spotify_pause': return 'spotify_pause: Spotify is paused'
-      case 'spotify_next': return `spotify_next: Spotify is now playing ${track}`
-      case 'spotify_volume': return `spotify_volume: the music volume is ${outcome.volume}%`
-    }
+  /** The spotify tool: its command line, and what Spotify said or did. */
+  private async spotify(args: string): Promise<string> {
+    const answer = await this.deps.spotify(args)
+    this.deps.log({ event: 'tool', tool: 'spotify', args, answer })
+    return `spotify ${args || '--help'}: ${answer}`
   }
 
   /**
