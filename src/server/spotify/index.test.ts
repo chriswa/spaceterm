@@ -21,7 +21,13 @@ const TRACKS = [
  * Spotify's Web API as these commands meet it: the devices, one player, and
  * the token endpoint. `staleToken` makes the first API call answer 401.
  */
-function fakeSpotify(opts: { devices?: FakeDevice[]; active?: string; playing?: boolean; tokens?: SpotifyTokens | null; staleToken?: boolean; refreshFails?: boolean } = {}) {
+function fakeSpotify(opts: {
+  devices?: FakeDevice[]; active?: string; playing?: boolean; tokens?: SpotifyTokens | null; staleToken?: boolean; refreshFails?: boolean
+  /** This Mac's computer name; MAC's by default. */
+  macName?: string
+  /** Listed once Spotify is launched on this Mac. */
+  launchAdds?: FakeDevice
+} = {}) {
   const devices = (opts.devices ?? [MAC, PHONE]).map((d) => ({ ...d }))
   let active = opts.active === undefined ? 'mac' : opts.active
   let playing = opts.playing ?? true
@@ -84,7 +90,14 @@ function fakeSpotify(opts: { devices?: FakeDevice[]; active?: string; playing?: 
     return json({ error: { status: 404, message: 'Service not found' } }, 404)
   }) as typeof fetch
 
-  const spotify = new Spotify({ fetch: fetchFn, store, sleep: async () => {} })
+  const spotify = new Spotify({
+    fetch: fetchFn, store, sleep: async () => {},
+    thisMacName: async () => 'macName' in opts ? opts.macName : MAC.name,
+    launchMacApp: async () => {
+      calls.push('launch Spotify')
+      if (opts.launchAdds) devices.push({ ...opts.launchAdds })
+    },
+  })
   return { spotify, calls, saved: () => saved }
 }
 
@@ -131,7 +144,45 @@ describe('Spotify', () => {
   it('says what to do when nothing is active', async () => {
     const s = fakeSpotify({ active: '' })
     expect(await s.spotify.run('status')).toContain('Nothing is playing on any device. Spotify can play on:\n- MacBook Pro (Computer)')
-    expect(await s.spotify.run('play')).toContain('use play --on <device>')
+    // Nothing active and nobody known to hold Control: this Mac.
+    expect(await s.spotify.run('play')).toBe('Playing: "Plaza" by Lyst, on MacBook Pro (Computer), at 60% volume')
+  })
+
+  it('takes "mac" to mean this Mac, by its computer name, when another Mac is signed in too', async () => {
+    const work: FakeDevice = { id: 'work', name: 'Spare 0248-Chris Waddell', type: 'Computer', volume_percent: 50 }
+    const mine: FakeDevice = { id: 'mine', name: 'Chris\u2019s MacBook Pro', type: 'Computer', volume_percent: 40 }
+    const s = fakeSpotify({ devices: [work, mine, PHONE], active: 'phone', playing: false, macName: "Chris's MacBook Pro" })
+    expect(await s.spotify.run('play --on mac')).toBe('Playing: "Plaza" by Lyst, on Chris\u2019s MacBook Pro (Computer), at 40% volume')
+    expect(s.calls).not.toContain('launch Spotify')
+  })
+
+  it('opens Spotify on this Mac when it is not listed, and plays there once it is', async () => {
+    const s = fakeSpotify({ devices: [PHONE], active: 'phone', playing: false, launchAdds: MAC })
+    expect(await s.spotify.run('play --on laptop')).toBe('Playing: "Plaza" by Lyst, on MacBook Pro (Computer), at 60% volume')
+    expect(s.calls.indexOf('launch Spotify')).toBeLessThan(s.calls.indexOf('PUT /me/player'))
+  })
+
+  it('says so when Spotify on this Mac never shows up', async () => {
+    const s = fakeSpotify({ devices: [PHONE], active: 'phone' })
+    const answer = await s.spotify.run('play --on mac')
+    expect(answer).toContain('No device matches "mac"')
+    expect(answer).toContain('did not show up')
+    expect(s.calls).not.toContain('PUT /me/player')
+  })
+
+  it('plays where the user is talking from when nothing is playing', async () => {
+    const atMac = fakeSpotify({ active: 'phone', playing: false })
+    expect(await atMac.spotify.run('play', { here: 'mac' })).toMatch(/on MacBook Pro \(Computer\)/)
+    const onPhone = fakeSpotify({ active: 'mac', playing: false })
+    expect(await onPhone.spotify.run('play', { here: 'phone' })).toMatch(/on Chris's iPhone \(Smartphone\)/)
+    expect(await onPhone.spotify.run('pause --on here', {})).toContain('"here" names no device')
+  })
+
+  it('leaves music already playing where it is, and pauses it there from anywhere', async () => {
+    const s = fakeSpotify({ active: 'phone' })
+    expect(await s.spotify.run('play', { here: 'mac' })).toMatch(/^Already playing\. .*iPhone/)
+    expect(await s.spotify.run('pause', { here: 'mac' })).toMatch(/^Paused: .*iPhone/)
+    expect(s.calls).not.toContain('PUT /me/player')
   })
 
   it('refreshes once when Spotify refuses the token, and keeps the refresh token it hands back', async () => {

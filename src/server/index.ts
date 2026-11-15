@@ -108,7 +108,7 @@ import { ControlImages } from './control-images'
 import { HandleNames, isHandleOf } from './receptionist/transcript-names'
 import { parseRecordLine, type Speakers } from './receptionist/transcript'
 import { SideQuestions, serveSideQuestions } from './side-questions'
-import { Spotify } from './spotify'
+import { Spotify, type Here } from './spotify'
 import { aiSpendRunner } from './ai-spend'
 import { currentTime } from './receptionist/current-time'
 import { nodesNearView, type NearbyNode } from './receptionist/nearby'
@@ -385,6 +385,17 @@ let agentNames: NameRegistry
 const sideQuestions = new SideQuestions()
 /** Spotify playback on the user's devices, through the Web API, for Control's spotify tool. */
 const spotify = new Spotify()
+/**
+ * Where the user is talking to Control from, for the spotify tool's plain
+ * play and "--on here": whichever device holds Control, which is where its
+ * replies are heard. The Mac's windows and Voice Operator's dictation hold it
+ * as DESKTOP_DEVICE; any other holder is a phone.
+ */
+function spotifyHere(): Here | undefined {
+  const holder = stateManager.getReceptionistHolder()
+  if (!holder) return undefined
+  return holder.deviceId === DESKTOP_DEVICE.deviceId ? 'mac' : 'phone'
+}
 /** Side questions to agents that have ended, run in the login environment a terminal would have. */
 const endedAskDeps = realEndedAskDeps(() => loginEnv.current() ?? process.env)
 let sideQuestionServer: import('http').Server | undefined
@@ -4197,7 +4208,7 @@ async function startServer(): Promise<void> {
     installPhoneApp: installPhoneAppForControl,
     agentUsage: aiSpendRunner(() => loginEnv.current() ?? process.env),
     currentTime: () => currentTime(),
-    spotify: (args) => spotify.run(args),
+    spotify: (args) => spotify.run(args, { here: spotifyHere() }),
     log: appendReceptionistLog,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     voiceTick: () => new Promise((resolve) => setTimeout(resolve, VOICE_FOLLOW_MS)),

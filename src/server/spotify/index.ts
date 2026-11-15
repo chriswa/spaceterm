@@ -1,3 +1,4 @@
+import { execFile } from 'child_process'
 import { fileTokenStore, SignInNeeded, SpotifyAuth, type TokenStore } from './auth'
 import { parseWords, splitWords, type ParsedLine } from './command-line'
 
@@ -20,23 +21,52 @@ import { parseWords, splitWords, type ParsedLine } from './command-line'
  * - Pausing what is already paused answers 403 "Restriction violated", so
  *   play and pause look first.
  * - Some phones do not let Spotify set their volume (`supports_volume` false).
+ * - This Mac's Spotify app is listed under the Mac's computer name, as
+ *   `scutil --get ComputerName` prints it ("Chris’s MacBook Pro"); another
+ *   Mac signed in to the same account is a Computer too, so "mac" is matched
+ *   by that name. The app takes a few seconds after launching to be listed.
  */
 
 export const API_BASE = 'https://api.spotify.com/v1'
 const SETTLE_POLLS = 8
 const SETTLE_DELAY_MS = 200
 const MAX_RETRY_AFTER_S = 3
+/** How long to wait for this Mac's Spotify app to be listed after launching it. */
+const LAUNCH_POLLS = 20
+const LAUNCH_POLL_MS = 500
 
 export interface SpotifyDeps {
   fetch: typeof fetch
   store: TokenStore
   sleep(ms: number): Promise<void>
+  /** This Mac's computer name, which its Spotify app is listed under; undefined when it cannot tell. */
+  thisMacName(): Promise<string | undefined>
+  /** Open Spotify on this Mac without bringing it forward. Never rejects. */
+  launchMacApp(): Promise<void>
 }
+
+function run(file: string, args: string[]): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile(file, args, { timeout: 10_000 }, (err, stdout) => resolve(err ? undefined : stdout.trim()))
+  })
+}
+
+let macName: Promise<string | undefined> | undefined
 
 const REAL_DEPS: SpotifyDeps = {
   fetch: (...args) => fetch(...args),
   store: fileTokenStore(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  thisMacName: () => (macName ??= run('/usr/sbin/scutil', ['--get', 'ComputerName']).then((name) => name || undefined)),
+  launchMacApp: async () => { await run('/usr/bin/open', ['-g', '-a', 'Spotify']) },
+}
+
+/** Where the user is talking to Control from, which "here" and a plain play mean. */
+export type Here = 'phone' | 'mac'
+
+export interface RunContext {
+  /** Undefined when nobody holds Control, so where the user is is unknown. */
+  here?: Here
 }
 
 interface Device {
@@ -75,10 +105,10 @@ interface Command {
   summary: string
   /** More than the summary, for `<command> --help`. */
   details?: string
-  run(spotify: Spotify, line: ParsedLine, args: string[]): Promise<string>
+  run(spotify: Spotify, line: ParsedLine, args: string[], context: RunContext): Promise<string>
 }
 
-const ON_OPTION = `--on <device> picks the device: "phone", "mac", or a word from its name as \`devices\` lists it. Without --on, the command goes to whichever device is playing now.`
+const ON_OPTION = `--on <device> picks the device: "phone", "mac" (this Mac, whose Spotify app is opened if it is closed), "here" (wherever the user is talking to Control from), or a word from its name as \`devices\` lists it. Without --on, play plays where the user is, and the other commands go to whichever device is playing now. Add --on only when the user names a device.`
 
 const COMMANDS: Command[] = [
   {
@@ -94,32 +124,32 @@ const COMMANDS: Command[] = [
   },
   {
     name: 'play', kind: 'action', usage: 'play [--on <device>]',
-    summary: 'resume the music; with --on, move it to that device and play it there',
-    details: `${ON_OPTION} "play --on phone" moves whatever was playing to the phone, from where it was, and plays it. It cannot choose a song, artist or playlist.`,
-    run: (s, line) => s.play(option(line, 'on')),
+    summary: 'resume the music where the user is; with --on, move it to that device and play it there',
+    details: `${ON_OPTION} A plain play, with nothing playing, plays on the device the user is talking from: the phone, or this Mac. "play --on phone" moves whatever was playing to the phone, from where it was, and plays it. It cannot choose a song, artist or playlist.`,
+    run: (s, line, _args, context) => s.play(option(line, 'on'), context),
   },
   {
     name: 'pause', kind: 'action', usage: 'pause [--on <device>]',
     summary: 'pause the music',
     details: ON_OPTION,
-    run: (s, line) => s.pause(option(line, 'on')),
+    run: (s, line, _args, context) => s.pause(option(line, 'on'), context),
   },
   {
     name: 'next', kind: 'action', usage: 'next [--on <device>]',
     summary: 'skip to the next song',
     details: ON_OPTION,
-    run: (s, line) => s.next(option(line, 'on')),
+    run: (s, line, _args, context) => s.next(option(line, 'on'), context),
   },
   {
     name: 'volume', kind: 'action', usage: 'volume <0-100> [--on <device>]',
     summary: "set the music's volume on the device playing it, as a percentage",
     details: `${ON_OPTION} This is Spotify's own volume on that device. Some phones do not let Spotify set it; the answer says so.`,
-    run: (s, line, args) => {
+    run: (s, line, args, context) => {
       const percent = Number(args[0])
       if (args.length !== 1 || !Number.isFinite(percent) || percent < 0 || percent > 100) {
         throw new UsageError('volume needs one percentage from 0 to 100, such as "volume 40"')
       }
-      return s.volume(Math.round(percent), option(line, 'on'))
+      return s.volume(Math.round(percent), option(line, 'on'), context)
     },
   },
 ]
@@ -201,13 +231,34 @@ const DEVICE_TYPES: Record<string, string> = {
   speaker: 'Speaker', tv: 'TV',
 }
 
-/** The device `query` names, or why none or several do. */
-function pickDevice(query: string, devices: readonly Device[]): Device | string {
+/** Names compared as Spotify and `scutil` may spell them: case and apostrophes aside. */
+function sameName(a: string, b: string): boolean {
+  const norm = (s: string) => s.trim().toLowerCase().replace(/[\u2018\u2019`]/g, "'")
+  return norm(a) === norm(b)
+}
+
+/** Whether `query` means this Mac rather than a device by name. */
+function meansThisMac(query: string): boolean {
+  return DEVICE_TYPES[query.trim().toLowerCase()] === 'Computer'
+}
+
+/** This Mac's device, when it is listed: by its computer name, or the only Computer when the name is unknown. */
+function thisMacDevice(devices: readonly Device[], macName: string | undefined): Device | undefined {
+  const usable = devices.filter((d) => d.id)
+  if (macName) return usable.find((d) => sameName(d.name, macName))
+  const apps = usable.filter((d) => d.type === 'Computer' && !/web player/i.test(d.name))
+  return apps.length === 1 ? apps[0] : undefined
+}
+
+/** The device `query` names, or why none or several do. `macName` is this Mac's, which "mac" means. */
+function pickDevice(query: string, devices: readonly Device[], macName?: string): Device | string {
   const q = query.trim().toLowerCase()
   const usable = devices.filter((d) => d.id)
-  const named = usable.filter((d) => d.name.toLowerCase() === q)
+  const named = usable.filter((d) => sameName(d.name, q))
   const type = DEVICE_TYPES[q]
+  const thisMac = !named.length && type === 'Computer' && macName ? usable.filter((d) => sameName(d.name, macName)) : []
   const candidates = named.length ? named
+    : thisMac.length ? thisMac
     : type ? usable.filter((d) => d.type === type)
     : usable.filter((d) => d.name.toLowerCase().includes(q))
   // A Spotify tab in a browser is a Computer too, but "mac" means the app.
@@ -216,7 +267,9 @@ function pickDevice(query: string, devices: readonly Device[]): Device | string 
   if (ranked.length === 1 || ranked[0]?.is_active) return ranked[0]
   const seen = usable.length ? `Spotify can play on: ${usable.map(deviceText).join(', ')}` : 'Spotify sees no devices at all'
   if (!ranked.length) {
-    const hint = type === 'Smartphone' ? ' Ask the user to open Spotify on the phone, then try again.' : ''
+    const hint = type === 'Smartphone' ? ' Ask the user to open Spotify on the phone, then try again.'
+      : type === 'Computer' ? ' Spotify was opened on this Mac but did not show up; it may need signing in there.'
+      : ''
     return `No device matches "${query}". ${seen}.${hint}`
   }
   return `"${query}" could be any of: ${ranked.map(deviceText).join(', ')}. Name one with --on.`
@@ -229,8 +282,12 @@ export class Spotify {
     this.auth = new SpotifyAuth(deps.store, deps.fetch)
   }
 
-  /** Run one command line, such as "play --on phone". Never rejects: every failure is a line saying what went wrong. */
-  async run(args: string): Promise<string> {
+  /**
+   * Run one command line, such as "play --on phone". `context.here` is where
+   * the user is talking from. Never rejects: every failure is a line saying
+   * what went wrong.
+   */
+  async run(args: string, context: RunContext = {}): Promise<string> {
     let line: ParsedLine
     try {
       line = parseWords(splitWords(args))
@@ -246,7 +303,7 @@ export class Spotify {
     const unknown = [...line.options.keys()].filter((name) => !KNOWN_OPTIONS.has(name))
     if (unknown.length) return `spotify: ${found.command.name} has no --${unknown[0]} option.\n\n${commandHelp(found.command)}`
     try {
-      return await found.command.run(this, line, found.args)
+      return await found.command.run(this, line, found.args, context)
     } catch (err) {
       if (err instanceof UsageError) return `spotify: ${err.message}\n\n${commandHelp(found.command)}`
       if (err instanceof SignInNeeded) {
@@ -276,22 +333,31 @@ export class Spotify {
     return `Spotify can play on:\n${devices.map((d) => `- ${deviceText(d)}${d.is_active ? ', active' : ''}${d.is_restricted ? ', cannot be controlled' : ''}`).join('\n')}`
   }
 
-  async play(on: string | undefined): Promise<string> {
-    if (on) {
-      const device = await this.device(on)
-      if (typeof device === 'string') return device
-      await this.request('PUT', '/me/player', { body: { device_ids: [device.id], play: true } })
-      return stateText(await this.settle((s) => s.device.id === device.id && s.is_playing))
-    }
+  /**
+   * With --on, move the music there and play it. Without, music already
+   * playing anywhere is left where it is; otherwise it plays where the user
+   * is, or, when that is unknown, resumes where it was, or on this Mac when
+   * nothing was active.
+   */
+  async play(on: string | undefined, context: RunContext): Promise<string> {
+    if (on) return this.playOn(on, context)
     const before = await this.state()
-    if (!before) return `${stateText(undefined)}, so there is nothing to resume: use play --on <device>. ${await this.devices()}`
-    if (before.is_playing) return `Already playing. ${stateText(before)}`
+    if (before?.is_playing) return `Already playing. ${stateText(before)}`
+    if (context.here) return this.playOn(context.here, context)
+    if (!before) return this.playOn('mac', context)
     await this.request('PUT', '/me/player/play')
     return stateText(await this.settle((s) => s.is_playing))
   }
 
-  async pause(on: string | undefined): Promise<string> {
-    const target = await this.target(on)
+  private async playOn(on: string, context: RunContext): Promise<string> {
+    const device = await this.device(on, context)
+    if (typeof device === 'string') return device
+    await this.request('PUT', '/me/player', { body: { device_ids: [device.id], play: true } })
+    return stateText(await this.settle((s) => s.device.id === device.id && s.is_playing))
+  }
+
+  async pause(on: string | undefined, context: RunContext): Promise<string> {
+    const target = await this.target(on, context)
     if (typeof target === 'string') return target
     const before = await this.state()
     // Only the active device plays, so any other one is already paused.
@@ -301,18 +367,18 @@ export class Spotify {
     return stateText(await this.settle((s) => !s.is_playing))
   }
 
-  async next(on: string | undefined): Promise<string> {
-    const target = await this.target(on)
+  async next(on: string | undefined, context: RunContext): Promise<string> {
+    const target = await this.target(on, context)
     if (typeof target === 'string') return target
     const before = await this.state()
     await this.request('POST', '/me/player/next', { query: target.id ? { device_id: target.id } : {} })
     return stateText(await this.settle((s) => s.item?.uri !== before?.item?.uri))
   }
 
-  async volume(percent: number, on: string | undefined): Promise<string> {
+  async volume(percent: number, on: string | undefined, context: RunContext): Promise<string> {
     let device: Device | undefined
     if (on) {
-      const picked = await this.device(on)
+      const picked = await this.device(on, context)
       if (typeof picked === 'string') return picked
       device = picked
     } else {
@@ -326,16 +392,37 @@ export class Spotify {
   }
 
   /** The device --on names (`id` undefined without --on), or why it names none. */
-  private async target(on: string | undefined): Promise<{ id?: string } | string> {
+  private async target(on: string | undefined, context: RunContext): Promise<{ id?: string } | string> {
     if (!on) return {}
-    const device = await this.device(on)
+    const device = await this.device(on, context)
     return typeof device === 'string' ? device : { id: device.id ?? undefined }
   }
 
-  private async device(on: string): Promise<Device | string> {
-    const picked = pickDevice(on, await this.deviceList())
+  /** The device --on names: "here" as where the user is, and this Mac opened first when it is not listed. */
+  private async device(on: string, context: RunContext): Promise<Device | string> {
+    let query = on
+    if (query.trim().toLowerCase() === 'here') {
+      if (!context.here) return 'Where the user is talking from is not known, so "here" names no device: use --on phone or --on mac.'
+      query = context.here
+    }
+    const macName = meansThisMac(query) ? await this.deps.thisMacName() : undefined
+    let devices = await this.deviceList()
+    if (meansThisMac(query) && !thisMacDevice(devices, macName)) devices = await this.openOnThisMac(macName)
+    const picked = pickDevice(query, devices, macName)
     if (typeof picked !== 'string' && picked.is_restricted) return `${deviceText(picked)} does not let Spotify control it.`
     return picked
+  }
+
+  /** Open Spotify on this Mac and wait for it to be listed; the devices last seen either way. */
+  private async openOnThisMac(macName: string | undefined): Promise<Device[]> {
+    await this.deps.launchMacApp()
+    let devices: Device[] = []
+    for (let poll = 0; poll < LAUNCH_POLLS; poll++) {
+      await this.deps.sleep(LAUNCH_POLL_MS)
+      devices = await this.deviceList()
+      if (thisMacDevice(devices, macName)) break
+    }
+    return devices
   }
 
   private async deviceList(): Promise<Device[]> {
