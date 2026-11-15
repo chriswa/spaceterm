@@ -96,6 +96,7 @@ ledger in `src/server/claude-state/background-ledger.ts`.
 | JSONL `user` array with "rejected" | jsonl | stopped |
 | JSONL `<task-notification>` completion / queue-op | jsonl | updates the ledger; may drain working_background → stopped |
 | Claude Code registry `idle` for 3s+ while we show working | registry | **working_background** if the ledger is non-empty, else stopped (`registry:idle:turn-idle`) — only from working, never sets unread; source time is `statusUpdatedAt`+2s so a newer prompt wins via the watermark. Ends idle compactions, Esc interrupts and lost Stops |
+| Claude Code registry `busy` recorded after the open prompt was raised, held 1s+, while we show a waiting state | registry | the state the prompt interrupted: **working**, or from `working_background` yellow-or-stopped via the ledger (`registry:busy:prompt-answered`) — never sets unread; not exempt from the stale guard, so a re-raised prompt wins. The only clear a backgrounded subagent's prompt has |
 | reconciliation sweep (5s, yellow surfaces only) | ledger | drains working_background → stopped when liveness probes say all launches finished |
 
 ### Signals that DON'T change state
