@@ -540,7 +540,7 @@ const cases: Case[] = [
     // Only 'working' has no exit of its own. A waiting state is the user's to
     // resolve, and the registry calls that `waiting`, not idle — but even a
     // stray idle must not take the prompt's colour away.
-    name: 'registry idle never touches a waiting state, and busy/waiting never act',
+    name: 'registry idle never touches a waiting state, and busy/waiting never act on a working one',
     run: (sm, deps) => {
       hook(sm, 'UserPromptSubmit', { prompt: 'go' })
       hook(sm, 'PreToolUse', { tool_use_id: 't1' })
@@ -561,6 +561,106 @@ const cases: Case[] = [
       sm.handleSessionStatus(S, null, undefined, later + 60_000)
       sm.flushForTest()
       assertEq(deps.getClaudeState(S), 'working')
+    },
+  },
+  {
+    // Canonical observation 2026-11-15T06:37:20Z (surface a4ce1212, "Kate"): the
+    // main turn had stopped with a subagent still running (yellow), the subagent
+    // asked for Bash permission, and the user denied it. A denial fires no hook
+    // and writes its tool_result only to the sidechain transcript, so the
+    // surface sat red while Claude Code said busy. The registry's busy is the
+    // only signal that the prompt is gone; the answer returns to what the prompt
+    // interrupted (yellow), without a ding.
+    name: 'a backgrounded subagent\'s answered prompt ends on the registry\'s busy, back to yellow',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit', { prompt: 'go' })
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      hook(sm, 'Stop')
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+      hook(sm, 'PreToolUse', { agent_id: 'a1', tool_use_id: 's1' })
+      const raisedAt = now()
+      hook(sm, 'PermissionRequest', { agent_id: 'a1', tool_name: 'Bash' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'waiting_permission')
+      sm.handleClientMarkUnread(S, false)
+
+      // A busy from before the prompt (the registry lags the hook) says nothing.
+      sm.handleSessionStatus(S, 'busy', raisedAt - 5, raisedAt + 60_000)
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'waiting_permission')
+
+      const busyAt = now()
+      // Inside the grace a busy could be a blip between two queued prompts.
+      sm.handleSessionStatus(S, 'busy', busyAt, busyAt + 500)
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'waiting_permission')
+
+      sm.handleSessionStatus(S, 'busy', busyAt, busyAt + 1_000)
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working_background')
+      assertEq(deps.getClaudeStatusUnread(S), false)
+    },
+  },
+  {
+    // A main-agent prompt interrupted 'working', so the answer is orange — the
+    // registry is the backstop for when its PostToolUse is slow (a long tool
+    // after approval) or never matches.
+    name: 'a main-agent prompt answered per the registry returns to working',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit', { prompt: 'go' })
+      hook(sm, 'PreToolUse', { tool_use_id: 't1' })
+      hook(sm, 'PermissionRequest', { tool_name: 'Bash' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'waiting_permission')
+      const busyAt = now()
+      sm.handleSessionStatus(S, 'busy', busyAt, busyAt + 2_000)
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+      // The tool's own PostToolUse, arriving later, changes nothing.
+      hook(sm, 'PostToolUse', { tool_use_id: 't1' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+    },
+  },
+  {
+    // Two prompts in a row: a busy recorded between them belongs to the first,
+    // so it must not clear the second.
+    name: 'a busy older than a re-raised prompt does not clear it',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit', { prompt: 'go' })
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      hook(sm, 'SubagentStart', { agent_id: 'a2' })
+      hook(sm, 'PermissionRequest', { agent_id: 'a1', tool_name: 'Bash' })
+      const between = now()
+      hook(sm, 'PermissionRequest', { agent_id: 'a2', tool_name: 'Bash' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'waiting_permission')
+      sm.handleSessionStatus(S, 'busy', between, between + 60_000)
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'waiting_permission')
+      const busyAt = now()
+      sm.handleSessionStatus(S, 'busy', busyAt, busyAt + 2_000)
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'working')
+    },
+  },
+  {
+    // lastPreToolUseId only ever holds the main agent's tool. A subagent's
+    // prompt used to be paired with it, so the main agent's unrelated
+    // PostToolUse cleared a prompt the subagent was still showing.
+    name: 'a subagent\'s prompt is not cleared by the main agent\'s PostToolUse',
+    run: (sm, deps) => {
+      hook(sm, 'UserPromptSubmit', { prompt: 'go' })
+      hook(sm, 'SubagentStart', { agent_id: 'a1' })
+      hook(sm, 'PreToolUse', { tool_use_id: 'main-1' })
+      hook(sm, 'PreToolUse', { agent_id: 'a1', tool_use_id: 's1' })
+      hook(sm, 'PermissionRequest', { agent_id: 'a1', tool_name: 'Bash' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'waiting_permission')
+      hook(sm, 'PostToolUse', { tool_use_id: 'main-1' })
+      sm.flushForTest()
+      assertEq(deps.getClaudeState(S), 'waiting_permission')
     },
   },
   {

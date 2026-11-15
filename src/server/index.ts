@@ -4344,10 +4344,11 @@ async function startServer(): Promise<void> {
   // --- Claude Code's own session status, paired with ours ---
   // Reads ~/.claude/sessions/<pid>.json, logs how its busy/waiting/idle status
   // compares to the state we inferred at the same moment, and puts it in the
-  // card footer next to that state. Its one input to claudeState is `idle` as a
-  // backstop for a 'working' surface whose turn ended without a Stop hook (see
-  // ClaudeStateMachine.handleSessionStatus); hooks and the transcript decide
-  // everything else.
+  // card footer next to that state. Its inputs to claudeState are two backstops:
+  // `idle` for a 'working' surface whose turn ended without a Stop hook, and
+  // `busy` for a waiting surface whose prompt was answered without a matching
+  // clear (see ClaudeStateMachine.handleSessionStatus); hooks and the
+  // transcript decide everything else.
   sessionStatusObserver = new SessionStatusObserver(() => {
     const surfaces: ObservedSurface[] = []
     for (const node of Object.values(stateManager.getState().nodes)) {

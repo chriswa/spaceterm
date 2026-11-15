@@ -93,6 +93,32 @@ const REGISTRY_IDLE_STRAGGLER_MS = 2_000
 
 const REGISTRY_IDLE_EVENT = `registry:idle${TURN_IDLE_SUFFIX}`
 
+/**
+ * How long Claude Code's registry must have been saying `busy` since a prompt
+ * was raised before we take that as "the prompt was answered".
+ *
+ * The registry is sampled every 2s, so this costs little latency; it is there
+ * so a momentary busy between two queued prompts (one answered, the next about
+ * to be drawn) cannot drop the red while the second is still open.
+ */
+const REGISTRY_BUSY_GRACE_MS = 1_000
+
+/** See handleSessionStatus: the registry says an open prompt is no longer on screen. */
+const REGISTRY_PROMPT_ANSWERED_EVENT = 'registry:busy:prompt-answered'
+
+/** The events that may take a waiting state to 'working' — see the sticky-waiting guard in applyTransition. */
+function isWaitingStateExit(event: string): boolean {
+  return event === 'hook:UserPromptSubmit' ||
+    event === 'hook:PostToolUse' ||
+    event === 'hook:PostToolUseFailure' ||
+    event === 'jsonl:permission-resolved' ||
+    event === REGISTRY_PROMPT_ANSWERED_EVENT
+}
+
+function isWaiting(state: ClaudeState | undefined): boolean {
+  return state === 'waiting_permission' || state === 'waiting_question' || state === 'waiting_plan'
+}
+
 // ─── ClaudeStateMachine ─────────────────────────────────────────────────────
 
 export class ClaudeStateMachine {
@@ -150,6 +176,23 @@ export class ClaudeStateMachine {
    * stands until the next turn, so without this every sample would re-enqueue.
    */
   private registryIdleHandled = new Map<PtySessionId, number>()
+
+  /**
+   * surfaceId → the prompt the surface is currently waiting on: the source time
+   * of the PermissionRequest that last raised (or re-raised) it, and the state
+   * it interrupted.
+   *
+   * `raisedAt` is what lets a registry `busy` count as "answered": only a busy
+   * that Claude Code recorded AFTER the prompt went up can be about this prompt.
+   * `interrupted` is what the answer returns to. A prompt raised from yellow —
+   * a backgrounded subagent asking after the main turn already stopped — goes
+   * back to yellow, not orange: the main agent is still idle, and orange would
+   * then sit there until something else noticed.
+   *
+   * Set and cleared in applyTransition, the one place a waiting state starts and
+   * ends, so it can't drift from claudeState.
+   */
+  private openPrompt = new Map<PtySessionId, { raisedAt: number; interrupted: ClaudeState }>()
 
   /**
    * surfaceId → source timestamp of the last transition actually applied.
@@ -257,7 +300,16 @@ export class ClaudeStateMachine {
     if (hookType === 'PermissionRequest') {
       // Capture tool_use_id from the preceding PreToolUse so we can match
       // the eventual PostToolUse to this specific permission-gated tool.
-      const savedToolUseId = this.lastPreToolUseId.get(surfaceId)
+      //
+      // Only for the MAIN agent's prompts. A backgrounded subagent raises its
+      // own (agent_id set, and still no tool_use_id), and lastPreToolUseId only
+      // ever holds the main agent's last tool — subagent PreToolUse returns
+      // early below. Pairing the two would let the main agent's unrelated
+      // PostToolUse clear a prompt the subagent is still showing. A subagent's
+      // prompt has no ID-matched clear at all: approval's PostToolUse and
+      // denial's tool_result both land in the sidechain transcript we don't
+      // watch. The registry's `busy` ends it instead — see handleSessionStatus.
+      const savedToolUseId = agentId ? undefined : this.lastPreToolUseId.get(surfaceId)
       if (savedToolUseId) {
         let ids = this.pendingPermissionIds.get(surfaceId)
         if (!ids) { ids = new Set(); this.pendingPermissionIds.set(surfaceId, ids) }
@@ -454,11 +506,31 @@ export class ClaudeStateMachine {
    * a pending permission, question or plan is `waiting`, never `idle`. So an
    * attention state we don't model cannot arrive as a plain completion.
    *
-   * It only ever *ends* a working turn: busy/waiting stay observation-only,
-   * since hooks are faster for those and carry what the colour needs (which
-   * prompt, which tool). Over 10,978 paired samples there were 42 cases of
+   * Over 10,978 paired samples there were 42 cases of
    * idle-for-3s-while-we-said-working, and every one was followed by a user
    * prompt or SessionEnd, i.e. genuinely idle.
+   *
+   * `busy` has one use too, the mirror image: it ends a waiting state whose
+   * prompt is no longer on screen. A waiting state's own exits are all
+   * correlated to the main agent's tool, and some prompts never get one:
+   *
+   * - a backgrounded subagent's prompt (PermissionRequest with agent_id). Its
+   *   PostToolUse is not ID-matched and a denial writes its tool_result only to
+   *   the sidechain transcript, so nothing cleared it until the next typed
+   *   prompt — 12 of 15 historical subagent prompts sat red for 1–10 minutes
+   *   after being answered (canonical observation 2026-11-15T06:37:20Z);
+   * - AskUserQuestion answers whose PostToolUse didn't match, and long tools
+   *   that run for a while after approval before their PostToolUse.
+   *
+   * Across the 58 historical cases of busy-after-the-prompt-while-we-said-
+   * waiting, every one was a genuine answer: the waiting state was ended later
+   * by a PostToolUse, an answer-side tool_result, a Stop, a SessionEnd or the
+   * next prompt, never by a fresh prompt that showed it still open. Only a busy
+   * recorded after the prompt was raised counts, so a sample that predates the
+   * prompt (the registry lags the hook) can't clear it, and the grace keeps a
+   * blip between two queued prompts from dropping the red. `waiting` itself
+   * stays observation-only: the PermissionRequest hook is faster and says which
+   * prompt it is.
    */
   handleSessionStatus(
     surfaceId: PtySessionId,
@@ -466,7 +538,12 @@ export class ClaudeStateMachine {
     statusUpdatedAt: number | undefined,
     now: number = Date.now()
   ): void {
-    if (status !== 'idle' || statusUpdatedAt === undefined) return
+    if (statusUpdatedAt === undefined) return
+    if (status === 'busy') {
+      this.resolveAnsweredPrompt(surfaceId, statusUpdatedAt, now)
+      return
+    }
+    if (status !== 'idle') return
     if (this.deps.getClaudeState(surfaceId) !== 'working') return
     // Leave an ordinary turn end to its Stop hook, which follows the
     // registry's flip within about a second.
@@ -474,6 +551,36 @@ export class ClaudeStateMachine {
     if (this.registryIdleHandled.get(surfaceId) === statusUpdatedAt) return
     this.registryIdleHandled.set(surfaceId, statusUpdatedAt)
     this.enqueueTurnIdle(surfaceId, 'registry', REGISTRY_IDLE_EVENT, statusUpdatedAt + REGISTRY_IDLE_STRAGGLER_MS)
+  }
+
+  /**
+   * The registry says Claude Code went busy after the open prompt was raised:
+   * the prompt was answered. Return to the state the prompt interrupted — see
+   * openPrompt for why that is not always 'working'.
+   *
+   * The source time is the registry's own statusUpdatedAt, which is after the
+   * prompt's raisedAt by construction, and it is NOT exempt from the stale
+   * guard: the only transitions applied while a prompt is open are a re-raise
+   * (a second PermissionRequest, which moves raisedAt and must win over an
+   * older busy) or an exit that already ended the prompt.
+   */
+  private resolveAnsweredPrompt(surfaceId: PtySessionId, statusUpdatedAt: number, now: number): void {
+    const prompt = this.openPrompt.get(surfaceId)
+    if (!prompt || statusUpdatedAt <= prompt.raisedAt) return
+    if (!isWaiting(this.deps.getClaudeState(surfaceId))) return
+    if (now - statusUpdatedAt < REGISTRY_BUSY_GRACE_MS) return
+    // One correction per prompt: the registry is resampled every 2s and the
+    // busy stands, so without this every sample would re-enqueue.
+    this.openPrompt.delete(surfaceId)
+    if (prompt.interrupted === 'working_background') {
+      // Resolve through the ledger, not a remembered colour: a subagent that
+      // finished in the meantime should leave the surface stopped. Not a
+      // TURN_IDLE_SUFFIX event — those are barred from waiting states, and
+      // this one is direct evidence the prompt is gone.
+      this.enqueueTurnIdle(surfaceId, 'registry', REGISTRY_PROMPT_ANSWERED_EVENT, statusUpdatedAt)
+    } else {
+      this.transitionQueue.enqueue(surfaceId, 'working', 'registry', REGISTRY_PROMPT_ANSWERED_EVENT, statusUpdatedAt)
+    }
   }
 
   /**
@@ -860,14 +967,14 @@ export class ClaudeStateMachine {
 
     // Computed before the staleness guard because that guard must not be able to
     // block a waiting state's only exits — see both guards below.
-    const isWaitingState = prevState === 'waiting_permission' || prevState === 'waiting_question' || prevState === 'waiting_plan'
-    const isTargetedWaitingClear =
-      isWaitingState && newState === 'working' && (
-        event === 'hook:UserPromptSubmit' ||
-        event === 'hook:PostToolUse' ||
-        event === 'hook:PostToolUseFailure' ||
-        event === 'jsonl:permission-resolved'
-      )
+    const isWaitingState = isWaiting(prevState)
+    const isTargetedWaitingClear = isWaitingState && newState === 'working' && isWaitingStateExit(event)
+    // The registry's prompt-answered may pass the sticky guard below, but it is
+    // deliberately not exempt from the stale guard — see resolveAnsweredPrompt.
+    // The exemption exists for the four exits that can arrive late with no
+    // backstop behind them; this one IS the backstop, timestamped by Claude
+    // Code, and the watermark is what lets a re-raised prompt beat it.
+    const isStaleExempt = isTargetedWaitingClear && event !== REGISTRY_PROMPT_ANSWERED_EVENT
 
     // ── Guard: a transition older than the last applied one is stale ──────────
     // The transition queue sorts by source timestamp, but it can only sort the
@@ -907,7 +1014,7 @@ export class ClaudeStateMachine {
     // through. A stale-but-exempt transition therefore must not drag the
     // watermark backwards either — hence the Math.max below.
     const watermark = this.lastAppliedSourceTime.get(surfaceId)
-    if (!isTargetedWaitingClear && watermark !== undefined && sourceTime < watermark) {
+    if (!isStaleExempt && watermark !== undefined && sourceTime < watermark) {
       this.decisionLogger.log(surfaceId, {
         timestamp: localISOTimestamp(), source, event, prevState, newState: prevState, sourceTime,
         detail: `${detail ? detail + ' ' : ''}(stale: ${watermark - sourceTime}ms older than the last applied transition)`,
@@ -984,6 +1091,9 @@ export class ClaudeStateMachine {
     // - jsonl:permission-resolved (the transcript wrote the tool_result for the
     //   pending permission tool_use_id — the reliable, hook-independent clear
     //   that replaced the old client:promptSubmit Enter-keypress path)
+    // - registry:busy:prompt-answered (Claude Code went busy after the prompt
+    //   was raised — the only clear a subagent's prompt has; see
+    //   handleSessionStatus)
     // Other exits from waiting states use newState !== 'working' (e.g.
     // Stop → stopped, jsonl:user:rejected → stopped) and bypass this guard.
     if (isWaitingState && newState === 'working' && !isTargetedWaitingClear) {
@@ -1018,6 +1128,19 @@ export class ClaudeStateMachine {
 
     this.deps.setClaudeState(surfaceId, effectiveState)
 
+    // Track the open prompt for the registry's prompt-answered (see openPrompt).
+    // A PermissionRequest over an already-waiting surface is a second prompt:
+    // it moves raisedAt, so only a busy after IT counts, but keeps what the
+    // first one interrupted. Any non-waiting state ends the prompt.
+    if (isWaiting(effectiveState)) {
+      if (event === 'hook:PermissionRequest') {
+        const interrupted = isWaitingState ? this.openPrompt.get(surfaceId)?.interrupted ?? 'working' : prevState
+        this.openPrompt.set(surfaceId, { raisedAt: sourceTime, interrupted })
+      }
+    } else {
+      this.openPrompt.delete(surfaceId)
+    }
+
     // ── Unread flag: set true when entering an attention-needed state ──
     // The user needs to see and act on stopped (Claude finished), waiting_permission
     // (Claude needs tool approval), waiting_question (Claude is asking a question),
@@ -1029,8 +1152,10 @@ export class ClaudeStateMachine {
     // one with fresh output: after an Esc interrupt the user is at the keyboard,
     // and after an idle compaction there is nothing new to read. A ding there,
     // possibly an hour after the user last looked, would be a false alarm.
+    // The same goes for the registry's prompt-answered: the user just answered
+    // the prompt, so whatever it resolves to is not news to them.
     let unread: boolean | undefined
-    if (prevState !== effectiveState && event !== REGISTRY_IDLE_EVENT) {
+    if (prevState !== effectiveState && source !== 'registry') {
       if (
         effectiveState === 'stopped' ||
         effectiveState === 'potential_error' ||

@@ -7,8 +7,9 @@
  * side changes. It sets no state itself. It was built observation-only, to
  * accumulate enough paired observations that a decision about *using* the
  * registry could be made from data rather than from one bug report; five weeks
- * of them made the case for one use — `idle` as the backstop that ends a
- * 'working' turn — which the state machine takes from `onSample`
+ * of them made the case for two uses — `idle` as the backstop that ends a
+ * 'working' turn, and `busy` as the one that ends a waiting state whose prompt
+ * was answered — which the state machine takes from `onSample`
  * (`ClaudeStateMachine.handleSessionStatus`). Everything else stays logged only.
  *
  * The comparison is the payload. `agreement` scores each observation against
