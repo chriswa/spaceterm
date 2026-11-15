@@ -110,6 +110,7 @@ import { parseRecordLine, type Speakers } from './receptionist/transcript'
 import { SideQuestions, serveSideQuestions } from './side-questions'
 import { Spotify } from './spotify'
 import { aiSpendRunner } from './ai-spend'
+import { currentTime } from './receptionist/current-time'
 import { nodesNearView, type NearbyNode } from './receptionist/nearby'
 import type { RosterAgent } from './receptionist/roster'
 import { readPeerNames } from './claude-peer-names'
@@ -4195,6 +4196,7 @@ async function startServer(): Promise<void> {
     reloadPages: () => broadcastToAll({ type: 'reload-page' }),
     installPhoneApp: installPhoneAppForControl,
     agentUsage: aiSpendRunner(() => loginEnv.current() ?? process.env),
+    currentTime: () => currentTime(),
     spotify: (command) => spotify.command(command),
     log: appendReceptionistLog,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),

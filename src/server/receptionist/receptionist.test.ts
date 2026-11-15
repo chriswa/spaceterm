@@ -117,6 +117,8 @@ function harness(opts: {
   phoneInstall?: () => Promise<PhoneInstallResult>
   /** What ai-spend prints, or the error it fails with. */
   agentUsage?: string | Error
+  /** What the Mac's clock reads, or the error reading it fails with. */
+  currentTime?: string | Error
   /** What Spotify answers every command with. */
   spotify?: SpotifyOutcome
   /** Where Control speaks to begin with, in place of the recording fake. */
@@ -386,6 +388,11 @@ function harness(opts: {
       wire.push('ai-spend')
       if (opts.agentUsage instanceof Error) throw opts.agentUsage
       return opts.agentUsage ?? '{"omittedAccounts":["Claude: Spare"],"providers":[]}'
+    },
+    currentTime: async () => {
+      wire.push('date')
+      if (opts.currentTime instanceof Error) throw opts.currentTime
+      return opts.currentTime ?? 'Sunday, November 15, 2026, 12:27 PM, in the Mac\'s time zone, America/Vancouver (MST, UTC-07:00)'
     },
     spotify: async (command) => {
       wire.push(`spotify ${command.command}${command.command === 'volume' ? ` ${command.percent}` : ''}`)
@@ -2810,6 +2817,37 @@ describe('Receptionist', () => {
     await h.receptionist.hear('thanks', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
+  })
+
+  it('hands the model the Mac\'s clock for current_time, as a lookup, and says when it fails', async () => {
+    const h = harness({
+      currentTime: 'Sunday, November 15, 2026, 12:27 PM, in the Mac\'s time zone, America/Vancouver (MST, UTC-07:00)',
+      replies: [
+        reply([], [{ tool: 'current_time' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('current_time (the Mac\'s clock): Sunday, November 15, 2026, 12:27 PM, in the Mac\'s time zone, America/Vancouver (MST, UTC-07:00)')
+          return reply([{ from: 'control', text: 'It is twenty-seven past twelve.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('what time is it?', 'spoken')
+    await flush()
+    expect(h.wire).toEqual(['date'])
+    expect(h.turns).toHaveLength(2)
+
+    const failing = harness({
+      currentTime: new Error('could not run date: ENOENT'),
+      replies: [
+        reply([], [{ tool: 'current_time' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('current_time failed: could not run date: ENOENT')
+          return reply([{ from: 'control', text: 'I could not read the clock.' }])
+        },
+      ],
+    })
+    await failing.receptionist.hear('what day is it?', 'spoken')
+    await flush()
+    expect(failing.turns).toHaveLength(2)
   })
 
   it('hands the JSON from ai-spend to the model for agent_usage, as a lookup, and says when it fails', async () => {

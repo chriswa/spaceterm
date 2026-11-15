@@ -37,6 +37,12 @@ describe('parseReply', () => {
     expect(isBlocking(call) && !isAction(call)).toBe(true)
   })
 
+  it('reads current_time, a lookup that takes nothing', () => {
+    const [call] = parseReply('{"tools":[{"tool":"current_time"}]}').tools
+    expect(call).toEqual({ tool: 'current_time' })
+    expect(isBlocking(call) && !isAction(call)).toBe(true)
+  })
+
   it('refuses go_quiet, which is no longer a tool', () => {
     expect(() => parseReply('{"tools":[{"tool":"go_quiet"}]}')).toThrow('unknown tool "go_quiet"')
   })

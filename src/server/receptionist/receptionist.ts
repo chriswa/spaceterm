@@ -316,6 +316,8 @@ export interface ReceptionistDeps {
   installPhoneApp(): Promise<PhoneInstallResult>
   /** `ai-spend`'s JSON: Claude usage windows and agent spend. Rejects with why it could not run: see ai-spend.ts. */
   agentUsage(): Promise<string>
+  /** The date and time where the Mac is, in words, with its zone. Rejects with why it could not read the clock: see current-time.ts. */
+  currentTime(): Promise<string>
   /** Play, pause or skip Spotify on the Mac, or set its volume: see spotify.ts. Never rejects. */
   spotify(command: SpotifyCommand): Promise<SpotifyOutcome>
   /**
@@ -2570,6 +2572,10 @@ export class Receptionist {
         results.push(await this.agentUsage())
         continue
       }
+      if (call.tool === 'current_time') {
+        results.push(await this.currentTime())
+        continue
+      }
       if (call.tool === 'force_user_camera') {
         const nodeId = this.resolveTarget(call.target, handles, agents)
         if (!nodeId) {
@@ -2684,6 +2690,15 @@ export class Receptionist {
       this.deps.log({ event: 'tool', ...call, nodeId: agent.nodeId })
     }
     return { results, done }
+  }
+
+  /** The current_time tool: the Mac's clock, in its own time zone. */
+  private async currentTime(): Promise<string> {
+    try {
+      return `current_time (the Mac's clock): ${await this.deps.currentTime()}`
+    } catch (err) {
+      return `current_time failed: ${err instanceof Error ? err.message : String(err)}`
+    }
   }
 
   /** The agent_usage tool: ai-spend's JSON as it printed it, for the model to summarize. */

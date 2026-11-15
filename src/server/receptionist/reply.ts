@@ -48,6 +48,8 @@ export type ToolCall = (
   | { tool: 'nearby' }
   /** AI Spend Tracker's Claude usage and agent spend, as `ai-spend` prints it: see ai-spend.ts. */
   | { tool: 'agent_usage' }
+  /** The date and time where the Mac is, in its own time zone: see current-time.ts. */
+  | { tool: 'current_time' }
   | { tool: 'force_user_camera'; target: string }
   | { tool: 'restart_server' }
   | { tool: 'refresh_clients' }
@@ -98,7 +100,7 @@ export function letsGo(call: ToolCall): call is { tool: LetGoTool } {
  */
 export function isLookup(call: ToolCall): boolean {
   return call.tool === 'read' || call.tool === 'recall' || call.tool === 'list_agents' || call.tool === 'list_nodes' || call.tool === 'agent_details' || call.tool === 'find_agent' || call.tool === 'nearby' ||
-    call.tool === 'agent_usage' || call.tool === 'backlog_next'
+    call.tool === 'agent_usage' || call.tool === 'current_time' || call.tool === 'backlog_next'
 }
 
 /**
@@ -200,7 +202,7 @@ function parseSayPart(value: unknown): SayPart {
 /** Every tool, so a wrong name is answered with the right ones rather than a guess at its fields. */
 const TOOL_NAMES: Record<ToolCall['tool'], true> = {
   read: true, ask_agent: true, monitor: true, send: true, interrupt: true, answer_permission: true, archive_agent: true, unarchive_agent: true,
-  spawn: true, rename_agent: true, recall: true, list_agents: true, list_nodes: true, agent_details: true, find_agent: true, nearby: true, agent_usage: true, force_user_camera: true,
+  spawn: true, rename_agent: true, recall: true, list_agents: true, list_nodes: true, agent_details: true, find_agent: true, nearby: true, agent_usage: true, current_time: true, force_user_camera: true,
   restart_server: true, refresh_clients: true, install_phone_app: true,
   backlog_add: true, backlog_next: true, mark_read: true,
   spotify_play: true, spotify_pause: true, spotify_next: true, spotify_volume: true,
@@ -222,6 +224,7 @@ function parseToolCall(value: unknown): ToolCall {
   if ('input' in value) throw new Error(`a tool call's fields go beside "tool", not under "input"`)
   if (value.tool === 'nearby') return { tool: 'nearby' }
   if (value.tool === 'agent_usage') return { tool: 'agent_usage' }
+  if (value.tool === 'current_time') return { tool: 'current_time' }
   if ((LET_GO_TOOLS as readonly string[]).includes(value.tool)) return { tool: value.tool as LetGoTool }
   if ((SPOTIFY_TOOLS as readonly string[]).includes(value.tool)) return { tool: value.tool as SpotifyTool }
   if (value.tool === 'spotify_volume') {
