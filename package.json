@@ -26,6 +26,7 @@
     "cli": "tsx src/cli/spaceterm-cli.ts",
     "flag-restart": "tsx src/cli/flag-restart.ts",
     "spotify": "tsx src/cli/spotify.ts",
+    "spotify-discover": "tsx src/cli/spotify-discover/index.ts",
     "lint": "eslint src/",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
