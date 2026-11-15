@@ -32,7 +32,10 @@ export const REDIRECT_URI = `http://127.0.0.1:${REDIRECT_PORT}/callback`
  * signing in again; the tokens record what was granted, so a command can
  * say which scope it lacks.
  */
-export const SCOPES = ['user-read-playback-state', 'user-modify-playback-state', 'user-read-currently-playing']
+export const SCOPES = [
+  'user-read-playback-state', 'user-modify-playback-state', 'user-read-currently-playing',
+  'user-read-recently-played', 'playlist-read-private', 'playlist-read-collaborative',
+]
 
 export const TOKEN_FILE = join(SOCKET_DIR, 'spotify.json')
 /** Where the user pastes the client ID during setup; sign-in moves it into TOKEN_FILE and deletes this. */

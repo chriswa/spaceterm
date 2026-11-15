@@ -21,6 +21,13 @@ import { parseWords, splitWords, type ParsedLine } from './command-line'
  * - Pausing what is already paused answers 403 "Restriction violated", so
  *   play and pause look first.
  * - Some phones do not let Spotify set their volume (`supports_volume` false).
+ * - Spotify's own "previous" restarts the song when it is a few seconds in,
+ *   so `previous` checks the song changed and asks again when it did not;
+ *   `restart` is the command that starts a song over.
+ * - The API has no radio: recommendations and related artists were closed to
+ *   new apps in November 2024, and artists' top tracks went in February
+ *   2026. Playing one song leaves Spotify's Autoplay to carry on with
+ *   similar ones, the nearest thing there is. Search returns at most 10.
  * - This Mac's Spotify app is listed under the Mac's computer name, as
  *   `scutil --get ComputerName` prints it ("Chris’s MacBook Pro"); another
  *   Mac signed in to the same account is a Computer too, so "mac" is matched
@@ -43,6 +50,8 @@ export interface SpotifyDeps {
   thisMacName(): Promise<string | undefined>
   /** Open Spotify on this Mac without bringing it forward. Never rejects. */
   launchMacApp(): Promise<void>
+  /** Epoch ms, for how long ago a song was played; Date.now when absent. */
+  now?(): number
 }
 
 function run(file: string, args: string[]): Promise<string | undefined> {
@@ -79,11 +88,35 @@ interface Device {
   supports_volume?: boolean
 }
 
+interface Item {
+  uri?: string
+  name: string
+  artists?: { name: string }[]
+  show?: { name: string }
+}
+
 interface PlaybackState {
   device: Device
   is_playing: boolean
-  item: { uri?: string; name: string; artists?: { name: string }[]; show?: { name: string } } | null
+  progress_ms?: number | null
+  item: Item | null
+  /** The playlist, album or artist playing from, if any. */
+  context?: { uri?: string } | null
 }
+
+interface Playlist {
+  name: string
+  uri: string
+  owner?: { display_name?: string }
+  /** `tracks` until February 2026, `items` since; only the count is read. */
+  items?: { total?: number }
+  tracks?: { total?: number }
+}
+
+/** What a play starts, when it starts something rather than resuming. */
+type Start =
+  | { body: { uris: string[] }; what: string; isPlaying(s: PlaybackState): boolean }
+  | { body: { context_uri: string }; what: string; isPlaying(s: PlaybackState): boolean }
 
 /** A command line Control got wrong: answered with how to get it right, never sent to Spotify. */
 class UsageError extends Error {}
@@ -105,10 +138,20 @@ interface Command {
   summary: string
   /** More than the summary, for `<command> --help`. */
   details?: string
+  /** The sign-in scopes this line needs beyond playback's, checked before Spotify is asked. */
+  scopes?(line: ParsedLine): string[]
   run(spotify: Spotify, line: ParsedLine, args: string[], context: RunContext): Promise<string>
 }
 
 const ON_OPTION = `--on <device> picks the device: "phone", "mac" (this Mac, whose Spotify app is opened if it is closed), "here" (wherever the user is talking to Control from), or a word from its name as \`devices\` lists it. Without --on, play plays where the user is, and the other commands go to whichever device is playing now. Add --on only when the user names a device.`
+
+const RECENT_SCOPE = 'user-read-recently-played'
+const PLAYLIST_SCOPES = ['playlist-read-private', 'playlist-read-collaborative']
+const RECENT_DEFAULT = 5
+const RECENT_MAX = 50
+const PLAYLIST_PAGE = 50
+const PLAYLIST_MAX = 200
+const SEARCH_LIMIT = 5
 
 const COMMANDS: Command[] = [
   {
@@ -123,10 +166,24 @@ const COMMANDS: Command[] = [
     run: (s) => s.devices(),
   },
   {
-    name: 'play', kind: 'action', usage: 'play [--on <device>]',
-    summary: 'resume the music where the user is; with --on, move it to that device and play it there',
-    details: `${ON_OPTION} A plain play, with nothing playing, plays on the device the user is talking from: the phone, or this Mac. "play --on phone" moves whatever was playing to the phone, from where it was, and plays it. It cannot choose a song, artist or playlist.`,
-    run: (s, line, _args, context) => s.play(option(line, 'on'), context),
+    name: 'play', kind: 'action', usage: 'play [--song "<words>" | --playlist "<name>"] [--on <device>]',
+    summary: 'resume the music where the user is, or start a song or one of the user\'s playlists; with --on, on that device',
+    details: [
+      ON_OPTION,
+      'A plain play, with nothing playing, plays on the device the user is talking from: the phone, or this Mac. "play --on phone" moves whatever was playing to the phone, from where it was, and plays it.',
+      '--song "<words>" searches Spotify for a song, such as --song "mr brightside killers", and plays the best match; say the artist too when you know it. Spotify\'s API has no radio, but when a single song ends, Spotify\'s own Autoplay setting (on unless the user turned it off) usually carries on with similar songs: the nearest thing to radio from that song.',
+      '--playlist "<name>" plays one of the user\'s own or followed playlists, matched by name; "playlists" lists them.',
+      'A song or playlist plays where music is playing now, or else where the user is.',
+    ].join(' '),
+    scopes: (line) => (line.options.has('playlist') ? PLAYLIST_SCOPES : []),
+    run: (s, line, _args, context) => {
+      const song = option(line, 'song')
+      const playlist = option(line, 'playlist')
+      if (song !== undefined && playlist !== undefined) throw new UsageError('play takes --song or --playlist, not both')
+      if (song !== undefined) return s.playSong(song, option(line, 'on'), context)
+      if (playlist !== undefined) return s.playPlaylist(playlist, option(line, 'on'), context)
+      return s.play(option(line, 'on'), context)
+    },
   },
   {
     name: 'pause', kind: 'action', usage: 'pause [--on <device>]',
@@ -139,6 +196,38 @@ const COMMANDS: Command[] = [
     summary: 'skip to the next song',
     details: ON_OPTION,
     run: (s, line, _args, context) => s.next(option(line, 'on'), context),
+  },
+  {
+    name: 'previous', kind: 'action', usage: 'previous [--on <device>]',
+    summary: 'go back to the song before this one',
+    details: `${ON_OPTION} Always the song before, for "go back a song", "previous song" or "the last song". To start this song over, use restart.`,
+    run: (s, line, _args, context) => s.previous(option(line, 'on'), context),
+  },
+  {
+    name: 'restart', kind: 'action', usage: 'restart [--on <device>]',
+    summary: 'start this song over from the beginning',
+    details: `${ON_OPTION} For "start this song over" or "from the top". For the song before this one, use previous.`,
+    run: (s, line, _args, context) => s.restart(option(line, 'on'), context),
+  },
+  {
+    name: 'recent', kind: 'lookup', usage: `recent [<count>]`,
+    summary: `the songs played most recently, newest first (${RECENT_DEFAULT} unless a count up to ${RECENT_MAX} is given)`,
+    details: 'Spotify counts only songs played for 30 seconds or more, and leaves out podcasts. The song playing now is in status, not here until it has played.',
+    scopes: () => [RECENT_SCOPE],
+    run: (s, _line, args) => {
+      const count = args.length ? Number(args[0]) : RECENT_DEFAULT
+      if (args.length > 1 || !Number.isInteger(count) || count < 1 || count > RECENT_MAX) {
+        throw new UsageError(`recent takes a count from 1 to ${RECENT_MAX}, such as "recent 10"`)
+      }
+      return s.recent(count)
+    },
+  },
+  {
+    name: 'playlists', kind: 'lookup', usage: 'playlists [<words>]',
+    summary: 'the user\'s own and followed playlists; with words, only those whose names contain them',
+    details: 'Play one with play --playlist "<name>".',
+    scopes: () => PLAYLIST_SCOPES,
+    run: (s, _line, args) => s.playlists(args.join(' ')),
   },
   {
     name: 'volume', kind: 'action', usage: 'volume <0-100> [--on <device>]',
@@ -171,7 +260,7 @@ function findCommand(positional: readonly string[]): { command: Command; args: s
   return best
 }
 
-const KNOWN_OPTIONS = new Set(['help', 'on'])
+const KNOWN_OPTIONS = new Set(['help', 'on', 'song', 'playlist'])
 
 /** The whole tool's help, for `--help`, a bare call, or a command it does not know. */
 export function overallHelp(): string {
@@ -183,7 +272,8 @@ export function overallHelp(): string {
     '',
     ON_OPTION,
     '"<command> --help" says more about one command.',
-    'status and devices only look; the others change the music.',
+    'status, devices, recent and playlists only look; the others change the music.',
+    'There is no radio in Spotify\'s API: play --song plays one song, after which Spotify\'s Autoplay usually carries on with similar ones.',
   ].join('\n')
 }
 
@@ -209,6 +299,42 @@ function trackText(item: PlaybackState['item']): string {
   if (!item) return 'nothing'
   const by = item.artists?.map((a) => a.name).join(', ') || item.show?.name
   return by ? `"${item.name}" by ${by}` : `"${item.name}"`
+}
+
+/** How long ago, roughly, in words: "4 minutes ago". */
+function ago(ms: number): string {
+  const minutes = Math.max(0, Math.round(ms / 60_000))
+  const unit = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'} ago`
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return unit(minutes, 'minute')
+  const hours = Math.round(minutes / 60)
+  if (hours < 48) return unit(hours, 'hour')
+  return unit(Math.round(hours / 24), 'day')
+}
+
+function words(text: string): string[] {
+  return text.toLowerCase().split(/\s+/).filter(Boolean)
+}
+
+function containsAll(name: string, query: string): boolean {
+  const lower = name.toLowerCase()
+  return words(query).every((w) => lower.includes(w))
+}
+
+function playlistText(p: Playlist): string {
+  const total = p.items?.total ?? p.tracks?.total
+  return `"${p.name}"${total === undefined ? '' : `, ${total} song${total === 1 ? '' : 's'}`}`
+}
+
+/** The playlist `query` names: exactly first, then by all its words; or why none or several do. */
+function pickPlaylist(query: string, playlists: readonly Playlist[]): Playlist | string {
+  const exact = playlists.filter((p) => p.name.trim().toLowerCase() === query.trim().toLowerCase())
+  if (exact.length === 1) return exact[0]
+  const candidates = exact.length ? exact : playlists.filter((p) => containsAll(p.name, query))
+  if (candidates.length === 1) return candidates[0]
+  if (!candidates.length) return `None of the user's playlists is called "${query}". "playlists" lists them.`
+  const shown = candidates.slice(0, 10).map((p) => `"${p.name}"`).join(', ')
+  return `"${query}" could be any of these playlists: ${shown}${candidates.length > 10 ? `, and ${candidates.length - 10} more` : ''}. Ask the user which.`
 }
 
 function deviceText(device: Device): string {
@@ -302,6 +428,11 @@ export class Spotify {
     if (line.options.has('help')) return commandHelp(found.command)
     const unknown = [...line.options.keys()].filter((name) => !KNOWN_OPTIONS.has(name))
     if (unknown.length) return `spotify: ${found.command.name} has no --${unknown[0]} option.\n\n${commandHelp(found.command)}`
+    const granted = this.auth.tokens()?.scope.split(/\s+/)
+    const missing = granted ? (found.command.scopes?.(line) ?? []).filter((scope) => !granted.includes(scope)) : []
+    if (missing.length) {
+      return `spotify ${found.command.name}: not allowed yet: the user needs to sign in again with "npm run spotify -- login" in the Spaceterm repo, to grant ${missing.join(' and ')}. An agent can run it for them; they click Agree in the browser.`
+    }
     try {
       return await found.command.run(this, line, found.args, context)
     } catch (err) {
@@ -373,6 +504,105 @@ export class Spotify {
     const before = await this.state()
     await this.request('POST', '/me/player/next', { query: target.id ? { device_id: target.id } : {} })
     return stateText(await this.settle((s) => s.item?.uri !== before?.item?.uri))
+  }
+
+  /** The song before this one, never this one from the top: Spotify's previous restarts a song a few seconds in, so it is asked again when the song did not change. */
+  async previous(on: string | undefined, context: RunContext): Promise<string> {
+    const target = await this.target(on, context)
+    if (typeof target === 'string') return target
+    const query: Record<string, string> = target.id ? { device_id: target.id } : {}
+    const before = await this.state()
+    if (!before) return `${stateText(undefined)}, so there is no song to go back from: name a device with --on.`
+    const uri = before.item?.uri
+    let after: PlaybackState | undefined = before
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const from = after
+      await this.request('POST', '/me/player/previous', { query })
+      after = await this.settle((s) => s.item?.uri !== uri || (s.progress_ms ?? 0) + 1000 < (from?.progress_ms ?? 0))
+      if (after?.item?.uri !== uri) return stateText(after)
+    }
+    return `There is no song before this one here; it started over instead. ${stateText(after)}`
+  }
+
+  /** This song from the beginning. */
+  async restart(on: string | undefined, context: RunContext): Promise<string> {
+    const target = await this.target(on, context)
+    if (typeof target === 'string') return target
+    if (!target.id && !(await this.state())) return `${stateText(undefined)}, so there is no song to start over.`
+    await this.request('PUT', '/me/player/seek', { query: { position_ms: 0, ...(target.id ? { device_id: target.id } : {}) } })
+    return `Started over. ${stateText(await this.settle((s) => (s.progress_ms ?? 0) < 3000))}`
+  }
+
+  async recent(count: number): Promise<string> {
+    const j = await this.request<{ items?: { track: Item; played_at: string }[] }>('GET', '/me/player/recently-played', { query: { limit: count } })
+    const items = j?.items ?? []
+    if (!items.length) return 'Spotify has no recently played songs.'
+    const now = this.deps.now?.() ?? Date.now()
+    return `Played most recently, newest first:\n${items.map((it, i) => `${i + 1}. ${trackText(it.track)}, ${ago(now - Date.parse(it.played_at))}`).join('\n')}`
+  }
+
+  async playlists(query: string): Promise<string> {
+    const all = await this.playlistList()
+    const shown = query.trim() ? all.filter((p) => containsAll(p.name, query)) : all
+    if (!all.length) return 'The user has no playlists of their own or followed.'
+    if (!shown.length) return `None of the user's ${all.length} playlists has "${query}" in its name.`
+    return `${query.trim() ? `The user's playlists matching "${query}"` : 'The user\'s playlists'}:\n${shown.map((p) => `- ${playlistText(p)}`).join('\n')}`
+  }
+
+  async playSong(query: string, on: string | undefined, context: RunContext): Promise<string> {
+    if (!query.trim()) throw new UsageError('--song needs words to search for, such as --song "mr brightside"')
+    const j = await this.request<{ tracks?: { items?: Item[] } }>('GET', '/search', { query: { q: query, type: 'track', limit: SEARCH_LIMIT } })
+    const track = j?.tracks?.items?.find((t) => t.uri)
+    if (!track?.uri) return `Spotify found no song for "${query}".`
+    const uri = track.uri
+    return this.start({ body: { uris: [uri] }, what: trackText(track), isPlaying: (s) => s.item?.uri === uri }, on, context)
+  }
+
+  async playPlaylist(query: string, on: string | undefined, context: RunContext): Promise<string> {
+    if (!query.trim()) throw new UsageError('--playlist needs a name, such as --playlist "Road trip"')
+    const picked = pickPlaylist(query, await this.playlistList())
+    if (typeof picked === 'string') return picked
+    const uri = picked.uri
+    return this.start({ body: { context_uri: uri }, what: `the playlist "${picked.name}"`, isPlaying: (s) => s.context?.uri === uri }, on, context)
+  }
+
+  /**
+   * Start a song or playlist: on the --on device; else where music is
+   * playing now; else where the user is; else where it was last; else on
+   * this Mac.
+   */
+  private async start(start: Start, on: string | undefined, context: RunContext): Promise<string> {
+    let deviceId: string | undefined
+    const choose = async (query: string): Promise<string | undefined> => {
+      const device = await this.device(query, context)
+      if (typeof device === 'string') return device
+      deviceId = device.id ?? undefined
+      return undefined
+    }
+    if (on) {
+      const problem = await choose(on)
+      if (problem) return problem
+    } else {
+      const before = await this.state()
+      if (before?.is_playing || (before && !context.here)) deviceId = before.device.id ?? undefined
+      else {
+        const problem = await choose(context.here ?? 'mac')
+        if (problem) return problem
+      }
+    }
+    await this.request('PUT', '/me/player/play', { query: deviceId ? { device_id: deviceId } : {}, body: start.body })
+    const after = await this.settle((s) => s.is_playing && start.isPlaying(s))
+    return after && start.isPlaying(after) ? stateText(after) : `Asked Spotify to play ${start.what}. ${stateText(after)}`
+  }
+
+  private async playlistList(): Promise<Playlist[]> {
+    const all: Playlist[] = []
+    for (let offset = 0; offset < PLAYLIST_MAX; offset += PLAYLIST_PAGE) {
+      const page = await this.request<{ items?: (Playlist | null)[]; next?: string | null }>('GET', '/me/playlists', { query: { limit: PLAYLIST_PAGE, offset } })
+      all.push(...(page?.items ?? []).filter((p): p is Playlist => !!p?.uri && !!p.name))
+      if (!page?.next) break
+    }
+    return all
   }
 
   async volume(percent: number, on: string | undefined, context: RunContext): Promise<string> {
