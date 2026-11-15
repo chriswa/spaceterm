@@ -12,7 +12,8 @@ import { spawn } from 'child_process'
 const AI_SPEND_TIMEOUT_MS = 10_000
 
 /**
- * Runs `ai-spend` in `env`, whose PATH finds it in `~/.local/bin`, and
+ * Runs `ai-spend` in `env`, whose login-shell PATH finds it (a symlink in
+ * `/opt/homebrew/bin` to claude-usage-tracker's `scripts/ai-spend`), and
  * resolves with its JSON as printed. Rejects with why it could not.
  */
 export function aiSpendRunner(env: () => NodeJS.ProcessEnv): () => Promise<string> {
