@@ -30,8 +30,9 @@ that transcript for the reasoning behind any item here.
   tokens of context, Control compacts it itself once the turn is over
   (`claude-print-daemon compact`), quietly, while the user listens to the
   turn's words, and holds every message back until it is done. It says
-  "Compaction failed." on a failure, and "Compaction complete." only when
-  the user's words were answered with silence.
+  "Compaction failed." on a failure, "Compaction complete." only when
+  the user's words were answered with silence, and "Compacting." when the
+  user speaks while one runs, so their words' wait is explained.
   Verified: each turn reads the
   whole conversation so far from the 1-hour cache and writes only its own
   tail. Below Haiku's minimum cacheable size (about 4k tokens) nothing is

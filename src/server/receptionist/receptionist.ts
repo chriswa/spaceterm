@@ -509,6 +509,8 @@ export const VOICE_FOLLOW_MS = 150
 export const INTERIM_CUT_WAIT_MS = 1500
 const TURN_FAILED_SPEECH = 'Sorry, I lost my train of thought. Could you say that again?'
 /** Said when a compaction for size ends, only where silence would leave the user wondering: see `compactIfLarge`. */
+/** Said when the user's words reach Control while it compacts for size, and will wait for it: see `runTurn`. */
+const COMPACTING = 'Compacting.'
 const COMPACTION_COMPLETE = 'Compaction complete.'
 const COMPACTION_FAILED = 'Compaction failed.'
 /** A compaction takes 15 to 55 seconds; past this it is given up on, and the session kept whole. */
@@ -2021,6 +2023,8 @@ export class Receptionist {
     const selfInterrupted = this.selfInterrupted
     this.selfInterrupted = false
     if (selfInterrupted && this.listening && !this.reading) await this.channel.deliverInterim(attempt, [{ text: HANG_ON, voice: RECEPTIONIST_VOICE }])
+    // The user's words wait behind a compaction for size, which takes 15 to 55 seconds: say why, so the silence is not a mystery.
+    else if (message && this.compacting && this.listening && !this.reading) await this.channel.deliverInterim(attempt, [{ text: COMPACTING, voice: RECEPTIONIST_VOICE }])
     await this.noteInterruption(selfInterrupted ? 'self' : 'user')
     // The last reply is over, and any cut in it noted: see `DeferredReads.heardOut`.
     this.reads.heardOut()

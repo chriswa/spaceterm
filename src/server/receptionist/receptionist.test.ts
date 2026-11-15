@@ -656,7 +656,7 @@ describe('Receptionist', () => {
       await second
       await flush()
       expect(h.turns).toHaveLength(2)
-      expect(texts(h)).toEqual(['Kevin is on it.', 'Sent.'])
+      expect(texts(h)).toEqual(['Kevin is on it.', 'Compacting.', 'Sent.'])
       // Small again: nothing more to compact.
       expect(h.compactions).toHaveLength(1)
     })
