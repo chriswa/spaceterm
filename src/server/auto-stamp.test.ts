@@ -63,6 +63,11 @@ describe('autoStampTitle', () => {
   it('drops the status glyph an agent CLI puts before its title', () => {
     expect(autoStampTitle({ type: 'terminal', name: null, shellTitleHistory: ['✳ Fix the parser'] } as unknown as NodeData)).toBe('Fix the parser')
   })
+
+  it('leaves out the fork label, falling back to the shell title for a bare fork', () => {
+    expect(autoStampTitle({ type: 'terminal', name: '[fork] Websocket transport', shellTitleHistory: ['Auto'] } as unknown as NodeData)).toBe('Websocket transport')
+    expect(autoStampTitle({ type: 'terminal', name: '[fork]', shellTitleHistory: ['✳ Fix the parser'] } as unknown as NodeData)).toBe('Fix the parser')
+  })
 })
 
 describe('autoStampPrompt', () => {

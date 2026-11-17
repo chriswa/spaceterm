@@ -1,5 +1,6 @@
 import type { NodeId } from '../shared/ids'
 import type { AutoStamp, NodeData } from '../shared/state'
+import { stripForkLabel } from './fork-title'
 
 /**
  * Auto-stamps: an icon generated from a node's title, so a canvas of
@@ -48,9 +49,13 @@ export interface AutoStamperDeps {
   log(message: string): void
 }
 
-/** The title an icon depicts: what the node's title bar shows. */
+/**
+ * The title an icon depicts: what the node's title bar shows, less the
+ * `[fork]` label, which would otherwise have every fork drawn as a fork.
+ */
 export function autoStampTitle(node: NodeData): string | null {
-  const raw = node.name?.trim() || (node.type === 'terminal' ? node.shellTitleHistory[0] : undefined)
+  const name = node.name ? stripForkLabel(node.name) : ''
+  const raw = name || (node.type === 'terminal' ? node.shellTitleHistory[0] : undefined)
   // Agent CLIs prefix their terminal title with a spinner or status glyph.
   const title = raw?.replace(/^[^\p{L}\p{N}]+/u, '').trim()
   return title || null
