@@ -8,14 +8,14 @@ import {
   type SessionStatusObserverDeps
 } from './session-status-observer'
 import type { PtySessionId, ClaudeSessionId } from '../../shared/ids'
-import type { CcSessionStatus } from '../../shared/state'
+import type { CcSessionStatus, CcSessionView } from '../../shared/state'
 import type { ClaudeState } from './types'
 
 const surfaceId = 'surface-1' as PtySessionId
 const claudeSessionId = 'sess-a' as ClaudeSessionId
 
 /** One `onStatus` call: what the footer would be told to show. */
-type Reported = [PtySessionId, CcSessionStatus | null, string | null]
+type Reported = [PtySessionId, CcSessionView]
 
 interface Harness {
   observer: SessionStatusObserver
@@ -47,7 +47,7 @@ function harness(now = 5_000): Harness {
   }
   const observer = new SessionStatusObserver(
     () => surfaces,
-    (surfaceId, status, waitingFor) => reported.push([surfaceId, status, waitingFor]),
+    (surfaceId, view) => reported.push([surfaceId, view]),
     (surfaceId, record) => sampled.push(`${surfaceId}:${record.status}@${record.statusUpdatedAt}`),
     deps
   )
@@ -60,6 +60,10 @@ function harness(now = 5_000): Harness {
     setSurfaces: (next) => { surfaces = next },
     tick: () => observer.observe()
   }
+}
+
+function view(ccStatus: CcSessionStatus | null, ccWaitingFor: string | null = null, ccName: string | null = null): CcSessionView {
+  return { ccStatus, ccWaitingFor, ccName }
 }
 
 function surface(state: ClaudeState, over: Partial<ObservedSurface> = {}): ObservedSurface {
@@ -218,13 +222,28 @@ describe('SessionStatusObserver', () => {
     h.setSurfaces([surface('working')])
     h.tick()
     h.tick()
-    expect(h.reported).toEqual([[surfaceId, 'busy', null]])
+    expect(h.reported).toEqual([[surfaceId, view('busy')]])
 
     h.setRegistry({
       '100.json': { pid: 100, sessionId: 'sess-a', status: 'waiting', waitingFor: 'dialog open', statusUpdatedAt: 2_000 }
     })
     h.tick()
-    expect(h.reported[1]).toEqual([surfaceId, 'waiting', 'dialog open'])
+    expect(h.reported[1]).toEqual([surfaceId, view('waiting', 'dialog open')])
+  })
+
+  it('reports the session name, and redraws when the session is renamed', () => {
+    const h = harness()
+    h.setRegistry({ '100.json': { pid: 100, sessionId: 'sess-a', status: 'busy', statusUpdatedAt: 1_000, name: 'research-71' } })
+    h.setSurfaces([surface('working')])
+    h.tick()
+    h.setRegistry({ '100.json': { pid: 100, sessionId: 'sess-a', status: 'busy', statusUpdatedAt: 1_000, name: 'auth-fix' } })
+    h.tick()
+    expect(h.reported).toEqual([
+      [surfaceId, view('busy', null, 'research-71')],
+      [surfaceId, view('busy', null, 'auth-fix')]
+    ])
+    // A rename is not a status change, so it is not worth a log line.
+    expect(h.lines).toHaveLength(1)
   })
 
   it('samples every tick, even when nothing changed, for consumers that wait out time', () => {
@@ -269,10 +288,10 @@ describe('SessionStatusObserver', () => {
     h.setRegistry({})
     h.tick()
     expect(h.reported).toEqual([
-      [surfaceId, 'busy', null],
-      [surfaceId, null, null]
+      [surfaceId, view('busy')],
+      [surfaceId, view(null)]
     ])
-    expect(JSON.stringify({ fields: { ccStatus: h.reported[1][1] } })).toContain('ccStatus')
+    expect(JSON.stringify({ fields: h.reported[1][1] })).toContain('ccStatus')
   })
 
   it('reports nothing for a non-claude surface', () => {

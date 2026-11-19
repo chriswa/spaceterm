@@ -18,7 +18,8 @@ import type {
   AlertType,
   AutoStamp,
   NodeStamp,
-  ReceptionistHolder
+  ReceptionistHolder,
+  CcSessionView
 } from '../shared/state'
 import { receptionistHolderOf } from '../shared/state'
 import { DEFAULT_AUTOMATION_OVERLAP, addRun, automationOf, type AutomationFiring, type AutomationPatch } from '../shared/automation'
@@ -1644,24 +1645,22 @@ export class StateManager {
   }
 
   /**
-   * Claude Code's own `busy | waiting | idle | shell` for this surface, for the
-   * footer to show beside the state we inferred.
+   * Claude Code's own `busy | waiting | idle | shell` and messaging name for
+   * this surface, for the footer to show beside the state we inferred.
    *
    * `applyPatch`, not `patchNode`: this describes a live process, so persisting
    * it would restore a claim about a session that no longer exists on the next
    * startup. The observer re-reports within a tick of the server coming up.
    */
-  updateCcSessionStatus(
-    ptySessionId: PtySessionId,
-    status: import('../shared/state').CcSessionStatus | null,
-    waitingFor: string | null
-  ): void {
+  updateCcSessionView(ptySessionId: PtySessionId, view: CcSessionView): void {
     const node = this.getTerminalBySession(ptySessionId)
-    // `?? null` on both sides so a never-observed node (undefined) and a cleared
-    // one (null) compare equal — otherwise the first clear after startup would
-    // broadcast a patch that changes nothing.
-    if (!node || ((node.ccStatus ?? null) === status && (node.ccWaitingFor ?? null) === waitingFor)) return
-    this.applyPatch(node, { ccStatus: status, ccWaitingFor: waitingFor })
+    if (!node) return
+    // `?? null` so a never-observed node (undefined) and a cleared one (null)
+    // compare equal — otherwise the first clear after startup would broadcast a
+    // patch that changes nothing.
+    const unchanged = (Object.keys(view) as (keyof CcSessionView)[]).every((key) => (node[key] ?? null) === view[key])
+    if (unchanged) return
+    this.applyPatch(node, view)
   }
 
   /**
@@ -1669,7 +1668,7 @@ export class StateManager {
    *
    * `applyPatch`, not `patchNode`: the ledger behind this count lives only in
    * memory, so persisting it would restore an offer to take up work that died
-   * with the last server process. Same reasoning as `updateCcSessionStatus`.
+   * with the last server process. Same reasoning as `updateCcSessionView`.
    */
   updateClaudeDismissedBackground(ptySessionId: PtySessionId, count: number): void {
     const node = this.getTerminalBySession(ptySessionId)

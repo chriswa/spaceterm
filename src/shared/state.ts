@@ -26,6 +26,18 @@ export type ClaudeState = 'stopped' | 'working' | 'working_background' | 'waitin
 export const CC_SESSION_STATUSES = ['busy', 'shell', 'idle', 'waiting'] as const
 export type CcSessionStatus = (typeof CC_SESSION_STATUSES)[number]
 
+/**
+ * What the footer shows from a surface's registry record, keyed by the node
+ * fields that carry it so a report can be applied as a patch as-is. Every field
+ * is null when there is no live record.
+ */
+export interface CcSessionView {
+  ccStatus: CcSessionStatus | null
+  ccWaitingFor: string | null
+  /** The session's messaging name (`research-71`), as other sessions address it. */
+  ccName: string | null
+}
+
 // --- Terminal session tracking ---
 
 export interface TerminalSessionEntry {
@@ -216,6 +228,8 @@ export interface TerminalNodeData extends BaseNodeData {
    */
   ccStatus?: CcSessionStatus | null
   ccWaitingFor?: string | null
+  /** Claude Code's messaging name for the session (`research-71`). Same lifetime and null rule as `ccStatus`. */
+  ccName?: string | null
   /**
    * How many background launches this surface has dismissed — work the ledger
    * tracked and then stopped counting as blocking (see background-ledger.ts).

@@ -37,14 +37,15 @@ describe('pidFromFileName', () => {
 
 describe('parseSessionRegistryRecord', () => {
   it('reads the fields we care about', () => {
-    const parsed = parseSessionRegistryRecord('100.json', record({ procStart: 'Tue Sep 8 16:08:47 2026' }))
+    const parsed = parseSessionRegistryRecord('100.json', record({ procStart: 'Tue Sep 8 16:08:47 2026', name: 'research-71' }))
     expect(parsed).toEqual({
       pid: 100,
       claudeSessionId: 'sess-a',
       status: 'busy',
       statusUpdatedAt: 1000,
       kind: 'interactive',
-      procStart: 'Tue Sep 8 16:08:47 2026'
+      procStart: 'Tue Sep 8 16:08:47 2026',
+      name: 'research-71'
     })
   })
 

@@ -205,6 +205,8 @@ interface TerminalCardProps {
   /** Claude Code's own status for this surface — footer only, Claude surfaces only. */
   ccStatus?: CcSessionStatus | null
   ccWaitingFor?: string | null
+  /** Claude Code's messaging name for the session (`research-71`). */
+  ccName?: string | null
   onExit?: (id: NodeId, exitCode: number) => void
   onNodeReady?: (nodeId: NodeId, bounds: { x: number; y: number; width: number; height: number }) => void
   onDragStart?: (id: NodeId, solo?: boolean, ctrlAtStart?: boolean, shiftAtStart?: boolean) => void
@@ -240,7 +242,7 @@ interface TerminalCardProps {
 export function TerminalCard({
   id, sessionId, x, y, cols, rows, zIndex, zoom, name, colorPresetId, resolvedPreset, shellTitle, shellTitleHistory, cwd, focused, selected, anyNodeFocused, claudeStatusUnread, claudeStatusAsleep, scrollMode,
   onFocus, onUnfocus, onDisableScrollMode, onForwardWheelToCanvas, onClose, onMove, onRename, archivedChildren, onColorChange, onStampChange, onOpenArchiveSearch,
-  claudeSessionHistory, agentType, claudeState, claudeDismissedBackground, claudeModel, claudeEffort, claudeContextPercent, claudeSessionLineCount, ccStatus, ccWaitingFor, onExit, onNodeReady,
+  claudeSessionHistory, agentType, claudeState, claudeDismissedBackground, claudeModel, claudeEffort, claudeContextPercent, claudeSessionLineCount, ccStatus, ccWaitingFor, ccName, onExit, onNodeReady,
   onDragStart, onDragEnd, onStartReparent, onStartResize, onReparentTarget,
   terminalSessions, onSessionRevive, onFork, onExtraCliArgs, extraCliArgs, lastInteractedAt, onHoverFocus, onHoverUnfocus, onAddNode, cameraRef,
   chromeless = false, autoFocus = true, onRowHeight
@@ -1438,6 +1440,7 @@ export function TerminalCard({
           e.stopPropagation()
           let text = `${new Date().toISOString()} Node ID: ${id} Surface ID: ${id}`
           if (lastClaudeSession) text += ` ${agentLabel} session ID: ${lastClaudeSession.claudeSessionId}`
+          if (lastClaudeSession && ccName) text += ` Session name: ${ccName}`
           text += ` ${agentLabel} State: ${claudeState ?? 'stopped'} (${claudeStatusUnread ? 'unread' : 'read'})`
           // Claude Code's own status goes in the copied string too: this text is
           // what gets pasted into a bug report, and a state complaint is far
@@ -1464,6 +1467,16 @@ export function TerminalCard({
                 <span>{claudeStateLabel(claudeState)}</span>
                 {ccLabel && <><span>&nbsp;/&nbsp;</span><span title="Claude Code's own status, for comparison">{ccLabel}</span></>}
                 {modelLabel && <><span>&nbsp;|&nbsp;</span><span>{modelLabel}</span></>}
+                {ccName && (
+                  <>
+                    <span>&nbsp;|&nbsp;</span>
+                    <span className="terminal-card__footer-id" title="Claude Code's messaging name for this session" onClick={(e) => {
+                      e.stopPropagation()
+                      navigator.clipboard.writeText(ccName)
+                      showToast(`Copied to clipboard: ${ccName}`)
+                    }} onMouseDown={(e) => e.stopPropagation()}>{ccName}</span>
+                  </>
+                )}
               </>
             )}
             <span>&nbsp;|&nbsp;Last Interacted:&nbsp;{interactedLabel}</span>

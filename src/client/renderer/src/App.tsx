@@ -2853,6 +2853,7 @@ export function App() {
             claudeSessionLineCount={t.claudeSessionLineCount}
             ccStatus={t.ccStatus}
             ccWaitingFor={t.ccWaitingFor}
+            ccName={t.ccName}
             onNodeReady={handleNodeReady}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}

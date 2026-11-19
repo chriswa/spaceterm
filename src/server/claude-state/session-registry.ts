@@ -75,6 +75,12 @@ export interface SessionRegistryRecord {
    * instead of silently wrong.
    */
   procStart?: string
+  /**
+   * The session's messaging name (`research-71`, `spaceterm-87`) — what other
+   * sessions address it by. Display only: it is derived from the cwd and can
+   * be renamed while the process lives, so it is never a join key.
+   */
+  name?: string
 }
 
 /**
@@ -175,6 +181,8 @@ export function parseSessionRegistryRecord(fileName: string, body: string): Sess
   if (kind !== undefined) record.kind = kind
   const procStart = asText(fields.procStart)
   if (procStart !== undefined) record.procStart = procStart
+  const name = asText(fields.name)
+  if (name !== undefined) record.name = name
   return record
 }
 

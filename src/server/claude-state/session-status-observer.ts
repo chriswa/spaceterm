@@ -31,10 +31,10 @@
  * count as change. `updatedAt` deliberately does not — it churns on unrelated
  * registry writes (session renames, socket paths) and would bury the signal.
  *
- * The same pass reports the current status to `onStatus`, which puts it in the
- * card footer beside the state we inferred. That is display, not inference: the
- * two are shown together so a disagreement is visible while it is happening
- * rather than only in the log afterwards. Reporting is deduped separately from
+ * The same pass reports the current status and session name to `onStatus`,
+ * which puts them in the card footer beside the state we inferred. That is
+ * display, not inference: the two are shown together so a disagreement is
+ * visible while it is happening rather than only in the log afterwards. Reporting is deduped separately from
  * logging, because a log line is warranted whenever *either* side moves while a
  * footer only needs redrawing when the registry's half does.
  */
@@ -46,6 +46,7 @@ import { localISOTimestamp } from '../timestamp'
 import type { PtySessionId, ClaudeSessionId } from '../../shared/ids'
 import type { AgentType } from '../../shared/agent-type'
 import type { ClaudeState } from './types'
+import type { CcSessionView } from '../../shared/state'
 import {
   readSessionRegistry,
   REAL_SESSION_REGISTRY_DEPS,
@@ -76,21 +77,17 @@ export interface ObservedSurface {
 export type Agreement = 'agree' | 'disagree' | 'no-opinion'
 
 /**
- * Reports a surface's current registry status for display. `null` when the
- * registry has no record for the surface (its process is gone, or this Claude
- * Code is too old to publish one) or no usable status in it — the footer must
- * then show nothing rather than the last value it saw, which would be a claim
- * about a session that no longer exists.
+ * Reports a surface's current registry status and name for display. All null
+ * when the registry has no record for the surface (its process is gone, or this
+ * Claude Code is too old to publish one) — the footer must then show nothing
+ * rather than the last value it saw, which would be a claim about a session
+ * that no longer exists.
  *
  * Null rather than undefined because the value ends up on a node and crosses
  * the socket as JSON, where undefined fields are dropped and a clear would
  * silently do nothing. See `ccStatus` in shared/state.ts.
  */
-export type OnSessionStatus = (
-  surfaceId: PtySessionId,
-  status: CcSessionStatus | null,
-  waitingFor: string | null
-) => void
+export type OnSessionStatus = (surfaceId: PtySessionId, view: CcSessionView) => void
 
 /**
  * Reports every joined record on every tick, undeduped. That is the point: a
@@ -208,7 +205,7 @@ export class SessionStatusObserver {
   private cancel: (() => void) | null = null
   /** surfaceId → last written fingerprint, so an unchanged tick writes nothing. */
   private lastLogged = new Map<PtySessionId, string>()
-  /** surfaceId → last reported `status|waitingFor`, so an unchanged tick redraws nothing. */
+  /** surfaceId → last reported view, serialised, so an unchanged tick redraws nothing. */
   private lastReported = new Map<PtySessionId, string>()
 
   constructor(
@@ -249,10 +246,15 @@ export class SessionStatusObserver {
       // Report first, and report the absence too: a surface whose record has
       // gone must clear its footer rather than keep showing a dead session's
       // last status.
-      const reported = [record?.status ?? '-', record?.waitingFor ?? '-'].join('|')
+      const view: CcSessionView = {
+        ccStatus: record?.status ?? null,
+        ccWaitingFor: record?.waitingFor ?? null,
+        ccName: record?.name ?? null
+      }
+      const reported = JSON.stringify(view)
       if (this.lastReported.get(surface.surfaceId) !== reported) {
         this.lastReported.set(surface.surfaceId, reported)
-        this.onStatus(surface.surfaceId, record?.status ?? null, record?.waitingFor ?? null)
+        this.onStatus(surface.surfaceId, view)
       }
 
       // No record is the normal state for a session whose process has exited,

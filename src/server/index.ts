@@ -4371,8 +4371,8 @@ async function startServer(): Promise<void> {
       })
     }
     return surfaces
-  }, (surfaceId, status, waitingFor) => {
-    stateManager.updateCcSessionStatus(surfaceId, status, waitingFor)
+  }, (surfaceId, view) => {
+    stateManager.updateCcSessionView(surfaceId, view)
   }, (surfaceId, record) => {
     claudeStateMachine.handleSessionStatus(surfaceId, record.status ?? null, record.statusUpdatedAt)
   })
