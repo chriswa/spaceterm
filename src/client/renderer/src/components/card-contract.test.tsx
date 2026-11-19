@@ -7,6 +7,7 @@ import { FileCard } from './FileCard'
 import { DirectoryCard } from './DirectoryCard'
 import { MarkdownCard } from './MarkdownCard'
 import { AutomationCard } from './AutomationCard'
+import { BrowserCard } from './BrowserCard'
 import { useNodeStore } from '../stores/nodeStore'
 import { cardChromeScale, type CardType } from '../../../../shared/card-types'
 import { asNodeId, ROOT_NODE_ID, type NodeId } from '../../../../shared/ids'
@@ -127,6 +128,12 @@ const CARDS: CardCase[] = [
         onClearQueue={vi.fn()}
       />
     )
+  },
+  {
+    name: 'BrowserCard',
+    nodeType: 'browser',
+    visibleText: 'Example Domain',
+    build: (s) => <BrowserCard {...s} profile="chrome" url="https://example.com/" title="Example Domain" width={1280} height={800} />
   },
   {
     name: 'MarkdownCard',

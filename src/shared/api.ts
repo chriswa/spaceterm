@@ -40,6 +40,8 @@ import type { NodeId, PtySessionId } from './ids'
 import type { UsageSnapshot } from './usage-report'
 import type { SystemStatsSnapshot } from './system-stats'
 import type { LocationFix } from './location'
+import type { BrowserHistoryAction, BrowserInput, BrowserStatus } from './browser'
+import type { BrowserFrameListener, BrowserWatch, BrowserWatchOptions } from './browser-watches'
 
 export type { CameraBounds, ClaudeSessionEntry, CreateOptions, SessionInfo }
 /** What Control is doing; see `ReceptionistStatusMessage`. */
@@ -441,6 +443,21 @@ export interface ReceptionistApi {
   onNotice(callback: (text: string) => void): () => void
 }
 
+/**
+ * A browser card's page, which lives on the server. See `shared/browser.ts`.
+ *
+ * `watch` asks for frames, as a thumbnail or `live` for a card in use, and
+ * hands each to `onFrame`; the next is not sent until the promise it returns
+ * settles. Views of the same card are merged (see `BrowserWatches`).
+ */
+export interface BrowserApi {
+  watch(nodeId: NodeId, opts: BrowserWatchOptions, onFrame: BrowserFrameListener): BrowserWatch
+  input(nodeId: NodeId, input: BrowserInput): void
+  history(nodeId: NodeId, action: BrowserHistoryAction): void
+  /** The page's status now, if known, and on every change. */
+  onStatus(nodeId: NodeId, callback: (status: BrowserStatus) => void): () => void
+}
+
 export interface PerfApi {
   startTrace(): Promise<void>
   stopTrace(): Promise<string>
@@ -512,6 +529,7 @@ export interface WindowApi {
 export interface Api {
   pty: PtyApi
   node: NodeApi
+  browser: BrowserApi
   log(message: string): void
   restartSpaceterm(): Promise<void>
   /**

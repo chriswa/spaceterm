@@ -18,6 +18,12 @@ interface SurfacePresenterState {
   external: boolean
   /** The terminal App has focused, or null. Published by App. */
   focusedTerminal: NodeId | null
+  /**
+   * The browser card App has focused, or null. Published by App. With
+   * `external` set the host shows the page (the phone's BrowserView) and the
+   * card stays a thumbnail.
+   */
+  focusedBrowser: NodeId | null
   /** Bumped by the host to ask App to unfocus. */
   unfocusRequests: number
   /**
@@ -45,6 +51,7 @@ interface SurfacePresenterState {
   setToolbarSheetOpen(open: boolean): void
   setExternal(external: boolean): void
   publishFocusedTerminal(nodeId: NodeId | null): void
+  publishFocusedBrowser(nodeId: NodeId | null): void
   requestUnfocus(zoomOut?: number): void
   requestFocus(nodeId: NodeId): void
   /** App has acted on request `seq`. A newer request is left alone. */
@@ -57,6 +64,7 @@ let focusRequestSeq = 0
 export const useSurfacePresenterStore = create<SurfacePresenterState>((set) => ({
   external: false,
   focusedTerminal: null,
+  focusedBrowser: null,
   unfocusRequests: 0,
   unfocusZoomOut: undefined,
   focusRequest: null,
@@ -66,6 +74,7 @@ export const useSurfacePresenterStore = create<SurfacePresenterState>((set) => (
   setToolbarSheetOpen: (toolbarSheetOpen) => set({ toolbarSheetOpen }),
   setExternal: (external) => set({ external }),
   publishFocusedTerminal: (nodeId) => set((s) => (s.focusedTerminal === nodeId ? s : { focusedTerminal: nodeId })),
+  publishFocusedBrowser: (nodeId) => set((s) => (s.focusedBrowser === nodeId ? s : { focusedBrowser: nodeId })),
   requestUnfocus: (zoomOut) => set((s) => ({ unfocusRequests: s.unfocusRequests + 1, unfocusZoomOut: zoomOut })),
   requestFocus: (nodeId) => set({ focusRequest: { nodeId, seq: ++focusRequestSeq } }),
   clearFocusRequest: (seq) => set((s) => (s.focusRequest?.seq === seq ? { focusRequest: null } : s))

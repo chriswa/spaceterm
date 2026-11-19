@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 37
+export const CLIENT_PROTOCOL_VERSION = 38
 
 /**
  * Oldest client protocol this build still serves.
@@ -162,5 +162,8 @@ export const CLIENT_PROTOCOL_VERSION = 37
  *
  * v36 cannot show the history of notifications sent (`notifications-query`)
  * and ignores `notification-sent`; it loses nothing else.
+ *
+ * v37 has no browser cards: its node store throws on the `browser` node type,
+ * so it must be reloaded once a canvas holds one.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

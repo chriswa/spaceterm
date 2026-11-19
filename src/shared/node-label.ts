@@ -55,6 +55,11 @@ export function nodeLabelText(data: NodeData, markdownContent?: string): string 
     return data.trigger.trim() || null
   }
 
+  // The page's title, which is what its tab would say.
+  if (data.type === 'browser') {
+    return data.title.trim() || null
+  }
+
   if (data.type === 'markdown') {
     const content = markdownContent ?? data.content
     const firstLine = content.split('\n').find((l) => l.trim().length > 0)

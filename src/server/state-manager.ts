@@ -11,6 +11,7 @@ import type {
   FileNodeData,
   TitleNodeData,
   AutomationNodeData,
+  BrowserNodeData,
   TerminalSessionEntry,
   ArchivedNode,
   ArchivedDescendant,
@@ -43,7 +44,8 @@ import type { AgentType } from '../shared/agent-type'
 import type { AgentEffort } from '../shared/agent-effort'
 import { isDisposable } from '../shared/node-utils'
 import { findAncestor, lookupIn, wouldCreateCycle } from '../shared/node-ancestry'
-import { MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH } from '../shared/node-size'
+import { MARKDOWN_DEFAULT_WIDTH, MARKDOWN_DEFAULT_HEIGHT, MARKDOWN_DEFAULT_MAX_WIDTH, BROWSER_DEFAULT_WIDTH, BROWSER_DEFAULT_HEIGHT } from '../shared/node-size'
+import type { BrowserProfile } from '../shared/browser'
 
 /**
  * How long a freshly spawned pty is protected from archiving its surface. A pty
@@ -2041,6 +2043,42 @@ export class StateManager {
     this.onNodeAdd(node)
     this.schedulePersist()
     return node
+  }
+
+  // --- Browser operations ---
+
+  createBrowser(parentId: NodeId, x: number, y: number, url: string, profile: BrowserProfile): BrowserNodeData {
+    const id = asNodeId(randomUUID())
+    const node: BrowserNodeData = {
+      id,
+      type: 'browser',
+      lastInteractedAt: Date.now(),
+      parentId,
+      x,
+      y,
+      zIndex: this.state.nextZIndex++,
+      profile,
+      url,
+      title: '',
+      width: BROWSER_DEFAULT_WIDTH,
+      height: BROWSER_DEFAULT_HEIGHT,
+      archivedChildren: [],
+      colorPresetId: 'inherit'
+    }
+    this.state.nodes[id] = node
+    this.onNodeAdd(node)
+    this.schedulePersist()
+    return node
+  }
+
+  /** Where a browser card's page has got to. */
+  updateBrowserPage(nodeId: NodeId, patch: { url?: string; title?: string }): void {
+    const node = this.state.nodes[nodeId]
+    if (!node || node.type !== 'browser') return
+    this.patchNode(node, {
+      ...(patch.url !== undefined ? { url: patch.url } : {}),
+      ...(patch.title !== undefined ? { title: patch.title } : {})
+    })
   }
 
   /** Live automation cards, for the scheduler. */

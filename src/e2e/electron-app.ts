@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync
 import { join, dirname, basename } from 'path'
 import { tmpdir } from 'os'
 import { fileURLToPath } from 'url'
-import { spawn, type ChildProcess } from 'child_process'
+import { execFileSync, spawn, type ChildProcess } from 'child_process'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { SOCKET_PATH } from '../shared/protocol'
 
@@ -210,9 +210,34 @@ export async function launchApp(
       // The daemon outlives the server on purpose (that is how sessions survive
       // a server restart), so it has to be told to go.
       await stopDaemon(home)
+      await stopIsolatedBrowser(home)
       rmSync(home, { recursive: true, force: true })
     }
   }
+}
+
+/**
+ * The server closes its headless Chrome as it shuts down; this is for one that
+ * outlived its server, and waits for it to go, since Chrome writes its profile
+ * on the way out and the folder cannot be removed under it.
+ */
+async function stopIsolatedBrowser(home: string): Promise<void> {
+  const pattern = `--user-data-dir=${join(home, 'browser-profile')}`
+  const running = () => {
+    try {
+      execFileSync('pgrep', ['-f', '--', pattern], { stdio: 'ignore' })
+      return true
+    } catch {
+      return false
+    }
+  }
+  if (!running()) return
+  try {
+    execFileSync('pkill', ['-f', '--', pattern])
+  } catch {
+    // Gone in the meantime.
+  }
+  for (let i = 0; i < 50 && running(); i++) await new Promise((resolve) => setTimeout(resolve, 100))
 }
 
 /**

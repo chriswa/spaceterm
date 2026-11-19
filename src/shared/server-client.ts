@@ -15,6 +15,7 @@ import { unhandledVariant } from './exhaustive'
 import type { NodeId, PtySessionId } from './ids'
 import type { NodeStamp, ServerState } from './state'
 import type { UndoEntry } from './undo-types'
+import type { BrowserHistoryAction, BrowserInput, BrowserViewport } from './browser'
 import type { AutomationEventRecord, AutomationPatch } from './automation'
 import type { NotificationRecord } from './notifications'
 
@@ -80,6 +81,7 @@ export type ServerEventType =
   | 'hands-free-event' | 'hands-free-stream' | 'dictation-kept'
   | 'location-request'
   | 'block-alert' | 'block-alert-cleared'
+  | 'browser-frame' | 'browser-status'
 
 export type ServerEvent<T extends ServerEventType = ServerEventType> = Extract<ServerMessage, { type: T }>
 
@@ -315,6 +317,8 @@ export class ServerClient {
       case 'hands-free-stream':
       case 'dictation-kept':
       case 'location-request':
+      case 'browser-frame':
+      case 'browser-status':
         this.emit(msg)
         return
 
@@ -744,6 +748,26 @@ export class ServerClient {
 
   setTerminalMode(sessionId: PtySessionId, mode: 'live' | 'snapshot' | 'none'): void {
     this.fireAndForget({ type: 'set-terminal-mode', sessionId, mode })
+  }
+
+  browserWatch(nodeId: NodeId, opts: { live: boolean; scale: number; viewport?: BrowserViewport }): void {
+    this.fireAndForget({ type: 'browser-watch', nodeId, ...opts })
+  }
+
+  browserUnwatch(nodeId: NodeId): void {
+    this.fireAndForget({ type: 'browser-unwatch', nodeId })
+  }
+
+  browserAck(nodeId: NodeId): void {
+    this.fireAndForget({ type: 'browser-ack', nodeId })
+  }
+
+  browserInput(nodeId: NodeId, input: BrowserInput): void {
+    this.fireAndForget({ type: 'browser-input', nodeId, input })
+  }
+
+  browserHistory(nodeId: NodeId, action: BrowserHistoryAction): void {
+    this.fireAndForget({ type: 'browser-history', nodeId, action })
   }
 
   setClaudeStatusUnread(sessionId: PtySessionId, unread: boolean): void {

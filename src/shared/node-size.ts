@@ -227,6 +227,17 @@ export const AUTOMATION_GEAR_SIZE = AUTOMATION_WIDTH * 1.5
 /** How far the gear's teeth reach from its centre: its tip radius is 47 of the glyph's 100. */
 export const AUTOMATION_GEAR_REACH = AUTOMATION_GEAR_SIZE * 0.47
 
+// Browser node dimensions. The page is `width × height` CSS pixels; the card
+// adds a border all round and the shell's head above it.
+export const BROWSER_DEFAULT_WIDTH = 1280
+export const BROWSER_DEFAULT_HEIGHT = 800
+export const BROWSER_CHROME_W = CARD_BORDER * 2
+export const BROWSER_CHROME_H = CARD_BORDER * 2 + HEADER_PADDING_V * 2 + HEADER_CONTENT_H + HEADER_BORDER_BOTTOM
+
+export function browserCardSize(width: number, height: number): { width: number; height: number } {
+  return { width: width + BROWSER_CHROME_W, height: height + BROWSER_CHROME_H }
+}
+
 // Title node dimensions — see LABEL_NODE_SCALE above.
 export const TITLE_DEFAULT_WIDTH = 600 * LABEL_NODE_SCALE
 export const TITLE_HEIGHT = 120 * LABEL_NODE_SCALE
@@ -371,6 +382,7 @@ export type NodeLike =
   | { type: 'file' }
   | { type: 'title'; text: string }
   | { type: 'automation' }
+  | { type: 'browser'; width: number; height: number }
   | { type: 'markdown'; width: number; height: number }
   | { type: 'meta-group'; label: string }
   | { type: 'meta-doc'; width: number; height: number }

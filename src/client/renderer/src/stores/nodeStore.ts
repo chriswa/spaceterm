@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, FileNodeData, TitleNodeData, AutomationNodeData, MetaGroupNodeData, MetaDocNodeData, ArchivedNode } from '../../../../shared/state'
+import type { ServerState, NodeData, TerminalNodeData, MarkdownNodeData, DirectoryNodeData, FileNodeData, TitleNodeData, AutomationNodeData, BrowserNodeData, MetaGroupNodeData, MetaDocNodeData, ArchivedNode } from '../../../../shared/state'
 import { measureCard as nodePixelSize } from '../../../../shared/card-types'
 import { assertNever } from '../../../../shared/exhaustive'
 import { type NodeId } from '../../../../shared/ids'
@@ -28,6 +28,7 @@ interface NodeStoreState {
   files: FileNodeData[]
   titles: TitleNodeData[]
   automations: AutomationNodeData[]
+  browsers: BrowserNodeData[]
   metaGroups: MetaGroupNodeData[]
   metaDocs: MetaDocNodeData[]
 
@@ -90,6 +91,7 @@ function recomputeDerived(nodes: Record<string, NodeData>) {
   const files: FileNodeData[] = []
   const titles: TitleNodeData[] = []
   const automations: AutomationNodeData[] = []
+  const browsers: BrowserNodeData[] = []
   const metaGroups: MetaGroupNodeData[] = []
   const metaDocs: MetaDocNodeData[] = []
 
@@ -100,6 +102,7 @@ function recomputeDerived(nodes: Record<string, NodeData>) {
       case 'file': files.push(node); break
       case 'title': titles.push(node); break
       case 'automation': automations.push(node); break
+      case 'browser': browsers.push(node); break
       case 'markdown': markdowns.push(node); break
       case 'meta-group': metaGroups.push(node); break
       case 'meta-doc': metaDocs.push(node); break
@@ -114,7 +117,7 @@ function recomputeDerived(nodes: Record<string, NodeData>) {
     }
   }
 
-  return { nodeList, liveTerminals, markdowns, directories, files, titles, automations, metaGroups, metaDocs }
+  return { nodeList, liveTerminals, markdowns, directories, files, titles, automations, browsers, metaGroups, metaDocs }
 }
 
 function mergeNodes(
@@ -148,6 +151,7 @@ export const useNodeStore = create<NodeStoreState>((set, get) => ({
   files: [],
   titles: [],
   automations: [],
+  browsers: [],
   metaGroups: [],
   metaDocs: [],
   nodeList: [],

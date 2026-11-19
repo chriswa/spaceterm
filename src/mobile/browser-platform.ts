@@ -49,7 +49,7 @@ function log(message: string): void {
  * purpose, not visible. Each view covers it separately, so closing one never
  * uncovers it while the other is still up.
  */
-export type CanvasCover = 'terminal' | 'control'
+export type CanvasCover = 'terminal' | 'browser' | 'control'
 const coveredBy = new Set<CanvasCover>()
 
 /** The page is hidden: the screen off, or another app in front. */

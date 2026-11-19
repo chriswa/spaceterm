@@ -38,6 +38,10 @@ import { NotificationLog } from './notification-log'
 import { expandTilde } from './cwd'
 import { AutomationRunner, fileHeartbeat } from './automation-runner'
 import { isAutomationRun, parseAutomationPatch, type AutomationPatch } from '../shared/automation'
+import type { BrowserProfile } from '../shared/browser'
+import { CARD_TYPE_SPECS } from '../shared/card-types'
+import { BrowserManager } from './browser/browser-manager'
+import { BrowserUnavailableError, IsolatedChrome, connectLiveChrome } from './browser/chrome-endpoints'
 import { DaemonClient } from './daemon-client'
 import { StateManager } from './state-manager'
 import { SnapshotManager } from './snapshot-manager'
@@ -84,7 +88,7 @@ import { AgentMetaAvailability } from './agent-meta-availability'
 import { SessionStatusObserver, type ObservedSurface } from './claude-state/session-status-observer'
 import { resolveFilePath, getAncestorCwd } from './path-utils'
 import { ancestorsOf, lookupIn } from '../shared/node-ancestry'
-import { DESKTOP_DEVICE, isNodeStamp, type AutomationNodeData, type MarkdownNodeData, type NodeData, type ReceptionistHolder, type TerminalNodeData } from '../shared/state'
+import { DESKTOP_DEVICE, isNodeStamp, type AutomationNodeData, type BrowserNodeData, type MarkdownNodeData, type NodeData, type ReceptionistHolder, type TerminalNodeData } from '../shared/state'
 import { forkSession, sessionFilePath } from './session-fork'
 import { ForkTitler, forkName, surfaceTitle, FORK_LABEL } from './fork-title'
 import { parse as shellParse } from 'shell-quote'
@@ -1166,6 +1170,46 @@ const locationBroker = new LocationBroker({
   },
 })
 
+/** Spaceterm's own headless Chrome, behind `isolated` browser cards. Started on first use. */
+const isolatedChrome = new IsolatedChrome(path.join(SOCKET_DIR, 'browser-profile'), (line) => serverLog(line))
+
+/** The pages behind browser cards. See browser-manager.ts. */
+const browserManager = new BrowserManager({
+  connect: async (profile) => {
+    if (profile === 'isolated') return isolatedChrome.connect()
+    // The user's Chrome is machine-wide: a test run's server must not claim it.
+    if (!isOperatorHome()) throw new BrowserUnavailableError('Only the Spaceterm in ~/.spaceterm uses your Chrome.')
+    return connectLiveChrome()
+  },
+  targetStyle: (profile) => (profile === 'chrome' ? 'hidden' : 'window'),
+  getNode: (nodeId) => {
+    const node = stateManager.getNode(nodeId)
+    return node?.type === 'browser' ? node : undefined
+  },
+  pageChanged: (nodeId, patch) => stateManager.updateBrowserPage(nodeId, patch),
+  sendFrame: (clientId, frame) => {
+    const client = [...clients].find((c) => c.id === clientId)
+    if (client) send(client.link, frame)
+  },
+  sendStatus: (clientId, status) => {
+    const client = [...clients].find((c) => c.id === clientId)
+    if (client) send(client.link, status)
+  },
+  log: (line) => serverLog(line),
+})
+
+/** A new browser card under `parentId`, at `position` or the usual spot below it. */
+function addBrowserCard(parentId: NodeId, url: string, profile: BrowserProfile, position: CardPosition | undefined): BrowserNodeData {
+  const pos = placeCard(parentId, CARD_TYPE_SPECS.browser.defaultSize, position)
+  return stateManager.createBrowser(parentId, pos.x, pos.y, url, profile)
+}
+
+function navigateBrowserCard(nodeId: NodeId, url: string): void {
+  // Saved first, so a page that is not open yet opens there.
+  stateManager.updateBrowserPage(nodeId, { url })
+  browserManager.navigate(nodeId, url)
+}
+
 function receptionistView(): { view: CameraBounds; nodes: NearbyNode[] } | undefined {
   const spokenFrom = holderClients().filter(client => client.cameraBounds).at(-1)
   const lastMoved = [...clients]
@@ -1677,6 +1721,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
       speechLinks.close(client.id)
       updateReceptionistListener()
       locationBroker.disconnected(client.id)
+      browserManager.dropClient(client.id)
       for (const [nodeId, owner] of terminalBorrowers) {
         if (owner === client.id) returnBorrowedSize(nodeId, 'borrower disconnected')
       }
@@ -1775,6 +1820,8 @@ const scriptApi = new ScriptApi({
   archive: archiveNode,
   reparent: reparentCard,
   move: (nodeId, { x, y }) => stateManager.moveNode(nodeId, x, y),
+  addBrowser: (parentId, url, profile, position) => addBrowserCard(parentId, url, profile, position).id,
+  navigateBrowser: navigateBrowserCard,
   getLocation(askedBy) {
     const located = locationBroker.locate()
     // Said every time, so the log shows who has had the user's position.
@@ -2289,6 +2336,26 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       break
     }
 
+    case 'browser-watch':
+      browserManager.watch(client.id, msg.nodeId, { live: msg.live, scale: msg.scale, viewport: msg.viewport })
+      break
+
+    case 'browser-unwatch':
+      browserManager.unwatch(client.id, msg.nodeId)
+      break
+
+    case 'browser-ack':
+      browserManager.ack(client.id, msg.nodeId)
+      break
+
+    case 'browser-input':
+      browserManager.input(msg.nodeId, msg.input)
+      break
+
+    case 'browser-history':
+      browserManager.history(msg.nodeId, msg.action)
+      break
+
     case 'canvas-pause': {
       const resuming = client.canvasPaused === true && !msg.paused
       client.canvasPaused = msg.paused
@@ -2349,21 +2416,22 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
       const device = client.device
       if (!device) break
       const holder = stateManager.getReceptionistHolder()
-      switch (msg.action) {
+      const action = msg.action
+      switch (action) {
         case 'release':
           if (holder?.deviceId === device.id) setReceptionistHolder(null)
           break
         case 'mute':
         case 'unmute':
-          setReceptionistMuted(device.id, msg.action === 'mute')
+          setReceptionistMuted(device.id, action === 'mute')
           break
         case 'speak-here':
         case 'take':
-          if (msg.action === 'speak-here') setReceptionistMuted(device.id, false)
+          if (action === 'speak-here') setReceptionistMuted(device.id, false)
           setReceptionistHolder({ deviceId: device.id, label: device.label })
           break
         default:
-          serverLog(`[receptionist] unknown hold action: ${unhandledVariant(msg.action)}`)
+          serverLog(`[receptionist] unknown hold action: ${unhandledVariant(action)}`)
       }
       break
     }
@@ -3740,6 +3808,7 @@ async function startServer(): Promise<void> {
       scriptApi.broadcast('node-added', node.id, { type: 'node-added', node })
     },
     onNodeRemove: (nodeId) => {
+      browserManager.forget(nodeId)
       broadcastToAll({ type: 'node-removed', nodeId })
       scriptApi.broadcast('node-removed', nodeId, { type: 'node-removed', nodeId })
       scheduleAutomationDrain()
@@ -4590,6 +4659,8 @@ async function startServer(): Promise<void> {
     await receptionist?.shutdown(then === 'restart')
     sideQuestionServer?.close()
     snapshotManager.dispose()
+    await browserManager.shutdown()
+    await isolatedChrome.shutdown()
     stateManager.persistImmediate()
     sessionManager.destroyAll() // Cleans local state only — daemon PTYs persist
     daemonClient.dispose()

@@ -2,6 +2,8 @@ import type { Api, PlatformApi } from './api'
 import type { ServerClient, ServerEvent, ServerEventType } from './server-client'
 import type { NodeId, PtySessionId } from './ids'
 import type { NodeData } from './state'
+import type { BrowserStatus } from './browser'
+import { BrowserWatches } from './browser-watches'
 
 /** Entries per page of Control's transcript: a few screens' worth, so a scroll up rarely waits. */
 const TRANSCRIPT_PAGE = 60
@@ -62,6 +64,20 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
   const onSessionSnapshot = bySession('snapshot')
 
   const on = <T extends ServerEventType>(type: T, fn: (msg: ServerEvent<T>) => void) => client.on(type, fn)
+
+  const browserWatches = new BrowserWatches({
+    watch: (nodeId, opts) => client.browserWatch(nodeId, opts),
+    unwatch: (nodeId) => client.browserUnwatch(nodeId),
+    ack: (nodeId) => client.browserAck(nodeId)
+  })
+  client.on('browser-frame', (frame) => browserWatches.deliver(frame))
+  /** Each card's last status, for a view that subscribes after the server said it. */
+  const browserStatuses = new Map<NodeId, BrowserStatus>()
+  const browserStatusListeners = new Map<NodeId, Set<(status: BrowserStatus) => void>>()
+  client.on('browser-status', (msg) => {
+    browserStatuses.set(msg.nodeId, msg.status)
+    browserStatusListeners.get(msg.nodeId)?.forEach((fn) => fn(msg.status))
+  })
 
   /**
    * A channel whose message is state, "sent on connect and broadcast on
@@ -270,6 +286,22 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
       })
     },
     system: { ...platform.system, getAgentMemory: () => client.agentMemory() },
+    browser: {
+      watch: (nodeId, opts, onFrame) => browserWatches.watch(nodeId, opts, onFrame),
+      input: (nodeId, input) => client.browserInput(nodeId, input),
+      history: (nodeId, action) => client.browserHistory(nodeId, action),
+      onStatus: (nodeId, cb) => {
+        const known = browserStatuses.get(nodeId)
+        if (known) cb(known)
+        let set = browserStatusListeners.get(nodeId)
+        if (!set) {
+          set = new Set()
+          browserStatusListeners.set(nodeId, set)
+        }
+        set.add(cb)
+        return () => { set.delete(cb) }
+      }
+    },
     mods: {
       send: (modId, event, payload) => client.sendMod(modId, event, payload),
       // Filtered here so a mod never sees another's traffic by accident.

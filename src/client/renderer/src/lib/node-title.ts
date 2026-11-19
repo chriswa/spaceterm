@@ -30,6 +30,7 @@ export function nodeDisplayTitle(data: NodeData): string {
   if (data.type === 'title') return data.text || '[Untitled]'
   if (data.type === 'file') return data.filePath
   if (data.type === 'automation') return data.trigger ? `Automation: ${data.trigger}` : 'Automation'
+  if (data.type === 'browser') return data.title || data.url
   return data.id.slice(0, 8)
 }
 

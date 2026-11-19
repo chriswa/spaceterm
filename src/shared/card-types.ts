@@ -14,6 +14,9 @@ import {
   TITLE_MIN_WIDTH,
   AUTOMATION_WIDTH,
   AUTOMATION_HEIGHT,
+  BROWSER_DEFAULT_WIDTH,
+  BROWSER_DEFAULT_HEIGHT,
+  browserCardSize,
   LABEL_NODE_SCALE,
   DEFAULT_COLS,
   DEFAULT_ROWS,
@@ -31,7 +34,7 @@ import {
  * node-size.ts, node-placement, state-manager, App.tsx's card maps and
  * AddNodeBody — this names it once and makes the size rules exhaustive.
  */
-export type CardType = 'terminal' | 'markdown' | 'directory' | 'file' | 'title' | 'automation' | 'meta-group' | 'meta-doc'
+export type CardType = 'terminal' | 'markdown' | 'directory' | 'file' | 'title' | 'automation' | 'browser' | 'meta-group' | 'meta-doc'
 
 /** Every card type, in add-menu order. */
 export const CARD_TYPES: readonly CardType[] = [
@@ -41,6 +44,7 @@ export const CARD_TYPES: readonly CardType[] = [
   'file',
   'title',
   'automation',
+  'browser',
   'meta-group',
   'meta-doc'
 ]
@@ -190,6 +194,14 @@ export const CARD_TYPE_SPECS: Record<CardType, CardTypeSpec> = {
     zIndexTier: TIER.base,
     focusMaxZoom: null
   },
+  browser: {
+    type: 'browser',
+    label: 'Browser',
+    defaultSize: browserCardSize(BROWSER_DEFAULT_WIDTH, BROWSER_DEFAULT_HEIGHT),
+    contentSized: false,
+    zIndexTier: TIER.base,
+    focusMaxZoom: null
+  },
   'meta-group': {
     type: 'meta-group',
     label: 'Agent Meta',
@@ -282,6 +294,8 @@ export function measureCard(node: NodeLike): Size {
       return { width: node.width, height: node.height }
     case 'automation':
       return { width: AUTOMATION_WIDTH, height: AUTOMATION_HEIGHT }
+    case 'browser':
+      return browserCardSize(node.width, node.height)
     case 'meta-group': {
       // The title formula, against the derived caption. Shares the metrics
       // rather than restating them, so a retune of the label face moves both.

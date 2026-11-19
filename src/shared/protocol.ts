@@ -184,6 +184,47 @@ export interface CanvasPauseMessage {
   paused: boolean
 }
 
+// --- Browser cards (see shared/browser.ts) ---
+
+/**
+ * Send me frames of a browser card's page. `live` is for a card being used:
+ * frames as fast as this client acknowledges them. Otherwise a thumbnail now
+ * and then. `scale` is device pixels per page pixel the client would like.
+ * `viewport` borrows the page's size for this client, as the phone does; the
+ * page gets its own size back when the client stops watching.
+ * Sending it again replaces this client's previous watch on the card.
+ */
+export interface BrowserWatchMessage {
+  type: 'browser-watch'
+  nodeId: NodeId
+  live: boolean
+  scale: number
+  viewport?: BrowserViewport
+}
+
+export interface BrowserUnwatchMessage {
+  type: 'browser-unwatch'
+  nodeId: NodeId
+}
+
+/** The last `browser-frame` for this card is drawn: the next may be sent. */
+export interface BrowserAckMessage {
+  type: 'browser-ack'
+  nodeId: NodeId
+}
+
+export interface BrowserInputMessage {
+  type: 'browser-input'
+  nodeId: NodeId
+  input: BrowserInput
+}
+
+export interface BrowserHistoryMessage {
+  type: 'browser-history'
+  nodeId: NodeId
+  action: BrowserHistoryAction
+}
+
 /** This device's answer to `location-request`: a fix, or why there is none. */
 export type LocationReplyMessage =
   | { type: 'location-reply'; requestId: string; fix: LocationFix }
@@ -1478,6 +1519,11 @@ export type ClientMessage =
   | ReceptionistTranscriptMessage
   | ControlImageMessage
   | ReceptionistStopMessage
+  | BrowserWatchMessage
+  | BrowserUnwatchMessage
+  | BrowserAckMessage
+  | BrowserInputMessage
+  | BrowserHistoryMessage
   | ReceptionistHoldMessage
   | ReceptionistHoldBacklogMessage
   | ReceptionistReadMessage
@@ -1718,6 +1764,7 @@ import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 import type { UsageSnapshot } from './usage-report'
 import type { SystemStatsSnapshot } from './system-stats'
 import type { LocationFix } from './location'
+import type { BrowserHistoryAction, BrowserInput, BrowserProfile, BrowserStatus, BrowserViewport } from './browser'
 
 export interface SyncStateMessage {
   type: 'sync-state'
@@ -1766,6 +1813,26 @@ export interface AttrSpan {
 
 /** One row of the terminal snapshot */
 export type SnapshotRow = AttrSpan[]
+
+/**
+ * One frame of a browser card's page: a JPEG, base64, showing a viewport of
+ * `width × height` page pixels. The next is not sent until this one is
+ * acknowledged (`browser-ack`).
+ */
+export interface BrowserFrameMessage {
+  type: 'browser-frame'
+  nodeId: NodeId
+  data: string
+  width: number
+  height: number
+}
+
+/** What a browser card's page is doing, for every client watching it. */
+export interface BrowserStatusMessage {
+  type: 'browser-status'
+  nodeId: NodeId
+  status: BrowserStatus
+}
 
 export interface SnapshotMessage {
   type: 'snapshot'
@@ -2320,6 +2387,28 @@ export interface ScriptMoveMessage {
   y: number
 }
 
+/**
+ * Open a web page in a browser card under `parentId`. See shared/browser.ts
+ * for the two profiles.
+ */
+export interface ScriptAddBrowserMessage {
+  type: 'script-add-browser'
+  seq: number
+  parentId: NodeId
+  url: string
+  profile: BrowserProfile
+  x?: number
+  y?: number
+}
+
+/** Send a browser card's page to `url`. */
+export interface ScriptNavigateBrowserMessage {
+  type: 'script-navigate-browser'
+  seq: number
+  nodeId: NodeId
+  url: string
+}
+
 export type ScriptMessage =
   | ScriptModEmitMessage
   | ScriptHelloMessage
@@ -2340,6 +2429,8 @@ export type ScriptMessage =
   | ScriptArchiveMessage
   | ScriptReparentMessage
   | ScriptMoveMessage
+  | ScriptAddBrowserMessage
+  | ScriptNavigateBrowserMessage
 
 // --- Script socket responses ---
 
@@ -2429,7 +2520,7 @@ export interface ScriptNotifyResult {
 
 /** A card a script created: its id, or why none was made. */
 export interface ScriptAddCardResult {
-  type: 'script-add-markdown-result' | 'script-add-automation-result'
+  type: 'script-add-markdown-result' | 'script-add-automation-result' | 'script-add-browser-result'
   seq: number
   /** Absent on error. */
   nodeId?: NodeId
@@ -2438,7 +2529,7 @@ export interface ScriptAddCardResult {
 
 /** A card a script edited or moved. `error` names why nothing changed. */
 export interface ScriptEditCardResult {
-  type: 'script-set-markdown-result' | 'script-update-automation-result' | 'script-reparent-result' | 'script-move-result'
+  type: 'script-set-markdown-result' | 'script-update-automation-result' | 'script-reparent-result' | 'script-move-result' | 'script-navigate-browser-result'
   seq: number
   ok: boolean
   error?: string
@@ -2556,6 +2647,8 @@ export interface AutomationEventMessage {
 }
 
 export type ServerMessage =
+  | BrowserFrameMessage
+  | BrowserStatusMessage
   | AgentMemoryResultMessage
   | AutomationEventsResultMessage
   | AutomationEventMessage

@@ -185,6 +185,25 @@ nothing was listening, or it was rejected. The last 500 (up to 4 MB) are kept in
 `~/.spaceterm/automation-events.jsonl` across restarts. Cron firings are not events and
 do not appear.
 
+### Browser cards
+
+An agent opens a web page on the canvas with its `open_browser` tool (or
+`npm run cli -- add-browser <parent-id> <url> [--profile chrome|isolated]`) and
+moves it on with `navigate_browser`. There is no address bar. The page runs on
+the Mac, in one of two browsers:
+
+- `chrome`: your own Chrome, under its default profile, so it is signed in to
+  whatever you are. Turn on remote debugging once at
+  `chrome://inspect/#remote-debugging`; Chrome then asks you to allow
+  Spaceterm each time the server connects. The page is a hidden tab and never
+  appears in your tab strip.
+- `isolated`: a headless Chrome Spaceterm starts on its own profile in
+  `~/.spaceterm/browser-profile`, sharing nothing with yours.
+
+An unfocused card shows a thumbnail now and then; focused, it is live and takes
+the mouse, wheel and keyboard. On the phone a focused card opens full screen,
+laid out at the phone's size: tap, drag to scroll, ⌨︎ to type, pinch in to leave.
+
 ## Optional companions
 
 Each of these is found wherever it is installed — by PATH or by a file it

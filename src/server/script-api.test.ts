@@ -6,6 +6,7 @@ import type { ModCapability } from '../shared/mod-manifest'
 import type { Located } from './location-broker'
 import type { IncomingAutomationEvent } from './automation-event-log'
 import type { AutomationPatch } from '../shared/automation'
+import type { BrowserProfile } from '../shared/browser'
 import type { NodeData, TerminalNodeData } from '../shared/state'
 import { asNodeId, asPtySessionId, ROOT_NODE_ID, type NodeId, type PtySessionId } from '../shared/ids'
 
@@ -37,7 +38,7 @@ function terminal(overrides: Omit<Partial<TerminalNodeData>, 'id'> & { id: strin
 }
 
 /** Any non-terminal card, with only the fields these tests read. */
-function card(type: 'markdown' | 'automation' | 'file' | 'title', id: string, overrides: Partial<NodeData> = {}): NodeData {
+function card(type: 'markdown' | 'automation' | 'file' | 'title' | 'browser', id: string, overrides: Partial<NodeData> = {}): NodeData {
   return { type, id: nid(id), parentId: ROOT_NODE_ID, x: 0, y: 0, archivedChildren: [], ...overrides } as NodeData
 }
 
@@ -136,6 +137,8 @@ class FakeHost implements ScriptHost {
     | { op: 'archive'; nodeId: NodeId }
     | { op: 'reparent'; nodeId: NodeId; newParentId: NodeId }
     | { op: 'move'; nodeId: NodeId; position: CardPosition }
+    | { op: 'add-browser'; parentId: NodeId; url: string; profile: BrowserProfile; position: CardPosition | undefined }
+    | { op: 'navigate-browser'; nodeId: NodeId; url: string }
   > = []
   addMarkdown(parentId: NodeId, content: string, position: CardPosition | undefined): NodeId {
     this.cardWrites.push({ op: 'add-markdown', parentId, content, position })
@@ -155,6 +158,11 @@ class FakeHost implements ScriptHost {
   }
   reparent(nodeId: NodeId, newParentId: NodeId): void { this.cardWrites.push({ op: 'reparent', nodeId, newParentId }) }
   move(nodeId: NodeId, position: CardPosition): void { this.cardWrites.push({ op: 'move', nodeId, position }) }
+  addBrowser(parentId: NodeId, url: string, profile: BrowserProfile, position: CardPosition | undefined): NodeId {
+    this.cardWrites.push({ op: 'add-browser', parentId, url, profile, position })
+    return nid('new-browser')
+  }
+  navigateBrowser(nodeId: NodeId, url: string): void { this.cardWrites.push({ op: 'navigate-browser', nodeId, url }) }
   log(line: string): void { this.logs.push(line) }
 }
 
@@ -751,6 +759,43 @@ describe('script-add-automation', () => {
     h.send({ type: 'script-add-automation', seq: 2, parentId: nid('gone') })
     expect(h.host.cardWrites).toEqual([])
     expect(h.conn.sent.map((m) => m.error)).toEqual(['unknown overlap sometimes', 'unknown-node'])
+  })
+})
+
+describe('script-add-browser', () => {
+  it('opens the page in a card under the parent', () => {
+    const h = harness()
+    h.send({ type: 'script-add-browser', seq: 4, parentId: ROOT_NODE_ID, url: 'https://example.com/', profile: 'chrome' })
+    expect(h.host.cardWrites).toEqual([{ op: 'add-browser', parentId: ROOT_NODE_ID, url: 'https://example.com/', profile: 'chrome', position: undefined }])
+    expect(h.conn.only).toEqual({ type: 'script-add-browser-result', seq: 4, nodeId: nid('new-browser') })
+  })
+
+  it('refuses an address a browser would not open from its address bar, an unknown profile, and a missing parent', () => {
+    const h = harness()
+    h.send({ type: 'script-add-browser', seq: 1, parentId: ROOT_NODE_ID, url: 'javascript:alert(1)', profile: 'chrome' })
+    h.send({ type: 'script-add-browser', seq: 2, parentId: ROOT_NODE_ID, url: 'https://example.com/', profile: 'safari' } as unknown as ScriptMessage)
+    h.send({ type: 'script-add-browser', seq: 3, parentId: nid('gone'), url: 'https://example.com/', profile: 'isolated' })
+    expect(h.host.cardWrites).toEqual([])
+    expect(h.conn.sent.map((m) => m.error)).toEqual([
+      'url must be an http or https address',
+      'profile must be one of chrome, isolated',
+      'unknown-node'
+    ])
+  })
+})
+
+describe('script-navigate-browser', () => {
+  it('sends a browser card somewhere else', () => {
+    const h = harness((host) => { host.add(card('browser', 'page')) })
+    h.send({ type: 'script-navigate-browser', seq: 2, nodeId: nid('page'), url: 'https://example.org/' })
+    expect(h.host.cardWrites).toEqual([{ op: 'navigate-browser', nodeId: nid('page'), url: 'https://example.org/' }])
+    expect(h.conn.only).toEqual({ type: 'script-navigate-browser-result', seq: 2, ok: true })
+  })
+
+  it('refuses a card that is not a browser', () => {
+    const h = harness((host) => { host.add(card('markdown', 'note')) })
+    h.send({ type: 'script-navigate-browser', seq: 1, nodeId: nid('note'), url: 'https://example.org/' })
+    expect(h.conn.only).toEqual({ type: 'script-navigate-browser-result', seq: 1, ok: false, error: 'not-a-browser' })
   })
 })
 

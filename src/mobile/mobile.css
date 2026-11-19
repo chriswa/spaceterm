@@ -996,3 +996,51 @@ textarea, input, [contenteditable="true"], .cm-content {
 }
 /* The rocket's update count sits in the same corner, and wins it. */
 .m-rocket--info ~ .m-fps { display: none; }
+
+/* ─── A browser card's page, full screen (BrowserView.tsx) ──────────────── */
+
+.mobile-browser__btn {
+  flex: none;
+  min-width: 36px;
+  min-height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--m-text);
+  font: 20px/1 -apple-system, system-ui, sans-serif;
+}
+.mobile-browser__area {
+  background: #fff;
+}
+.mobile-browser__frame {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  pointer-events: none;
+}
+.mobile-browser__status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  font: 16px/1.4 -apple-system, system-ui, sans-serif;
+  color: var(--m-text);
+  background: var(--m-bg);
+}
+/* Takes the iOS keyboard's typing; never seen. 16px, or iOS zooms in on focus. */
+.mobile-browser__typing {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  border: 0;
+  padding: 0;
+  font-size: 16px;
+  pointer-events: none;
+}

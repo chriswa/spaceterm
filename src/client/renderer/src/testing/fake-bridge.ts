@@ -1,6 +1,6 @@
 import type {
   AgentSearchResponse, CommandOutcome,
-  Api, AttachResult, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
+  Api, AttachResult, BrowserApi, CameraBounds, CreateOptions, ModsApi, NodeApi, PerfApi, PtyApi,
   SessionInfo, SystemApi, TtsApi, WindowApi, DictationApi, SpeechLinkApi,
   ReceptionistApi, ReceptionistBacklog, ReceptionistStatus, HandsFreeApi, ControlTranscriptPage
 } from '../../../../shared/api'
@@ -8,7 +8,8 @@ import type { SystemMetricsSample } from '../../../../shared/system-metrics'
 import type { AutomationEventRecord } from '../../../../shared/automation'
 import type { NotificationRecord } from '../../../../shared/notifications'
 import { DEFAULT_LAUNCH_PREFS, type LaunchPrefs } from '../../../../shared/launch-prefs'
-import type { ControlTranscriptEntry, SnapshotMessage, SpeakOutcome } from '../../../../shared/protocol'
+import type { BrowserFrameMessage, ControlTranscriptEntry, SnapshotMessage, SpeakOutcome } from '../../../../shared/protocol'
+import type { BrowserStatus } from '../../../../shared/browser'
 import type { NodeData, ReceptionistHolder, ServerState } from '../../../../shared/state'
 import type { UndoEntry } from '../../../../shared/undo-types'
 import type { NodeId, PtySessionId } from '../../../../shared/ids'
@@ -205,6 +206,8 @@ export class FakeBridge implements Api {
   private readonly ptyData: SessionListeners<(data: string) => void> = new Map()
   private readonly ptyExit: SessionListeners<(exitCode: number) => void> = new Map()
   private readonly snapshot: SessionListeners<(snapshot: SnapshotMessage) => void> = new Map()
+  private readonly browserFrame: SessionListeners<(frame: BrowserFrameMessage) => void> = new Map()
+  private readonly browserStatus: SessionListeners<(status: BrowserStatus) => void> = new Map()
 
   // ─── recording ────────────────────────────────────────────────────────────
 
@@ -331,7 +334,12 @@ export class FakeBridge implements Api {
     ptyExit: (sessionId: PtySessionId, exitCode: number): void =>
       fireForSession(this.ptyExit, sessionId, (fn) => fn(exitCode)),
     snapshot: (sessionId: PtySessionId, snapshot: SnapshotMessage): void =>
-      fireForSession(this.snapshot, sessionId, (fn) => fn(snapshot))
+      fireForSession(this.snapshot, sessionId, (fn) => fn(snapshot)),
+    // Per browser card, keyed by node id as the snapshot channels are by session.
+    browserFrame: (frame: BrowserFrameMessage): void =>
+      fireForSession(this.browserFrame, frame.nodeId, (fn) => fn(frame)),
+    browserStatus: (nodeId: NodeId, status: BrowserStatus): void =>
+      fireForSession(this.browserStatus, nodeId, (fn) => fn(status))
   }
 
   // ─── the bridge itself ────────────────────────────────────────────────────
@@ -535,6 +543,23 @@ export class FakeBridge implements Api {
     onVisibilityChanged: (cb) => subscribe(this.visibilityChanged, cb),
     onFocusChanged: (cb) => subscribe(this.focusChanged, cb),
     onFocusNode: (cb) => subscribe(this.focusNode, cb)
+  }
+
+  readonly browser: BrowserApi = {
+    watch: (nodeId, opts, onFrame) => {
+      this.record('browser.watch', nodeId, opts)
+      const unsubscribe = subscribeToSession(this.browserFrame, nodeId, (frame) => { void onFrame(frame) })
+      return {
+        update: (next) => this.record('browser.watch', nodeId, next),
+        release: () => {
+          unsubscribe()
+          this.record('browser.unwatch', nodeId)
+        }
+      }
+    },
+    input: (nodeId, input) => this.record('browser.input', nodeId, input),
+    history: (nodeId, action) => this.record('browser.history', nodeId, action),
+    onStatus: (nodeId, cb) => subscribeToSession(this.browserStatus, nodeId, cb)
   }
 
   readonly mods: ModsApi = {

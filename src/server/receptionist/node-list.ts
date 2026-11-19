@@ -144,6 +144,7 @@ function nodeWords(node: NodeData, context: NodeListContext, noteChars: number):
     case 'title': return `title "${flat(node.text)}"`
     case 'file': return `file ${node.filePath}`
     case 'automation': return node.trigger.trim() ? `automation triggered by "${flat(node.trigger)}"` : 'automation with no trigger yet'
+    case 'browser': return `web page ${node.url}${node.title ? ` "${clip(flat(node.title), noteChars)}"` : ''}`
     case 'markdown': {
       // A file-backed note's text is on disk, under the file node above it.
       if (node.fileBacked) return 'note showing the file above it'

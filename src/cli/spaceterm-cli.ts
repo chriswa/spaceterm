@@ -20,6 +20,8 @@
  *   spaceterm-cli archive <node-id>                                    # archive a card and its whole subtree
  *   spaceterm-cli reparent <node-id> <new-parent-id>                   # put a card (and subtree) under another
  *   spaceterm-cli move <node-id> <x> <y>                               # set one card's position
+ *   spaceterm-cli add-browser <parent-id> <url> [--profile chrome|isolated] [--x X --y Y]  # web page card; prints its id
+ *   spaceterm-cli navigate-browser <node-id> <url>                     # send a browser card elsewhere
  *
  * Environment:
  *   SPACETERM_NODE_ID   — set automatically in PTY sessions
@@ -207,6 +209,22 @@ async function addMarkdown(parentId: string, content: string, options: Map<strin
   )
   if (reply.error) fatal(reply.error)
   process.stdout.write(`${String(reply.nodeId)}\n`)
+}
+
+async function addBrowser(parentId: string, url: string, options: Map<string, string>): Promise<void> {
+  const profile = options.get('profile') ?? 'chrome'
+  const reply = await oneshot(
+    { type: 'script-add-browser', seq: 1, parentId, url, profile, ...positionFields(options) },
+    'script-add-browser-result'
+  )
+  if (reply.error) fatal(reply.error)
+  process.stdout.write(`${String(reply.nodeId)}\n`)
+}
+
+async function navigateBrowser(nodeId: string, url: string): Promise<void> {
+  const reply = await oneshot({ type: 'script-navigate-browser', seq: 1, nodeId, url }, 'script-navigate-browser-result')
+  if (reply.error) fatal(reply.error)
+  process.stdout.write(JSON.stringify({ ok: reply.ok }) + '\n')
 }
 
 async function setMarkdown(nodeId: string, content: string): Promise<void> {
@@ -452,6 +470,10 @@ function printUsage(): void {
                                                            (or root) without moving it; refuses its own
                                                            descendants
   spaceterm-cli move <node-id> <x> <y>                     Set one card's position; its children stay put
+  spaceterm-cli add-browser <parent-id> <url> [--profile chrome|isolated] [--x X --y Y]
+                                                           Open a web page in a card; prints its id. chrome
+                                                           (the default) is the user's own signed-in Chrome
+  spaceterm-cli navigate-browser <node-id> <url>           Send a browser card to another address
 
   <content> and --prompt read stdin when given as -. A trigger is a cron
   expression or a custom_ event id; --overlap is ${AUTOMATION_OVERLAPS.join(', ')}.
@@ -516,6 +538,18 @@ switch (command) {
     addMarkdown(positional[0], positional[1], options).catch((err) => fatal(err.message))
     break
   }
+
+  case 'add-browser': {
+    const { positional, options } = parseOptions(args.slice(1), ['profile', ...POSITION_OPTIONS])
+    if (positional.length !== 2) { printUsage(); process.exit(1) }
+    addBrowser(positional[0], positional[1], options).catch((err) => fatal(err.message))
+    break
+  }
+
+  case 'navigate-browser':
+    if (args.length !== 3) { printUsage(); process.exit(1) }
+    navigateBrowser(args[1], args[2]).catch((err) => fatal(err.message))
+    break
 
   case 'set-markdown': {
     if (args.length !== 3) { printUsage(); process.exit(1) }

@@ -131,6 +131,7 @@ describe('measureCard', () => {
       file: { type: 'file' },
       title: { type: 'title', text: '' },
       automation: { type: 'automation' },
+      browser: { type: 'browser', width: 1280, height: 800 },
       'meta-group': { type: 'meta-group', label: 'Agent Meta' },
       'meta-doc': { type: 'meta-doc', width: 600, height: 96 }
     }

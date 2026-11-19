@@ -9,6 +9,7 @@ import { showUserImagesTool } from './show-user-images.js'
 import { selfTerminateTool } from './self-terminate.js'
 import { getUserLocationTool } from './get-user-location.js'
 import { notifyUserTool } from './notify-user.js'
+import { openBrowserTool, navigateBrowserTool } from './browser.js'
 import { startStdioServer } from './stdio-mcp.js'
 import { recoverSpacetermEnvFromAncestors } from './surface-env.js'
 
@@ -17,7 +18,7 @@ recoverSpacetermEnvFromAncestors()
 startStdioServer({
   name: 'spaceterm-mcp',
   version: '0.1.0',
-  tools: [emitMarkdownTool, emitMarkdownOnParentTool, resolveHandoffContextTool, spawnClaudeSurfaceTool, forkClaudeSurfaceTool, spacetermBroadcastTool, playSoundTool, showUserImagesTool, selfTerminateTool, getUserLocationTool, notifyUserTool],
+  tools: [emitMarkdownTool, emitMarkdownOnParentTool, resolveHandoffContextTool, spawnClaudeSurfaceTool, forkClaudeSurfaceTool, spacetermBroadcastTool, playSoundTool, showUserImagesTool, selfTerminateTool, getUserLocationTool, notifyUserTool, openBrowserTool, navigateBrowserTool],
 }).catch((error: unknown) => {
   console.error('Fatal error:', error)
   process.exit(1)

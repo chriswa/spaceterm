@@ -4,6 +4,7 @@ import type { AgentType } from './agent-type'
 import type { AgentEffort } from './agent-effort'
 import type { CardType } from './card-types'
 import type { UndoEntry } from './undo-types'
+import type { BrowserProfile } from './browser'
 import type { AutomationFiring, AutomationOverlap } from './automation'
 
 // --- Claude state enum ---
@@ -373,6 +374,23 @@ export interface AutomationRunStats {
 }
 
 /**
+ * A web page, opened and steered by an agent. See `browser.ts`.
+ *
+ * `url` and `title` follow the page as it navigates, so a card that comes
+ * back after a restart reopens where it was.
+ */
+export interface BrowserNodeData extends BaseNodeData {
+  type: 'browser'
+  profile: BrowserProfile
+  url: string
+  /** The page's own title, or empty before it has loaded. */
+  title: string
+  /** The page's size in CSS pixels on the desktop. The phone borrows its own while it shows the page. */
+  width: number
+  height: number
+}
+
+/**
  * The header card of a generated agent-meta branch, and of the Skills group
  * nested inside it.
  *
@@ -429,6 +447,7 @@ export type NodeData =
   | FileNodeData
   | TitleNodeData
   | AutomationNodeData
+  | BrowserNodeData
   | MetaGroupNodeData
   | MetaDocNodeData
 

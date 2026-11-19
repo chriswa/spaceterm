@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from 'react'
 import { App } from '@/App'
 import { useSurfacePresenterStore } from '@/stores/surfacePresenterStore'
 import { useNodeStore } from '@/stores/nodeStore'
 import type { NodeId } from '../shared/ids'
 import { TerminalView } from './TerminalView'
+import { BrowserView } from './BrowserView'
 import { Composer } from './Composer'
 import { composeMicOn } from './compose-mic-memory'
 import { useVisualViewportVars } from './viewport'
@@ -63,7 +64,7 @@ function rememberOpen(nodeId: NodeId | null): void {
  * picture and touch handlers stayed on screen after the terminal was closed —
  * a frozen screen that only refocusing another surface cleared.
  */
-const childKey = (kind: 'terminal' | 'composer', id: string) => `${kind}:${id}`
+const childKey = (kind: 'terminal' | 'browser' | 'composer', id: string) => `${kind}:${id}`
 
 /** Mounted for good, where nothing says otherwise: a test, say. */
 const ALWAYS = createGate(true)
@@ -76,6 +77,7 @@ const ALWAYS = createGate(true)
 export function MobileApp({ Canvas = App, canvasMounted = ALWAYS }: { Canvas?: ComponentType; canvasMounted?: Gate } = {}) {
   const mounted = useSyncExternalStore(canvasMounted.subscribe, () => canvasMounted.on)
   const focusedTerminal = useSurfacePresenterStore((s) => s.focusedTerminal)
+  const focusedBrowser = useSurfacePresenterStore((s) => s.focusedBrowser)
   const toolbarSheetOpen = useSurfacePresenterStore((s) => s.toolbarSheetOpen)
   useStalenessWatch()
   const [composerFor, setComposerFor] = useState<NodeId | null>(null)
@@ -132,6 +134,11 @@ export function MobileApp({ Canvas = App, canvasMounted = ALWAYS }: { Canvas?: C
     setCanvasCovered('terminal', focusedTerminal !== null)
   }, [focusedTerminal])
 
+  useEffect(() => {
+    window.api.log(`[mobile-view] focused browser ${focusedBrowser ?? 'none'}`)
+    setCanvasCovered('browser', focusedBrowser !== null)
+  }, [focusedBrowser])
+
   /**
    * `zoomOut`: how far the canvas pulls back, when not its default. `from`
    * says which gesture asked, for the log.
@@ -153,6 +160,13 @@ export function MobileApp({ Canvas = App, canvasMounted = ALWAYS }: { Canvas?: C
     rememberOpen(null)
     useSurfacePresenterStore.getState().requestUnfocus(zoomOut)
   }
+
+  const closeBrowser = useCallback(() => {
+    if (!useSurfacePresenterStore.getState().focusedBrowser) return
+    window.api.log('[mobile-view] browser close')
+    setCanvasCovered('browser', false)
+    useSurfacePresenterStore.getState().requestUnfocus()
+  }, [])
 
   return (
     <>
@@ -176,6 +190,13 @@ export function MobileApp({ Canvas = App, canvasMounted = ALWAYS }: { Canvas?: C
             window.api.log('[mobile-view] composer opened')
             setComposerFor(focusedTerminal)
           }}
+        />
+      )}
+      {mounted && focusedBrowser && (
+        <BrowserView
+          key={childKey('browser', focusedBrowser)}
+          nodeId={focusedBrowser}
+          onClose={closeBrowser}
         />
       )}
       <input ref={keyboardKeeperRef} className="mobile-keyboard-keeper" aria-hidden tabIndex={-1} />

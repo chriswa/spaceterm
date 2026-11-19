@@ -13,6 +13,7 @@ import { ancestorsOf, wouldCreateCycle } from '../shared/node-ancestry'
 import { unhandledVariant } from '../shared/exhaustive'
 import { checkProtocolVersion } from '../shared/protocol-handshake'
 import type { ModCapability } from '../shared/mod-manifest'
+import { BROWSER_PROFILES, isBrowsableUrl, isBrowserProfile, type BrowserProfile } from '../shared/browser'
 import type { Located } from './location-broker'
 import {
   CUSTOM_EVENT_PREFIX, MAX_EVENT_PAYLOAD_BYTES, isCustomEventId, parseAutomationPatch, parseTrigger,
@@ -168,6 +169,10 @@ export interface ScriptHost {
   reparent(nodeId: NodeId, newParentId: NodeId): void
   /** Set one card's position. */
   move(nodeId: NodeId, position: CardPosition): void
+  /** Create a browser card under `parentId` showing `url`, placed as `addMarkdown` places one. Returns its id. */
+  addBrowser(parentId: NodeId, url: string, profile: BrowserProfile, position: CardPosition | undefined): NodeId
+  /** Send a browser card's page to `url`. */
+  navigateBrowser(nodeId: NodeId, url: string): void
   log(line: string): void
 }
 
@@ -198,6 +203,8 @@ const REQUIRED_CAPABILITY: { readonly [T in ScriptMessage['type']]: ModCapabilit
   'script-update-automation': 'write-nodes',
   'script-reparent': 'write-nodes',
   'script-move': 'write-nodes',
+  'script-add-browser': 'write-nodes',
+  'script-navigate-browser': 'write-nodes',
   'script-archive': 'archive-nodes',
 }
 
@@ -213,6 +220,9 @@ function fireEventError(eventId: unknown, payload: unknown): string | undefined 
 }
 
 /** A script's card position: both coordinates, neither, or why it is unusable. */
+/** The error for a card that is not the type a message edits. */
+const NOT_THAT_TYPE = { markdown: 'not-markdown', automation: 'not-an-automation', browser: 'not-a-browser' } as const
+
 function readPosition(msg: ScriptCardPosition): { ok: true; position: CardPosition | undefined } | { ok: false; error: string } {
   const { x, y } = msg
   if (x === undefined && y === undefined) return { ok: true, position: undefined }
@@ -538,6 +548,28 @@ export class ScriptApi {
         return
       }
 
+      case 'script-add-browser': {
+        const fail = (error: string): void => reply({ type: 'script-add-browser-result', seq: msg.seq, error })
+        const where = readPosition(msg)
+        if (!where.ok) return fail(where.error)
+        if (typeof msg.url !== 'string' || !isBrowsableUrl(msg.url)) return fail('url must be an http or https address')
+        if (!isBrowserProfile(msg.profile)) return fail(`profile must be one of ${BROWSER_PROFILES.join(', ')}`)
+        const parentError = this.parentError(msg.parentId)
+        if (parentError) return fail(parentError)
+        reply({ type: 'script-add-browser-result', seq: msg.seq, nodeId: this.host.addBrowser(msg.parentId, msg.url, msg.profile, where.position) })
+        return
+      }
+
+      case 'script-navigate-browser': {
+        const fail = (error: string): void => reply({ type: 'script-navigate-browser-result', seq: msg.seq, ok: false, error })
+        if (typeof msg.url !== 'string' || !isBrowsableUrl(msg.url)) return fail('url must be an http or https address')
+        const nodeError = this.editableError(msg.nodeId, 'browser')
+        if (nodeError) return fail(nodeError)
+        this.host.navigateBrowser(msg.nodeId, msg.url)
+        reply({ type: 'script-navigate-browser-result', seq: msg.seq, ok: true })
+        return
+      }
+
       case 'script-archive': {
         const fail = (error: string): void => reply({ type: 'script-archive-result', seq: msg.seq, ok: false, error })
         const nodeError = this.movableError(msg.nodeId)
@@ -637,10 +669,10 @@ export class ScriptApi {
    * when it can. A generated card is refused rather than left to the state
    * manager, which drops the write and would leave the script told "ok".
    */
-  private editableError(nodeId: NodeId, type: 'markdown' | 'automation'): string | undefined {
+  private editableError(nodeId: NodeId, type: 'markdown' | 'automation' | 'browser'): string | undefined {
     const node = this.host.getNode(nodeId)
     if (!node) return 'unknown-node'
-    if (node.type !== type) return type === 'markdown' ? 'not-markdown' : 'not-an-automation'
+    if (node.type !== type) return NOT_THAT_TYPE[type]
     if (node.ephemeral) return 'generated-card'
     return undefined
   }
