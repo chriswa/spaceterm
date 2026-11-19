@@ -122,14 +122,11 @@ import { VoiceOperator, DISCOVERY_PATH as VOICE_OPERATOR_DISCOVERY_PATH, type Sp
 import { VoiceOperatorSubscription } from './voice-operator-subscription'
 import { parseCodexEffort, parseStatusLineEffort } from '../shared/agent-effort'
 import { LocationBroker } from './location-broker'
+import { ClaudeContextPercent } from './claude-context-percent'
 import { isLocationFix } from '../shared/location'
 
-/**
- * Claude Code reserves this many tokens as a buffer before triggering autocompact.
- * The effective context window = context_window_size - this buffer.
- * UPDATE THIS when Claude Code changes its compaction threshold.
- */
-const CLAUDE_AUTOCOMPACT_BUFFER_TOKENS = 0
+/** Each Claude surface's context %, fed by both its status line and its transcript. */
+const claudeContextPercent = new ClaudeContextPercent()
 
 /**
  * How long a script-requested fork may take to replay its transcript and fire
@@ -2157,28 +2154,11 @@ function handleIngestMessage(msg: IngestMessage): void {
         ...(typeof inputTokens === 'number' && typeof outputTokens === 'number' ? { contextTokens: inputTokens + outputTokens } : {}),
       })
 
-      // Extract context window remaining %.
-      // Cursor statusLine provides remaining_percentage / used_percentage directly.
-      // Claude statusLine provides current_usage + context_window_size.
+      // Context window remaining %. Right after a compaction the status line
+      // reads zero, so `ClaudeContextPercent` estimates from the transcript.
       const cw = msg.payload?.context_window as Record<string, unknown> | undefined
       if (cw) {
-        let remainingPercent: number | null = null
-        const cursorRemaining = cw.remaining_percentage
-        const cursorUsed = cw.used_percentage
-        if (typeof cursorRemaining === 'number' && Number.isFinite(cursorRemaining)) {
-          remainingPercent = cursorRemaining
-        } else if (typeof cursorUsed === 'number' && Number.isFinite(cursorUsed)) {
-          remainingPercent = 100 - cursorUsed
-        } else {
-          const usage = cw.current_usage as Record<string, number> | undefined
-          const contextWindowSize = cw.context_window_size as number | undefined
-          if (usage && contextWindowSize) {
-            const totalTokens = (usage.input_tokens || 0) + (usage.output_tokens || 0)
-              + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0)
-            const effectiveSize = contextWindowSize - CLAUDE_AUTOCOMPACT_BUFFER_TOKENS
-            remainingPercent = (1 - totalTokens / effectiveSize) * 100
-          }
-        }
+        const remainingPercent = claudeContextPercent.observeStatusLine(msg.surfaceId, msg.payload?.session_id, cw)
         if (remainingPercent != null) {
           stateManager.updateClaudeContextPercent(msg.surfaceId, remainingPercent)
         }
@@ -4014,6 +3994,9 @@ async function startServer(): Promise<void> {
     // the TTL its request was cached at.
     const warmth = claudeCacheWarmth.observe(surfaceId, newEntries, { reset: isBackfill })
     if (warmth) stateManager.setCacheWarmth(surfaceId, warmth)
+
+    const compactedPercent = claudeContextPercent.observeTranscript(surfaceId, newEntries, { reset: isBackfill })
+    if (compactedPercent != null) stateManager.updateClaudeContextPercent(surfaceId, compactedPercent)
 
     // Delegate state routing to the state machine
     claudeStateMachine.handleJsonlEntries(surfaceId, newEntries, isBackfill)
