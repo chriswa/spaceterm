@@ -1820,6 +1820,7 @@ const scriptApi = new ScriptApi({
   archive: archiveNode,
   reparent: reparentCard,
   move: (nodeId, { x, y }) => stateManager.moveNode(nodeId, x, y),
+  setStamp: (nodeId, stamp) => stateManager.setNodeStamp(nodeId, stamp),
   addBrowser: (parentId, url, profile, position) => addBrowserCard(parentId, url, profile, position).id,
   navigateBrowser: navigateBrowserCard,
   getLocation(askedBy) {
@@ -4323,6 +4324,11 @@ async function startServer(): Promise<void> {
   // The sequence lives in startup-recovery.ts so it can be driven against a
   // fake daemon; this is only the wiring. Everything below is a one-line
   // adapter from a singleton to the narrow operation recovery asked for.
+  //
+  // Revived agents are spawned from the login env, so wait for its first
+  // capture: without it they get this server's own env, which at boot is
+  // launchd's and lacks everything exported from ~/.zshrc.
+  await loginEnv.firstCapture
   const recoveryOutcome = await recoverSurfaces({
     listDaemonSessions: () => listDaemonSessions(daemonClient),
     attachDaemonSession: (sessionId) => attachDaemonSession(daemonClient, sessionId),

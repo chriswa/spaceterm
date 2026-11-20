@@ -7,7 +7,7 @@ import type { Located } from './location-broker'
 import type { IncomingAutomationEvent } from './automation-event-log'
 import type { AutomationPatch } from '../shared/automation'
 import type { BrowserProfile } from '../shared/browser'
-import type { NodeData, TerminalNodeData } from '../shared/state'
+import type { NodeData, NodeStamp, TerminalNodeData } from '../shared/state'
 import { asNodeId, asPtySessionId, ROOT_NODE_ID, type NodeId, type PtySessionId } from '../shared/ids'
 
 // The scripts socket is the mod API. These tests are about the contract a mod
@@ -137,6 +137,7 @@ class FakeHost implements ScriptHost {
     | { op: 'archive'; nodeId: NodeId }
     | { op: 'reparent'; nodeId: NodeId; newParentId: NodeId }
     | { op: 'move'; nodeId: NodeId; position: CardPosition }
+    | { op: 'set-stamp'; nodeId: NodeId; stamp: NodeStamp }
     | { op: 'add-browser'; parentId: NodeId; url: string; profile: BrowserProfile; position: CardPosition | undefined }
     | { op: 'navigate-browser'; nodeId: NodeId; url: string }
   > = []
@@ -158,6 +159,7 @@ class FakeHost implements ScriptHost {
   }
   reparent(nodeId: NodeId, newParentId: NodeId): void { this.cardWrites.push({ op: 'reparent', nodeId, newParentId }) }
   move(nodeId: NodeId, position: CardPosition): void { this.cardWrites.push({ op: 'move', nodeId, position }) }
+  setStamp(nodeId: NodeId, stamp: NodeStamp): void { this.cardWrites.push({ op: 'set-stamp', nodeId, stamp }) }
   addBrowser(parentId: NodeId, url: string, profile: BrowserProfile, position: CardPosition | undefined): NodeId {
     this.cardWrites.push({ op: 'add-browser', parentId, url, profile, position })
     return nid('new-browser')
@@ -901,6 +903,23 @@ describe('script-reparent', () => {
     expect(h.conn.sent.map((m) => m.error)).toEqual([
       'unknown-node', 'generated-card', 'root', 'unknown-parent', 'generated-parent',
     ])
+  })
+})
+
+describe('script-set-stamp', () => {
+  it('stamps a card', () => {
+    const h = harness((host) => { host.add(card('markdown', 'md')) })
+    h.send({ type: 'script-set-stamp', seq: 3, nodeId: nid('md'), stamp: 'bang' })
+    expect(h.host.cardWrites).toEqual([{ op: 'set-stamp', nodeId: nid('md'), stamp: 'bang' }])
+    expect(h.conn.only).toEqual({ type: 'script-set-stamp-result', seq: 3, ok: true })
+  })
+
+  it('refuses an unknown stamp and a missing node', () => {
+    const h = harness((host) => { host.add(card('markdown', 'md')) })
+    h.send({ type: 'script-set-stamp', seq: 1, nodeId: nid('md'), stamp: 'heart' } as unknown as ScriptMessage)
+    h.send({ type: 'script-set-stamp', seq: 2, nodeId: nid('gone'), stamp: 'star' })
+    expect(h.host.cardWrites).toEqual([])
+    expect(h.conn.sent.map((m) => m.error)).toEqual(['stamp must be one of none, star, bang', 'unknown-node'])
   })
 })
 

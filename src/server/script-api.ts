@@ -7,7 +7,7 @@ import {
   type ScriptMessage,
   type ScriptResponse
 } from '../shared/protocol'
-import type { NodeData, TerminalNodeData } from '../shared/state'
+import { NODE_STAMPS, isNodeStamp, type NodeData, type NodeStamp, type TerminalNodeData } from '../shared/state'
 import { ROOT_NODE_ID, type NodeId, type PtySessionId } from '../shared/ids'
 import { ancestorsOf, wouldCreateCycle } from '../shared/node-ancestry'
 import { unhandledVariant } from '../shared/exhaustive'
@@ -169,6 +169,8 @@ export interface ScriptHost {
   reparent(nodeId: NodeId, newParentId: NodeId): void
   /** Set one card's position. */
   move(nodeId: NodeId, position: CardPosition): void
+  /** Set the mark drawn beside a card. */
+  setStamp(nodeId: NodeId, stamp: NodeStamp): void
   /** Create a browser card under `parentId` showing `url`, placed as `addMarkdown` places one. Returns its id. */
   addBrowser(parentId: NodeId, url: string, profile: BrowserProfile, position: CardPosition | undefined): NodeId
   /** Send a browser card's page to `url`. */
@@ -203,6 +205,7 @@ const REQUIRED_CAPABILITY: { readonly [T in ScriptMessage['type']]: ModCapabilit
   'script-update-automation': 'write-nodes',
   'script-reparent': 'write-nodes',
   'script-move': 'write-nodes',
+  'script-set-stamp': 'write-nodes',
   'script-add-browser': 'write-nodes',
   'script-navigate-browser': 'write-nodes',
   'script-archive': 'archive-nodes',
@@ -601,6 +604,16 @@ export class ScriptApi {
         if (!this.host.getNode(msg.nodeId)) return fail('unknown-node')
         this.host.move(msg.nodeId, where.position)
         reply({ type: 'script-move-result', seq: msg.seq, ok: true })
+        return
+      }
+
+      case 'script-set-stamp': {
+        const fail = (error: string): void => reply({ type: 'script-set-stamp-result', seq: msg.seq, ok: false, error })
+        // The renderer draws only known stamps, so refuse anything else rather than store it.
+        if (!isNodeStamp(msg.stamp)) return fail(`stamp must be one of ${NODE_STAMPS.join(', ')}`)
+        if (!this.host.getNode(msg.nodeId)) return fail('unknown-node')
+        this.host.setStamp(msg.nodeId, msg.stamp)
+        reply({ type: 'script-set-stamp-result', seq: msg.seq, ok: true })
         return
       }
 

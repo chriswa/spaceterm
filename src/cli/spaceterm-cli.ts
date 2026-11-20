@@ -20,6 +20,7 @@
  *   spaceterm-cli archive <node-id>                                    # archive a card and its whole subtree
  *   spaceterm-cli reparent <node-id> <new-parent-id>                   # put a card (and subtree) under another
  *   spaceterm-cli move <node-id> <x> <y>                               # set one card's position
+ *   spaceterm-cli set-stamp <node-id> <none|star|bang>                 # mark a card (bang shows as Urgent)
  *   spaceterm-cli add-browser <parent-id> <url> [--profile chrome|isolated] [--x X --y Y]  # web page card; prints its id
  *   spaceterm-cli navigate-browser <node-id> <url>                     # send a browser card elsewhere
  *
@@ -38,6 +39,7 @@ import {
 } from '../shared/protocol'
 import { probeCapabilities, formatCapabilityReport } from '../server/capabilities'
 import { AUTOMATION_OVERLAPS } from '../shared/automation'
+import { NODE_STAMPS, isNodeStamp } from '../shared/state'
 import { checkImages } from '../claude-code-plugin/mcp-server/show-user-images'
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -276,6 +278,13 @@ async function move(nodeId: string, x: string, y: string): Promise<void> {
   process.stdout.write(JSON.stringify({ ok: reply.ok }) + '\n')
 }
 
+async function setStamp(nodeId: string, stamp: string): Promise<void> {
+  if (!isNodeStamp(stamp)) fatal(`<stamp> must be one of ${NODE_STAMPS.join(', ')}`)
+  const reply = await oneshot({ type: 'script-set-stamp', seq: 1, nodeId, stamp }, 'script-set-stamp-result')
+  if (reply.error) fatal(reply.error)
+  process.stdout.write(JSON.stringify({ ok: reply.ok }) + '\n')
+}
+
 /**
  * Fire a custom event at the automation cards whose trigger is `eventId`.
  * The payload is parsed here, so a typo in the JSON fails loudly instead of
@@ -470,6 +479,7 @@ function printUsage(): void {
                                                            (or root) without moving it; refuses its own
                                                            descendants
   spaceterm-cli move <node-id> <x> <y>                     Set one card's position; its children stay put
+  spaceterm-cli set-stamp <node-id> <none|star|bang>       Mark a card; bang shows as Urgent
   spaceterm-cli add-browser <parent-id> <url> [--profile chrome|isolated] [--x X --y Y]
                                                            Open a web page in a card; prints its id. chrome
                                                            (the default) is the user's own signed-in Chrome
@@ -584,6 +594,11 @@ switch (command) {
   case 'move':
     if (args.length !== 4) { printUsage(); process.exit(1) }
     move(args[1], args[2], args[3]).catch((err) => fatal(err.message))
+    break
+
+  case 'set-stamp':
+    if (args.length !== 3) { printUsage(); process.exit(1) }
+    setStamp(args[1], args[2]).catch((err) => fatal(err.message))
     break
 
   case 'subscribe': {

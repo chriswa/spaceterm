@@ -2387,6 +2387,14 @@ export interface ScriptMoveMessage {
   y: number
 }
 
+/** Set the mark drawn beside a card, as the card's stamp picker does. */
+export interface ScriptSetStampMessage {
+  type: 'script-set-stamp'
+  seq: number
+  nodeId: NodeId
+  stamp: NodeStamp
+}
+
 /**
  * Open a web page in a browser card under `parentId`. See shared/browser.ts
  * for the two profiles.
@@ -2429,6 +2437,7 @@ export type ScriptMessage =
   | ScriptArchiveMessage
   | ScriptReparentMessage
   | ScriptMoveMessage
+  | ScriptSetStampMessage
   | ScriptAddBrowserMessage
   | ScriptNavigateBrowserMessage
 
@@ -2529,7 +2538,7 @@ export interface ScriptAddCardResult {
 
 /** A card a script edited or moved. `error` names why nothing changed. */
 export interface ScriptEditCardResult {
-  type: 'script-set-markdown-result' | 'script-update-automation-result' | 'script-reparent-result' | 'script-move-result' | 'script-navigate-browser-result'
+  type: 'script-set-markdown-result' | 'script-update-automation-result' | 'script-reparent-result' | 'script-move-result' | 'script-set-stamp-result' | 'script-navigate-browser-result'
   seq: number
   ok: boolean
   error?: string

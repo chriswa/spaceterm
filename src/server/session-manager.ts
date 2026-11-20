@@ -129,6 +129,9 @@ export class SessionManager {
     // Either way, never forward the identity of whichever agent session
     // happened to start this server — see spawn-env.ts for why.
     const loginEnv = isCommand ? this.loginEnv.current() : null
+    if (isCommand && !loginEnv) {
+      serverLog(`[spawn] ${sessionId.slice(0, 8)} no login env captured yet; using the server's own, which may lack rc-file exports`)
+    }
     const baseEnv = scrubInheritedAgentEnv(loginEnv ?? process.env)
     const args = isCommand ? (options!.args || []) : ['-l']
     // Only apply shell integration env when spawning a shell (not a command)
