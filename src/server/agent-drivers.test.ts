@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  CLAUDE_WITHHELD_TOOLS,
   createAgentDrivers,
   driverFor,
   shellQuote,
@@ -89,9 +90,19 @@ describe('claude driver', () => {
     })
   })
 
+  /** The tool names following `--disallowed-tools`, up to the next flag. */
+  function withheld(args: string[]): string[] {
+    const from = at(args, '--disallowed-tools') + 1
+    const to = args.findIndex((arg, i) => i >= from && arg.startsWith('--'))
+    return args.slice(from, to === -1 ? undefined : to)
+  }
+
   it('withholds EndConversation, which self-terminates nothing on a surface', () => {
-    const options = drivers().claude.buildCreateOptions({})
-    expect(options.args![at(options.args!, '--disallowed-tools') + 1]).toBe('EndConversation')
+    expect(withheld(drivers().claude.buildCreateOptions({}).args!)).toContain('EndConversation')
+  })
+
+  it('withholds PushNotification, which sends nothing while the terminal is active', () => {
+    expect(withheld(drivers().claude.buildCreateOptions({}).args!)).toContain('PushNotification')
   })
 
   it('never leaves --disallowed-tools last, where it would eat an extra arg', () => {
@@ -100,7 +111,8 @@ describe('claude driver', () => {
     // silently swallowed instead of reaching claude.
     const options = drivers().claude.buildCreateOptions({ extraArgs: ['bare-value'] })
     const args = options.args!
-    expect(args[at(args, '--disallowed-tools') + 2]).toMatch(/^--/)
+    expect(withheld(args)).toEqual(CLAUDE_WITHHELD_TOOLS)
+    expect(args[at(args, '--disallowed-tools') + CLAUDE_WITHHELD_TOOLS.length + 1]).toMatch(/^--/)
   })
 
   it('resumes with -r', () => {

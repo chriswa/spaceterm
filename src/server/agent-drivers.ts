@@ -89,8 +89,14 @@ export function shellQuote(s: string): string {
  * surface is spaceterm's job, via a self-terminate MCP tool, and that one works
  * for Cursor and Codex too. Leaving both on offer only invites an agent to
  * reach for the inert one.
+ *
+ * `PushNotification` sends nothing while its terminal is "active", which on a
+ * surface only means a Mac has it open, not that the user is looking. The
+ * plugin's `notify_user` always reaches the phone. (A PreToolUse hook in the
+ * plugin also reroutes `PushNotification` through Spaceterm, for an agent
+ * launched some other way.)
  */
-const CLAUDE_WITHHELD_TOOLS = ['EndConversation']
+export const CLAUDE_WITHHELD_TOOLS = ['EndConversation', 'PushNotification']
 
 function claudeDriver(provisioning: AgentProvisioning): AgentDriver {
   return {
