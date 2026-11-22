@@ -32,6 +32,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "PushNotification",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/../../node_modules/.bin/tsx\" \"${CLAUDE_PLUGIN_ROOT}/scripts/push-notification-hook.ts\"",
+            "timeout": 20
+          }
+        ]
       }
     ],
     "PermissionRequest": [
