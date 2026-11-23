@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { asNodeId } from '../../shared/ids'
-import { renderTurnBody, splitTurnBody } from './prompt'
+import { renderScheduled, renderTurnBody, SCHEDULED_PROMPT_CHARS, splitTurnBody } from './prompt'
 import { parseRecordLine, transcriptPage, type RecordFile, type Speakers } from './transcript'
 
 function memoryFile(text: string): RecordFile {
@@ -151,6 +151,9 @@ describe('splitTurnBody', () => {
     ['away', renderTurnBody([], heard, 'away')],
     ['with a backlog', renderTurnBody([], heard, undefined, undefined, 1)],
     ['back from away', renderTurnBody([], heard, { events: [], unheard: true }, 'reconnected', 3)],
+    ['with watches, scheduled jobs and a backlog', renderTurnBody([], heard, undefined, undefined, 2, ['{Kevin:amber-otter}'], undefined, [], {
+      jobs: [{ id: 'a1b2c3d4', when: 'Monday, November 23 at 3:20 PM, in 20 minutes', recurring: false, prompt: 'Tea.' }], total: 1,
+    })],
   ])('recovers exactly what the user said: %s', (_, body) => {
     expect(splitTurnBody(body)?.heard).toBe(heard)
   })
@@ -162,5 +165,28 @@ describe('splitTurnBody', () => {
 
   it('finds nothing in a turn the user did not speak in', () => {
     expect(splitTurnBody(renderTurnBody([{ kind: 'agent-ended', agent: 'x', archived: true, lastSaid: '', cache: {} }], undefined))).toBeUndefined()
+  })
+})
+
+describe('renderScheduled', () => {
+  const job = (n: number, prompt = `Job ${n}.`) => ({ id: `0000000${n}`, when: `Monday, November 23 at ${n}:00 PM, in ${n} hours`, recurring: n % 2 === 0, prompt })
+
+  it('gives each job its id, when it fires and how long from now, its kind and its prompt, on one line', () => {
+    expect(renderScheduled({ jobs: [job(1), job(2, 'Check\non Kevin.')], total: 2 })).toBe(
+      'SCHEDULED (your cron jobs, soonest first): 00000001 fires Monday, November 23 at 1:00 PM, in 1 hours, one-shot: Job 1.; ' +
+      '00000002 fires Monday, November 23 at 2:00 PM, in 2 hours, recurring: Check on Kevin.')
+  })
+
+  it('shows the soonest five, counts the rest, and keeps long prompts short', () => {
+    const line = renderScheduled({ jobs: [1, 2, 3, 4, 5, 6].map(n => job(n, n === 1 ? 'x'.repeat(500) : undefined)), total: 9 })
+    expect(line).toContain('; 4 more, in CronList)')
+    expect(line).toContain('00000005')
+    expect(line).not.toContain('00000006')
+    expect(line).toContain(`${'x'.repeat(SCHEDULED_PROMPT_CHARS - 1)}…`)
+    expect(line).not.toContain('\n')
+  })
+
+  it('is left out when nothing is scheduled', () => {
+    expect(renderTurnBody([], 'hi', undefined, undefined, 0, [], undefined, [], { jobs: [], total: 0 })).not.toContain('SCHEDULED')
   })
 })

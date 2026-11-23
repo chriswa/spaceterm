@@ -6252,6 +6252,28 @@ describe('Receptionist cron jobs (CronCreate, CronList, CronDelete)', () => {
     expect(said(h).join(' ')).toContain('Cancelled it.')
   })
 
+  it('ends every message with the soonest jobs while there are any, and says nothing of them when there are none', async () => {
+    const { cron } = tomorrowCron()
+    const h = harness({
+      replies: [
+        (turn) => {
+          expect(turn.prompt).not.toContain('SCHEDULED')
+          return reply([], [{ tool: 'CronCreate', cron, prompt: 'Remind the user to stretch.', recurring: false }])
+        },
+        reply([{ from: 'control', text: 'Set.' }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(/\n\nSCHEDULED \(your cron jobs, soonest first\): [0-9a-f]{8} fires \w+, \w+ \d+ at \d+:\d\d [AP]M, in 24 hours, one-shot: Remind the user to stretch\.(\n|$)/)
+          return reply([{ from: 'control', text: 'One reminder.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('remind me to stretch tomorrow', 'spoken')
+    await flush()
+    await h.receptionist.hear('what reminders do I have?', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(3)
+  })
+
   it('tells the model why CronCreate scheduled nothing, and CronDelete of an unknown id', async () => {
     const h = harness({
       replies: [

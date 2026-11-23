@@ -21,7 +21,7 @@ import type { SideQuestionResult, SideQuestionUsage } from '../side-questions'
 import type { EndedAnswer } from '../ended-side-question'
 import {
   FINAL_UPDATE_QUESTION, FORMAT_REMINDER, HANDOVER_CHARS, IMAGE_CAPTION_CHARS, IMAGE_CAPTIONS_TOLD, HANDOVER_HEADING, HANDOVER_PROMPT, mergeNews, RECEPTIONIST_SYSTEM_PROMPT, renderEvent, renderTurnBody,
-  type AgentEndedEvent, type BlockedAgent, type ReceptionistEvent, type ReturnNews,
+  SCHEDULED_SHOWN, type AgentEndedEvent, type BlockedAgent, type ReceptionistEvent, type ReturnNews, type ScheduledJobs,
 } from './prompt'
 import {
   CONVERSATION_WORDS, decideInterruption, HANG_ON, lastWords, splitAtOffset, type InterruptionContext, type InterruptionVerdict,
@@ -2119,6 +2119,8 @@ export class Receptionist {
     await this.noteInterruption(selfInterrupted ? 'self' : 'user')
     // The last reply is over, and any cut in it noted: see `DeferredReads.heardOut`.
     this.reads.heardOut()
+    // The Mac's offset, for when the scheduled jobs fire, read only when there are any: see `scheduled`.
+    const offset = this.deps.cronJobs.nextDue() === undefined ? undefined : await this.deps.utcOffsetMinutes()
     // Read after that await: the listener may have come or gone during it.
     const away = !this.listening
     const news = away ? undefined : this.returnNews
@@ -2139,8 +2141,9 @@ export class Receptionist {
     const backlogSize = this.deps.backlog.size
     const watching = this.watching()
     const blocked = this.blocked()
+    const scheduled = offset === undefined ? undefined : this.scheduled(offset)
     for (const event of events) if (event.kind === 'agent-blocked') this.shownBlocks.set(event.nodeId, event.since)
-    const render = (said: string | undefined) => renderTurnBody(events, said, away ? 'away' : news, again, backlogSize, watching, pulled?.described, blocked)
+    const render = (said: string | undefined) => renderTurnBody(events, said, away ? 'away' : news, again, backlogSize, watching, pulled?.described, blocked, scheduled)
     // With the user's words, the events are in the transcript already, as what came with them.
     if (words === undefined && (events.length || news)) {
       this.trace('events', `${events.length ? `News: ${events.map(eventHeadline).join('; ')}` : 'You were back'}${away ? ', with nobody listening' : ''}`,
@@ -3587,6 +3590,15 @@ export class Receptionist {
   }
 
   /** The tokens of the agents being watched, for the turn's WATCHING line. */
+  /** The soonest cron jobs, for the SCHEDULED line: see `renderScheduled`. */
+  private scheduled(offset: number, now = Date.now()): ScheduledJobs {
+    const jobs = this.deps.cronJobs.list()
+    return {
+      jobs: jobs.slice(0, SCHEDULED_SHOWN).map(job => ({ id: job.id, when: whenWords(job.nextAt, offset, now), recurring: job.recurring, prompt: job.prompt })),
+      total: jobs.length,
+    }
+  }
+
   private watching(): string[] {
     const agents = this.deps.agents()
     const handles = this.handles(agents)

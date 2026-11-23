@@ -96,6 +96,8 @@ An agent BLOCKED, waiting on the user, can do nothing until the user answers a p
 
 A message ends with WATCHING when you are watching agents: those are the agents you will be told about when they next stop, and the only ones. Never tell the user you will hear from an agent that is not on it. When the user types into an agent themselves, they have it in hand, so you stop watching it, and are told. Leave it to them, saying nothing more of it unless they ask; if it then sits stopped without them for a while, an item about it comes onto your backlog, so that it comes up once they are back working through you.
 
+A message ends with SCHEDULED when you have jobs scheduled with CronCreate: the next few to fire, soonest first, each with its id, when it fires and how long from now, whether it is one-shot or recurring, and its prompt. Those are your alarms and reminders, and the only ones: never tell the user one is set that is not there. For any beyond those shown, use CronList.
+
 The user may have dozens of agents. Never go through them all at once: when asked what everyone is doing, name only the few that need the user — waiting for an answer, asking a question, stuck on an error, or just finished something they asked about — then sum up the rest in one sentence, such as "the other twenty are working or idle", and offer to go through them. A working agent is not waiting on the user, so never call it the one exception to nothing waiting. When the user wants the rest, name at most four agents in a reply, never more, however many are left and however the user asks ("go on", "next", "who else"): count them before you answer. Most important first, then ask before going on; offer to group them by project when that is quicker. Mention an agent only when it matters, since every agent you name is one more name the user has to learn.
 
 Speak plain English that sounds natural aloud: no markdown, lists, code, file names, file paths, commands, or quotation marks, even inside a quote — say "the release notes file", not its name. Keep your own parts to a sentence or two. Say where more detail is available instead of giving all of it. Do not repeat the user's words back to them.`
@@ -396,7 +398,9 @@ const SECTION_BREAK = '\n\n'
 
 /** `renderBacklog`'s section, last in the body. */
 const BACKLOG_TRAILER = /\n\nBACKLOG: \d+ items? set aside for later\.$/
-/** `renderWatching`'s section, just before the backlog's. */
+/** `renderScheduled`'s section, just before the backlog's. */
+const SCHEDULED_TRAILER = /\n\nSCHEDULED [^\n]*$/
+/** `renderWatching`'s section, just before the scheduled jobs'. */
 const WATCHING_TRAILER = /\n\nWATCHING [^\n]*$/
 /** `renderBlocked`'s section, just before the watch list's. */
 const BLOCKED_TRAILER = /\n\nWAITING ON THE USER [^\n]*$/
@@ -406,11 +410,11 @@ const BLOCKED_TRAILER = /\n\nWAITING ON THE USER [^\n]*$/
  * deciding whether events are worth speaking up about. `listener` is `away` when nobody can hear the reply, or
  * what the user missed when they have just come back. `heardAgain` opens it with `HEARD_AGAIN`, or `LISTENING_AGAIN`. `watching` is the
  * tokens of the agents Control is watching, and `blocked` the agents blocked on the user. `pulled` is the backlog item the system took off for Control to bring
- * up, as backlog_next would describe it: see backlog-pause.ts.
+ * up, as backlog_next would describe it: see backlog-pause.ts. `scheduled` is the soonest cron jobs: see `renderScheduled`.
  */
 export function renderTurnBody(
   events: readonly ReceptionistEvent[], heard: string | undefined, listener?: 'away' | ReturnNews, heardAgain?: 'reconnected' | 'listening', backlog = 0,
-  watching: readonly string[] = [], pulled?: string, blocked: readonly BlockedAgent[] = [],
+  watching: readonly string[] = [], pulled?: string, blocked: readonly BlockedAgent[] = [], scheduled?: ScheduledJobs,
 ): string {
   const sections: string[] = []
   if (heardAgain) sections.push(heardAgain === 'reconnected' ? HEARD_AGAIN : LISTENING_AGAIN)
@@ -425,6 +429,7 @@ export function renderTurnBody(
   else if (heard === undefined && events.length && !listener) sections.push('The user has not said anything. Decide whether the events are worth speaking up about.')
   if (blocked.length) sections.push(renderBlocked(blocked))
   if (watching.length) sections.push(renderWatching(watching))
+  if (scheduled?.jobs.length) sections.push(renderScheduled(scheduled))
   if (backlog > 0 && listener !== 'away') sections.push(renderBacklog(backlog))
   return sections.join(SECTION_BREAK)
 }
@@ -433,13 +438,13 @@ export function renderTurnBody(
  * A recorded turn body taken apart again, for the transcript view: the user's
  * words, and whatever came before them (events, news on their return). The
  * inverse of `renderTurnBody` for a turn the user spoke in; undefined for one
- * they did not. Only `AWAY`, the blocked agents, the watch list and the backlog count ever follow the words.
+ * they did not. Only `AWAY`, the blocked agents, the watch list, the scheduled jobs and the backlog count ever follow the words.
  */
 export function splitTurnBody(body: string): { heard: string; context?: string } | undefined {
   const later = body.indexOf(SECTION_BREAK + USER_SAYS)
   const marker = body.startsWith(USER_SAYS) ? 0 : later < 0 ? -1 : later + SECTION_BREAK.length
   if (marker < 0) return undefined
-  let heard = body.slice(marker + USER_SAYS.length).replace(BACKLOG_TRAILER, '').replace(WATCHING_TRAILER, '').replace(BLOCKED_TRAILER, '')
+  let heard = body.slice(marker + USER_SAYS.length).replace(BACKLOG_TRAILER, '').replace(SCHEDULED_TRAILER, '').replace(WATCHING_TRAILER, '').replace(BLOCKED_TRAILER, '')
   const away = SECTION_BREAK + AWAY
   if (heard.endsWith(away)) heard = heard.slice(0, -away.length)
   const context = body.slice(0, marker).trim().replace(EVENTS_UNHEARD, '').trim()
@@ -463,6 +468,33 @@ export function renderBacklog(count: number): string {
  */
 export function renderWatching(tokens: readonly string[]): string {
   return `WATCHING (told when each next stops): ${tokens.join(', ')}.`
+}
+
+/** The most cron jobs the SCHEDULED line shows; CronList has the rest. */
+export const SCHEDULED_SHOWN = 5
+/** The most of a job's prompt the line keeps: it goes on every message. */
+export const SCHEDULED_PROMPT_CHARS = 200
+
+/** The soonest cron jobs, for the SCHEDULED line: `when` is `whenWords`'s, and `total` counts every job. */
+export interface ScheduledJobs {
+  jobs: ReadonlyArray<{ id: string; when: string; recurring: boolean; prompt: string }>
+  total: number
+}
+
+/**
+ * Control's soonest cron jobs, on every turn while there are any, shown as the
+ * watch list is: so that what it tells the user is set is what is set, even
+ * after its memory of setting them was compacted away. One line, so the
+ * transcript view can take it off the user's words (`splitTurnBody`).
+ */
+export function renderScheduled(scheduled: ScheduledJobs): string {
+  const shown = scheduled.jobs.slice(0, SCHEDULED_SHOWN).map(job => {
+    const prompt = job.prompt.replace(/\s+/g, ' ').trim()
+    const capped = prompt.length > SCHEDULED_PROMPT_CHARS ? `${prompt.slice(0, SCHEDULED_PROMPT_CHARS - 1)}…` : prompt
+    return `${job.id} fires ${job.when}, ${job.recurring ? 'recurring' : 'one-shot'}: ${capped}`
+  })
+  const more = scheduled.total - shown.length
+  return `SCHEDULED (your cron jobs, soonest first${more > 0 ? `; ${more} more, in CronList` : ''}): ${shown.join('; ')}`
 }
 
 /** An agent blocked on the user, for the WAITING ON THE USER line. `since`: epoch ms. */
