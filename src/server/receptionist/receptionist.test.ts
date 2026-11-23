@@ -18,6 +18,7 @@ import { INTERRUPTION_QUIET_MS, MID_TOPIC_PAUSE_MS, PAUSE_MS } from './backlog-p
 import { Watches } from './watches'
 import { DeferredReads } from './deferred-reads'
 import { BackBurner, FORGOTTEN_MS } from './back-burner'
+import { CronJobs } from './cron-jobs'
 import { EndedAgents } from './ended-agents'
 import { PendingNews } from './pending-news'
 import { CarryOver, CRASHED_MID_REPLY, RESTARTED_MID_REPLY } from './carry-over'
@@ -172,6 +173,8 @@ function harness(opts: {
   watchStore?: NameRegistryStore
   /** Where the back burner is kept, from an earlier server; by default nothing is on it. */
   burnerStore?: NameRegistryStore
+  /** Where cron jobs are kept, from an earlier server; by default none are scheduled. */
+  cronStore?: NameRegistryStore
   /** Where the ended agents are kept, from an earlier server; by default none have ended. */
   endedStore?: NameRegistryStore
   /** Where news not yet told is kept, from an earlier server; by default there is none. */
@@ -366,6 +369,9 @@ function harness(opts: {
     watches: new Watches({ store: opts.watchStore ?? memoryStore() }),
     deferredReads: new DeferredReads({ store: opts.readsStore ?? memoryStore() }),
     backBurner: new BackBurner({ store: opts.burnerStore ?? memoryStore() }),
+    cronJobs: new CronJobs({ store: opts.cronStore ?? memoryStore() }),
+    // Vancouver's, as the Mac says it: UTC-7.
+    utcOffsetMinutes: async () => -420,
     ended: new EndedAgents({ store: opts.endedStore ?? memoryStore() }),
     news: new PendingNews({ store: opts.newsStore ?? memoryStore() }),
     carryOver: new CarryOver({ store: opts.carryStore ?? memoryStore() }),
@@ -6200,5 +6206,141 @@ describe('Receptionist: agents blocked on the user', () => {
     await h.receptionist.hear('allow Sally', 'spoken')
     await flush()
     expect(h.wire).toEqual([])
+  })
+})
+
+describe('Receptionist cron jobs (CronCreate, CronList, CronDelete)', () => {
+  /** A cron that pins a minute a day from now, in UTC-7 as the harness's Mac is: never due during a test unless made so. */
+  function tomorrowCron(): { cron: string; at: number } {
+    const at = Math.ceil((Date.now() + 24 * 60 * 60_000) / 60_000) * 60_000
+    const local = new Date(at - 420 * 60_000)
+    return { cron: `${local.getUTCMinutes()} ${local.getUTCHours()} ${local.getUTCDate()} ${local.getUTCMonth() + 1} *`, at }
+  }
+
+  it('schedules with CronCreate, waits for its result to confirm, lists with CronList and cancels with CronDelete', async () => {
+    const { cron } = tomorrowCron()
+    let id = ''
+    const h = harness({
+      replies: [
+        reply([], [{ tool: 'CronCreate', cron, prompt: 'Remind the user to check on {Kevin:swift-hammer}.', recurring: false, durable: true }]),
+        (turn) => {
+          const match = /CronCreate scheduled job ([0-9a-f]{8}): cron "([^"]+)" \(one-shot\), next fires \w+, \w+ \d+ at \d+:\d\d [AP]M, in 24 hours/.exec(turn.prompt)
+          expect(match, turn.prompt).not.toBeNull()
+          id = match![1]
+          return reply([{ from: 'control', text: 'I\'ll remind you tomorrow.' }])
+        },
+        reply([], [{ tool: 'CronList' }]),
+        (turn) => {
+          expect(turn.prompt).toContain(`CronList (1 job`)
+          expect(turn.prompt).toContain(`${id}: cron "${cron}" (one-shot)`)
+          expect(turn.prompt).toContain('Remind the user to check on {Kevin:swift-hammer}.')
+          return reply([], [{ tool: 'CronDelete', id }])
+        },
+        (turn) => {
+          expect(turn.prompt).toContain(`CronDelete cancelled job ${id}`)
+          return reply([{ from: 'control', text: 'Cancelled it.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('remind me tomorrow to check on Kevin', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    expect(said(h).join(' ')).toContain('remind you tomorrow')
+    await h.receptionist.hear('actually, cancel that', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(5)
+    expect(said(h).join(' ')).toContain('Cancelled it.')
+  })
+
+  it('tells the model why CronCreate scheduled nothing, and CronDelete of an unknown id', async () => {
+    const h = harness({
+      replies: [
+        reply([], [{ tool: 'CronCreate', cron: '0 0 15 * * *', prompt: 'Wake up.' }, { tool: 'CronDelete', id: 'deadbeef' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('CronCreate failed, so nothing was scheduled: "cron" must be five fields')
+          expect(turn.prompt).toContain('CronDelete: there is no job deadbeef, so nothing was cancelled. No jobs are scheduled.')
+          return reply([{ from: 'control', text: 'That did not work.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('set an alarm', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it('a job that comes due is news Control speaks up about unprompted, and a one-shot is then gone', async () => {
+    const { cron, at } = tomorrowCron()
+    const h = harness({
+      replies: [
+        reply([], [{ tool: 'CronCreate', cron, prompt: 'The user\'s tea timer is up: tell them.', recurring: false }]),
+        reply([{ from: 'control', text: 'Timer set.' }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(/EVENTS:\nYour scheduled job [0-9a-f]{8} fired \(CronCreate, cron "[^"]+"\)\. Its prompt: The user's tea timer is up: tell them\. It was a one-shot, so it is now deleted\./)
+          expect(turn.prompt).not.toContain('late')
+          expect(turn.prompt).not.toContain('THE USER SAYS')
+          return reply([{ from: 'control', text: 'Your tea is ready.' }])
+        },
+        reply([], [{ tool: 'CronList' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('CronList: no jobs are scheduled.')
+          return reply([{ from: 'control', text: 'None.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('set a tea timer', 'spoken')
+    await flush()
+    expect(await h.receptionist.fireCronJobs(at - 1)).toEqual([])
+    const fired = await h.receptionist.fireCronJobs(at)
+    expect(fired.map(job => job.final)).toEqual([true])
+    await flush()
+    expect(h.turns).toHaveLength(3)
+    expect(said(h).join(' ')).toContain('Your tea is ready.')
+    expect(h.traces.some(trace => trace.what === 'fired' && /Scheduled job [0-9a-f]{8} fired/.test(trace.text))).toBe(true)
+    await h.receptionist.hear('any alarms left?', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(5)
+  })
+
+  it('keeps jobs across a server restart, and fires one that came due while it was down, saying how late', async () => {
+    const cronStore = memoryStore()
+    const { cron, at } = tomorrowCron()
+    const first = harness({ cronStore, replies: [reply([], [{ tool: 'CronCreate', cron, prompt: 'Remind the user about the dentist.', recurring: false }]), reply([{ from: 'control', text: 'Set.' }])] })
+    await first.receptionist.hear('remind me about the dentist', 'spoken')
+    await flush()
+    await first.receptionist.shutdown(true)
+
+    const second = harness({
+      cronStore,
+      replies: [(turn) => {
+        expect(turn.prompt).toContain('Its prompt: Remind the user about the dentist.')
+        expect(turn.prompt).toContain('10 minutes late, because the server was down when it was due')
+        return reply([{ from: 'control', text: 'Time for the dentist.' }])
+      }],
+    })
+    await second.receptionist.fireCronJobs(at + 10 * 60_000)
+    await flush()
+    expect(second.turns).toHaveLength(1)
+    expect(said(second).join(' ')).toContain('Time for the dentist.')
+  })
+
+  it('a recurring job fires and says when it fires next', async () => {
+    const h = harness({
+      replies: [
+        reply([], [{ tool: 'CronCreate', cron: '7 * * * *', prompt: 'Tell the user the hourly check is due.' }]),
+        (turn) => {
+          expect(turn.prompt).toMatch(/\(recurring, expires \w+, \w+ \d+ at \d+:\d\d [AP]M\)/)
+          return reply([{ from: 'control', text: 'Every hour, for a week.' }])
+        },
+        (turn) => {
+          expect(turn.prompt).toMatch(/It is recurring, and fires again \w+, \w+ \d+ at \d+:07 [AP]M, in 1 hour\./)
+          return reply([{ from: 'control', text: 'Hourly check.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('every hour remind me to check', 'spoken')
+    await flush()
+    await h.receptionist.fireCronJobs(Date.now() + 2 * 60 * 60_000 - (Date.now() % (60 * 60_000)) + 7 * 60_000)
+    await flush()
+    expect(h.turns).toHaveLength(3)
   })
 })

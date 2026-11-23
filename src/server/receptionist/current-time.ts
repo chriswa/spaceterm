@@ -74,3 +74,18 @@ export async function currentTime(probes: ClockProbes = REAL_CLOCK_PROBES): Prom
   const named = zone ? `the Mac's time zone, ${zone}` : 'the Mac\'s time zone'
   return `${when}, in ${named} (${abbreviation}, ${offset})`
 }
+
+/**
+ * The Mac's offset from UTC now, in minutes east, from `date +%z`: what
+ * Control's cron jobs are scheduled in (cron-jobs.ts). Falls back to Node's
+ * own offset when `date` cannot be run, which is right but for a lagging zone.
+ */
+export async function utcOffsetMinutes(probes: ClockProbes = REAL_CLOCK_PROBES): Promise<number> {
+  try {
+    const match = /^([+-])(\d{2})(\d{2})$/.exec((await probes.date('+%z')).trim())
+    if (match) return (match[1] === '-' ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3]))
+  } catch {
+    // Node's offset, below.
+  }
+  return -new Date().getTimezoneOffset()
+}

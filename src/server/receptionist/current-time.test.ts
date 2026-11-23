@@ -1,6 +1,6 @@
 import { existsSync } from 'fs'
 import { describe, expect, it } from 'vitest'
-import { currentTime, describeDateFields, zoneName, type ClockProbes } from './current-time'
+import { currentTime, describeDateFields, utcOffsetMinutes, zoneName, type ClockProbes } from './current-time'
 
 function probes(printed: string, link: string | Error): ClockProbes {
   return {
@@ -48,5 +48,16 @@ describe('zoneName', () => {
 describe('describeDateFields', () => {
   it('drops the padding date puts on the day and hour', () => {
     expect(describeDateFields('Friday|January|01|2027|01|00|AM|MST|-0700').when).toBe('Friday, January 1, 2027, 1:00 AM')
+  })
+})
+
+describe('utcOffsetMinutes', () => {
+  it('reads the Mac\'s offset east of UTC from date', async () => {
+    expect(await utcOffsetMinutes(probes('-0700\n', '/x'))).toBe(-420)
+    expect(await utcOffsetMinutes(probes('+0530', '/x'))).toBe(330)
+  })
+
+  it('falls back to Node\'s own offset when date cannot say', async () => {
+    expect(await utcOffsetMinutes(probes('garbage', '/x'))).toBe(-new Date().getTimezoneOffset())
   })
 })

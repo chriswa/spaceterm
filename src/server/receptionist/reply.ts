@@ -69,6 +69,15 @@ export type ToolCall = (
    * volume, which is spotify's: see device-volume.ts.
    */
   | { tool: 'device_volume'; set?: number }
+  /**
+   * Claude Code's own scheduling tools, under their own names and with their
+   * own fields, so what the model knows of them carries over: see cron-jobs.ts.
+   * `recurring` defaults to true, as in Claude Code; `durable` is accepted and
+   * dropped, since every job of Control's is kept on disk.
+   */
+  | { tool: 'CronCreate'; cron: string; prompt: string; recurring: boolean }
+  | { tool: 'CronList' }
+  | { tool: 'CronDelete'; id: string }
 )
 
 export interface Reply {
@@ -97,7 +106,7 @@ export function letsGo(call: ToolCall): call is { tool: LetGoTool } {
  */
 export function isLookup(call: ToolCall): boolean {
   return call.tool === 'read' || call.tool === 'recall' || call.tool === 'list_agents' || call.tool === 'list_nodes' || call.tool === 'agent_details' || call.tool === 'find_agent' || call.tool === 'nearby' ||
-    call.tool === 'agent_usage' || call.tool === 'current_time' || call.tool === 'backlog_next' ||
+    call.tool === 'agent_usage' || call.tool === 'current_time' || call.tool === 'backlog_next' || call.tool === 'CronList' ||
     // status, devices and help only look; play, pause and the rest change the music.
     (call.tool === 'spotify' && commandKind(call.args) === 'lookup') ||
     // Reading the volume only looks; setting it is an action.
@@ -122,11 +131,12 @@ export function isAction(call: ToolCall): boolean {
 /**
  * Tools whose results the model must see before it can go on: the lookups;
  * unarchive_agent, which waits for the agent to be ready so that the model's
- * next step can send to it; and spawn, whose result names the new agent for
- * the confirmation to introduce.
+ * next step can send to it; spawn, whose result names the new agent for
+ * the confirmation to introduce; and CronCreate and CronDelete, whose results
+ * say when the job fires, or whether there was one, for the confirmation.
  */
 export function isBlocking(call: ToolCall): boolean {
-  return isLookup(call) || call.tool === 'unarchive_agent' || call.tool === 'spawn'
+  return isLookup(call) || call.tool === 'unarchive_agent' || call.tool === 'spawn' || call.tool === 'CronCreate' || call.tool === 'CronDelete'
 }
 
 /**
@@ -152,6 +162,8 @@ export function actionHeadline(call: ToolCall): string {
     case 'install_phone_app': return 'STARTED INSTALLING THE IPHONE APP'
     case 'spotify': return `SPOTIFY: ${call.args}`
     case 'device_volume': return call.set === undefined ? 'READ THE DEVICE VOLUME' : `SET THE DEVICE VOLUME TO ${call.set}%`
+    case 'CronCreate': return `SCHEDULED "${call.cron}"${call.recurring ? ' (recurring)' : ''}: ${call.prompt}`
+    case 'CronDelete': return `DELETED SCHEDULED JOB ${call.id}`
     default: return showToolCall(call)
   }
 }
@@ -205,6 +217,7 @@ const TOOL_NAMES: Record<ToolCall['tool'], true> = {
   restart_server: true, refresh_clients: true, install_phone_app: true,
   backlog_add: true, backlog_next: true, mark_read: true,
   spotify: true, device_volume: true,
+  CronCreate: true, CronList: true, CronDelete: true,
 }
 const TOOL_LIST = Object.keys(TOOL_NAMES).join(', ')
 
@@ -236,6 +249,19 @@ function parseToolCall(value: unknown): ToolCall {
       throw new Error('"device_volume" takes "set" as a percentage from 0 to 100, such as {"tool": "device_volume", "set": 40}, or no "set" to read the volume')
     }
     return { tool: 'device_volume', set: Math.round(set) }
+  }
+  if (value.tool === 'CronList') return { tool: 'CronList' }
+  if (value.tool === 'CronCreate') {
+    const cron = typeof value.cron === 'string' ? value.cron.trim() : ''
+    const prompt = typeof value.prompt === 'string' ? value.prompt.trim() : ''
+    if (!cron || !prompt) throw new Error('"CronCreate" needs a "cron", a five-field cron in local time such as "30 14 23 11 *", and a "prompt"')
+    if (value.recurring !== undefined && typeof value.recurring !== 'boolean') throw new Error('"CronCreate" takes "recurring" as true or false')
+    return { tool: 'CronCreate', cron, prompt, recurring: value.recurring ?? true }
+  }
+  if (value.tool === 'CronDelete') {
+    const id = typeof value.id === 'string' ? value.id.trim() : ''
+    if (!id) throw new Error('"CronDelete" needs the "id" CronCreate gave the job')
+    return { tool: 'CronDelete', id }
   }
   if (value.tool === 'backlog_next') {
     const about = typeof value.about === 'string' ? value.about.trim() : ''

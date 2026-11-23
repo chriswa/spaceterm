@@ -273,3 +273,34 @@ describe('playedLengths', () => {
     expect(playedLengths(parts, 0)).toEqual([0, 0, 0])
   })
 })
+
+describe('parseReply: Claude Code\'s scheduling tools', () => {
+  it('takes CronCreate, CronList and CronDelete under their own names and fields, recurring by default', () => {
+    const { tools } = parseReply(JSON.stringify({
+      say: [],
+      tools: [
+        { tool: 'CronCreate', cron: ' 30 14 23 11 * ', prompt: 'Remind the user to check the deploy.', recurring: false, durable: true },
+        { tool: 'CronCreate', cron: '0 9 * * 1-5', prompt: 'Morning check.' },
+        { tool: 'CronList' },
+        { tool: 'CronDelete', id: 'a1b2c3d4' },
+      ],
+    }))
+    expect(tools).toEqual([
+      { tool: 'CronCreate', cron: '30 14 23 11 *', prompt: 'Remind the user to check the deploy.', recurring: false },
+      { tool: 'CronCreate', cron: '0 9 * * 1-5', prompt: 'Morning check.', recurring: true },
+      { tool: 'CronList' },
+      { tool: 'CronDelete', id: 'a1b2c3d4' },
+    ])
+    const [create, , list, del] = tools
+    // Created and deleted with a confirmation from their result; listed silently.
+    expect(isAction(create) && isBlocking(create)).toBe(true)
+    expect(isAction(del) && isBlocking(del)).toBe(true)
+    expect(isLookup(list) && isBlocking(list)).toBe(true)
+  })
+
+  it('says what a scheduling call is missing', () => {
+    expect(() => parseReply('{"tools": [{"tool": "CronCreate", "prompt": "x"}]}')).toThrow('"CronCreate" needs a "cron"')
+    expect(() => parseReply('{"tools": [{"tool": "CronCreate", "cron": "* * * * *", "prompt": "x", "recurring": "no"}]}')).toThrow('"recurring" as true or false')
+    expect(() => parseReply('{"tools": [{"tool": "CronDelete"}]}')).toThrow('"CronDelete" needs the "id"')
+  })
+})

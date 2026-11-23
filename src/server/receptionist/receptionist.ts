@@ -33,6 +33,7 @@ import {
 import { ageWords, cacheNote, pickNext, type Backlog, type BacklogContext, type BacklogItem } from './backlog'
 import { decidePause, INTERRUPTION_QUIET_MS, PAUSE_WAIT_MS, pauseDialogue, type PauseJudgement, type PauseVerdict } from './backlog-pause'
 import type { Watches, WatchKind } from './watches'
+import { describeJob, LATE_MS, relativeWords, whenWords, type CronJobs, type FiredJob } from './cron-jobs'
 import { FORGOTTEN_MS, type BackBurner } from './back-burner'
 import type { EndedAgent, EndedAgents } from './ended-agents'
 import type { Asking, PendingNews } from './pending-news'
@@ -162,6 +163,10 @@ export interface ReceptionistDeps {
   deferredReads: DeferredReads
   /** Agents the user took out of Control's hands to work with directly: see back-burner.ts. */
   backBurner: BackBurner
+  /** Prompts Control scheduled with CronCreate, kept across server restarts: see cron-jobs.ts. */
+  cronJobs: CronJobs
+  /** The Mac's offset from UTC now, in minutes east, which cron jobs are scheduled in: see current-time.ts. Never rejects. */
+  utcOffsetMinutes(): Promise<number>
   /** The agents known to have ended, kept across server restarts: see ended-agents.ts. */
   ended: EndedAgents
   /** News not yet told to Control, kept across server restarts: see pending-news.ts. */
@@ -464,6 +469,8 @@ export const PROMPT_HASH = createHash('sha256').update(RECEPTIONIST_SYSTEM_PROMP
 const INTERRUPT_SETTLE_MS = 800
 
 const isRestart = (call: ToolCall): boolean => call.tool === 'restart_server'
+/** The longest a cron job's timer is set for at once: see `armCron`. */
+const CRON_TIMER_MAX_MS = 60 * 60_000
 
 /**
  * How install_phone_app went: installed and launched over the old app; built
@@ -795,6 +802,8 @@ export class Receptionist {
   private readonly reportPhase: (phase: SpeechPhase) => void
   /** The server is shutting down: nothing new starts. See `shutdown`. */
   private closing = false
+  /** Wakes Control for its soonest cron job: see `armCron`. */
+  private cronTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(private readonly deps: ReceptionistDeps, opts: ReceptionistOptions) {
     this.onError = opts.onError
@@ -852,6 +861,8 @@ export class Receptionist {
         voiceOperatorDiscovered: () => this.deps.voiceOperatorDiscovered(),
       },
     })
+    // Jobs that came due while no server was running fire now, late; the rest wait for their time.
+    this.armCron()
   }
 
   /** Control's own channel's phase, or, while that is idle, a reading's: see `replayOn`. */
@@ -1037,6 +1048,7 @@ export class Receptionist {
    */
   async shutdown(restarting = false): Promise<void> {
     this.closing = true
+    clearTimeout(this.cronTimer)
     this.trace('server', restarting ? 'Server shutting down to restart' : 'Server shutting down')
     await this.channel.cancel()
     // Said just ahead of how much was heard, which the note `noteInterruption` adds last says.
@@ -1932,6 +1944,79 @@ export class Receptionist {
     this.maybeSpeakUp()
   }
 
+  /**
+   * Sets the one timer for the soonest cron job. A timer holds at most
+   * `CRON_TIMER_MAX_MS`, so a job days off is reached by waking now and then
+   * to look again; a timer cannot be trusted with a wait longer than about 24 days.
+   */
+  private armCron(): void {
+    clearTimeout(this.cronTimer)
+    this.cronTimer = undefined
+    const due = this.deps.cronJobs.nextDue()
+    if (due === undefined || this.closing) return
+    const wait = Math.min(Math.max(0, due - Date.now()), CRON_TIMER_MAX_MS)
+    this.cronTimer = setTimeout(() => { void this.fireCronJobs() }, wait)
+    // Waiting on a job is no reason to keep the process alive.
+    this.cronTimer.unref?.()
+  }
+
+  /**
+   * Every cron job due by `now` fires: its prompt is news, told as soon as
+   * Control can speak, or held for the user's return like any other. Then the
+   * timer is set for the next. Public as the tests' flush hook.
+   */
+  async fireCronJobs(now = Date.now()): Promise<FiredJob[]> {
+    if (this.closing) return []
+    const offset = await this.deps.utcOffsetMinutes()
+    const fired = this.deps.cronJobs.fireDue(offset, now)
+    for (const { job, dueAt, final } of fired) {
+      const late = now - dueAt >= LATE_MS ? relativeWords(dueAt - now).replace(/ ago$/, '') : undefined
+      this.trace('fired', `Scheduled job ${job.id} fired${late ? `, ${late} late` : ''}`, job.prompt)
+      this.deps.log({ event: 'cron-fired', id: job.id, cron: job.cron, dueAt, final, ...(late ? { late } : {}) })
+      this.events.push({
+        kind: 'scheduled-prompt', id: job.id, cron: job.cron, prompt: job.prompt, recurring: job.recurring, final,
+        ...(late ? { late } : {}),
+        ...(!final ? { next: whenWords(this.deps.cronJobs.list().find(left => left.id === job.id)!.nextAt, offset, now) } : {}),
+      })
+    }
+    this.armCron()
+    if (fired.length) this.maybeSpeakUp()
+    return fired
+  }
+
+  /** CronCreate, CronList and CronDelete: the line each tells the model. */
+  private async cronTool(call: Extract<ToolCall, { tool: 'CronCreate' | 'CronList' | 'CronDelete' }>): Promise<string> {
+    const offset = await this.deps.utcOffsetMinutes()
+    const now = Date.now()
+    switch (call.tool) {
+      case 'CronCreate': {
+        const result = this.deps.cronJobs.create(call, offset, now)
+        this.deps.log({ event: 'tool', tool: 'CronCreate', cron: call.cron, recurring: call.recurring, ...(result.ok ? { id: result.job.id } : { error: result.error }) })
+        if (!result.ok) return `CronCreate failed, so nothing was scheduled: ${result.error}`
+        this.armCron()
+        this.trace('watch', `Scheduled job ${result.job.id}: "${result.job.cron}"`, result.job.prompt)
+        return `CronCreate scheduled job ${describeJob(result.job, offset, now)}`
+      }
+      case 'CronList': {
+        const jobs = this.deps.cronJobs.list()
+        return jobs.length
+          ? `CronList (${jobs.length} ${jobs.length === 1 ? 'job' : 'jobs'}, the time now ${whenWords(now, offset, now).replace(/, now$/, '')}):\n${jobs.map(job => describeJob(job, offset, now)).join('\n')}`
+          : 'CronList: no jobs are scheduled.'
+      }
+      case 'CronDelete': {
+        const job = this.deps.cronJobs.delete(call.id)
+        this.deps.log({ event: 'tool', tool: 'CronDelete', id: call.id, deleted: job !== undefined })
+        if (!job) {
+          const ids = this.deps.cronJobs.list().map(left => left.id)
+          return `CronDelete: there is no job ${call.id}, so nothing was cancelled. ${ids.length ? `The jobs are: ${ids.join(', ')}; CronList describes them.` : 'No jobs are scheduled.'}`
+        }
+        this.armCron()
+        this.trace('unwatch', `Deleted scheduled job ${job.id}`, job.prompt)
+        return `CronDelete cancelled job ${describeJob(job, offset, now).replace(/, next fires /, ', which would next have fired ')}`
+      }
+    }
+  }
+
   /** The agent has stopped: tell the model what it last said. */
   private fireMonitor(nodeId: NodeId, state: ClaudeState, words: string = STATE_WORDS[state]): void {
     const agents = this.deps.agents()
@@ -2584,6 +2669,12 @@ export class Receptionist {
       }
       if (call.tool === 'current_time') {
         results.push(await this.currentTime())
+        continue
+      }
+      if (call.tool === 'CronCreate' || call.tool === 'CronList' || call.tool === 'CronDelete') {
+        const line = await this.cronTool(call)
+        if (isLookup(call)) results.push(line)
+        else done.push(line)
         continue
       }
       if (call.tool === 'force_user_camera') {
@@ -3975,6 +4066,7 @@ function eventHeadline(event: ReceptionistEvent): string {
     case 'agent-images': return `${event.agent} showed you ${event.count === 1 ? 'a picture' : `${event.count} pictures`}`
     case 'phone-install': return event.result === 'installed' ? 'the iPhone app is installed'
       : event.result === 'download' ? 'the iPhone app was built as a download' : 'the iPhone app install failed'
+    case 'scheduled-prompt': return `scheduled job ${event.id} fired`
   }
 }
 

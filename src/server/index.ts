@@ -115,7 +115,8 @@ import { SideQuestions, serveSideQuestions } from './side-questions'
 import { Spotify, type Here } from './spotify'
 import { REAL_MAC_IDLE, REAL_TIMERS, SkipWatcher } from './spotify/watcher'
 import { aiSpendRunner } from './ai-spend'
-import { currentTime } from './receptionist/current-time'
+import { currentTime, utcOffsetMinutes } from './receptionist/current-time'
+import { CronJobs } from './receptionist/cron-jobs'
 import { readWakeLimit } from './receptionist/wake-limit'
 import { nodesNearView, type NearbyNode } from './receptionist/nearby'
 import type { RosterAgent } from './receptionist/roster'
@@ -4212,6 +4213,9 @@ async function startServer(): Promise<void> {
     // So is a read waiting on the user's answer to the report that asked for it.
     deferredReads: new DeferredReads(),
     backBurner: new BackBurner(),
+    // And Control's alarms and reminders, its CronCreate jobs: a reminder is a promise to the user too.
+    cronJobs: new CronJobs(),
+    utcOffsetMinutes: () => utcOffsetMinutes(),
     ended: new EndedAgents(),
     news: new PendingNews(),
     // And what Control has yet to be told, such as a reply a restart cut off.
