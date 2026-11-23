@@ -36,6 +36,20 @@ export function createApi(client: ServerClient, platform: PlatformApi): Api {
     )
   })
 
+  // Control's device_volume tool, while this device holds Control.
+  client.on('device-volume-request', ({ requestId, set }) => {
+    platform.log(`[volume] The server asked for this device's volume${set === undefined ? '' : `, set to ${set}%`}`)
+    const read = platform.deviceVolume?.(set) ?? Promise.reject(new Error('this Spaceterm client has no system volume it can read or set'))
+    read.then(
+      (reading) => client.replyDeviceVolume(requestId, { reading }),
+      (err: unknown) => {
+        const error = err instanceof Error ? err.message : String(err)
+        platform.log(`[volume] No volume to give: ${error}`)
+        client.replyDeviceVolume(requestId, { error })
+      }
+    )
+  })
+
   /**
    * Per-session listeners, keyed so a canvas of fifty cards does not run
    * fifty filters on every output chunk and snapshot.

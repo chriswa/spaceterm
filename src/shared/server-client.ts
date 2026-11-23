@@ -1,6 +1,7 @@
 import { CLIENT_PROTOCOL_VERSION } from './client-protocol-version'
 import type { UsageSnapshot } from './usage-report'
 import type { LocationFix } from './location'
+import type { VolumeReading } from './device-volume'
 import type { AgentSearchMode, ClientDevice, ControlTranscriptEntry, MobileEventRecord, ReceptionistHoldAction } from './protocol'
 import type {
   ClientMessage,
@@ -79,7 +80,7 @@ export type ServerEventType =
   | 'receptionist-status' | 'receptionist-holder' | 'camera-follow' | 'agent-names' | 'receptionist-notice'
   | 'receptionist-transcript-appended' | 'receptionist-unread' | 'receptionist-backlog' | 'receptionist-replaying' | 'receptionist-speaking'
   | 'hands-free-event' | 'hands-free-stream' | 'dictation-kept'
-  | 'location-request'
+  | 'location-request' | 'device-volume-request'
   | 'block-alert' | 'block-alert-cleared'
   | 'browser-frame' | 'browser-status'
 
@@ -317,6 +318,7 @@ export class ServerClient {
       case 'hands-free-stream':
       case 'dictation-kept':
       case 'location-request':
+      case 'device-volume-request':
       case 'browser-frame':
       case 'browser-status':
         this.emit(msg)
@@ -799,6 +801,11 @@ export class ServerClient {
   /** This device's answer to the server's `location-request`. */
   replyLocation(requestId: string, answer: { fix: LocationFix } | { error: string }): void {
     this.fireAndForget({ type: 'location-reply', requestId, ...answer })
+  }
+
+  /** This device's answer to the server's `device-volume-request`. */
+  replyDeviceVolume(requestId: string, answer: { reading: VolumeReading } | { error: string }): void {
+    this.fireAndForget({ type: 'device-volume-reply', requestId, ...answer })
   }
 
   /** Not remembered across a reconnect: the caller sends it again on 'connect'. */

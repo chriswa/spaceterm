@@ -17,7 +17,7 @@
  * Same bump rule as the scripts socket: bump on any change an older peer could
  * notice.
  */
-export const CLIENT_PROTOCOL_VERSION = 38
+export const CLIENT_PROTOCOL_VERSION = 39
 
 /**
  * Oldest client protocol this build still serves.
@@ -165,5 +165,9 @@ export const CLIENT_PROTOCOL_VERSION = 38
  *
  * v37 has no browser cards: its node store throws on the `browser` node type,
  * so it must be reloaded once a canvas holds one.
+ *
+ * v38 cannot read or set its device's volume (`device-volume-request`), so
+ * Control's device_volume tool tells the user to reload it instead of asking;
+ * it loses nothing else.
  */
 export const MIN_CLIENT_PROTOCOL_VERSION = 2

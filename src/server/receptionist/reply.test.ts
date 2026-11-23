@@ -32,6 +32,18 @@ describe('parseReply', () => {
     expect(() => parseReply('{"tools":[{"tool":"spotify","args":["play"]}]}')).toThrow('"spotify" takes its command line as one string in "args"')
   })
 
+  it('reads device_volume: a lookup without "set", an action with a percentage', () => {
+    const [read] = parseReply('{"tools":[{"tool":"device_volume"}]}').tools
+    expect(read).toEqual({ tool: 'device_volume' })
+    expect(isLookup(read) && isBlocking(read)).toBe(true)
+    const sets = parseReply('{"say":[{"text":"Done."}],"tools":[{"tool":"device_volume","set":40.4},{"tool":"device_volume","set":"70%"}]}').tools
+    expect(sets).toEqual([{ tool: 'device_volume', set: 40 }, { tool: 'device_volume', set: 70 }])
+    expect(sets.every(call => isAction(call) && !isBlocking(call))).toBe(true)
+    for (const bad of ['120', '-5', '"loud"']) {
+      expect(() => parseReply(`{"tools":[{"tool":"device_volume","set":${bad}}]}`)).toThrow('a percentage from 0 to 100')
+    }
+  })
+
   it('reads agent_usage, a lookup that takes nothing', () => {
     const [call] = parseReply('{"tools":[{"tool":"agent_usage"}]}').tools
     expect(call).toEqual({ tool: 'agent_usage' })

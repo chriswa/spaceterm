@@ -149,7 +149,8 @@ export type CommandKind = 'lookup' | 'action'
 interface Command {
   /** One word, or words for a command in a group, such as "playlist add". */
   name: string
-  kind: CommandKind
+  /** Or, for a command that only looks without arguments (`volume`), decided by its arguments. */
+  kind: CommandKind | ((args: readonly string[]) => CommandKind)
   usage: string
   summary: string
   /** More than the summary, for `<command> --help`. */
@@ -290,10 +291,11 @@ const COMMANDS: Command[] = [
     run: async (s) => s.tasteSummary(),
   },
   {
-    name: 'volume', kind: 'action', usage: 'volume <0-100> [--on <device>]',
-    summary: "set the music's volume on the device playing it, as a percentage",
-    details: `${ON_OPTION} This is Spotify's own volume on that device. Some phones do not let Spotify set it; the answer says so.`,
+    name: 'volume', kind: (args) => (args.length === 0 ? 'lookup' : 'action'), usage: 'volume [<0-100>] [--on <device>]',
+    summary: "Spotify's own volume on the device playing the music: alone it says what it is; with a percentage it sets it",
+    details: `${ON_OPTION} This is Spotify's own volume inside Spotify on that device, not the device's system volume, which is separate. Some phones do not let Spotify set or report it; the answer says so.`,
     run: (s, line, args, context) => {
+      if (args.length === 0) return s.readVolume(option(line, 'on'), context)
       const percent = Number(args[0])
       if (args.length !== 1 || !Number.isFinite(percent) || percent < 0 || percent > 100) {
         throw new UsageError('volume needs one percentage from 0 to 100, such as "volume 40"')
@@ -332,7 +334,7 @@ export function overallHelp(): string {
     '',
     ON_OPTION,
     '"<command> --help" says more about one command.',
-    'status, devices, recent, playlists, heard, taste and blocked only look; the others change the music.',
+    'status, devices, recent, playlists, heard, taste, blocked and volume without a percentage only look; the others change the music.',
     'There is no radio in Spotify\'s API: play --song plays one song, after which Spotify\'s Autoplay usually carries on with similar ones.',
   ].join('\n')
 }
@@ -349,7 +351,10 @@ export function commandKind(args: string): CommandKind {
   try {
     const line = parseWords(splitWords(args))
     if (line.options.has('help')) return 'lookup'
-    return findCommand(line.positional)?.command.kind ?? 'lookup'
+    const found = findCommand(line.positional)
+    if (!found) return 'lookup'
+    const { kind } = found.command
+    return typeof kind === 'function' ? kind(found.args) : kind
   } catch {
     return 'lookup'
   }
@@ -405,7 +410,7 @@ function stateText(state: PlaybackState | undefined): string {
   if (!state) return 'Nothing is playing on any device'
   const volume = state.device.volume_percent === null || state.device.supports_volume === false
     ? ''
-    : `, at ${state.device.volume_percent}% volume`
+    : `, at ${state.device.volume_percent}% Spotify volume`
   return `${state.is_playing ? 'Playing' : 'Paused'}: ${trackText(state.item)}, on ${deviceText(state.device)}${volume}`
 }
 
@@ -712,6 +717,21 @@ export class Spotify {
     return all
   }
 
+  /** Spotify's own volume on the device playing, or on `on`. */
+  async readVolume(on: string | undefined, context: RunContext): Promise<string> {
+    let device: Device | undefined
+    if (on) {
+      const picked = await this.device(on, context)
+      if (typeof picked === 'string') return picked
+      device = picked
+    } else {
+      device = (await this.state())?.device
+      if (!device) return `${stateText(undefined)}, so there is no Spotify volume to read: use volume --on <device>.`
+    }
+    if (device.supports_volume === false || device.volume_percent === null) return `${deviceText(device)} does not report a Spotify volume of its own.`
+    return `Spotify's own volume on ${deviceText(device)} is ${device.volume_percent}%`
+  }
+
   async volume(percent: number, on: string | undefined, context: RunContext): Promise<string> {
     let device: Device | undefined
     if (on) {
@@ -722,10 +742,10 @@ export class Spotify {
       device = (await this.state())?.device
       if (!device) return `${stateText(undefined)}, so there is no volume to set: use volume ${percent} --on <device>.`
     }
-    if (device.supports_volume === false) return `${deviceText(device)} does not let Spotify set its volume; the user has to change it on the device.`
+    if (device.supports_volume === false) return `${deviceText(device)} does not let Spotify set its volume; the device's own system volume is separate and still changes how loud it plays.`
     await this.request('PUT', '/me/player/volume', { query: { volume_percent: percent, ...(on && device.id ? { device_id: device.id } : {}) } })
     const after = await this.settle((s) => s.device.id !== device.id || s.device.volume_percent === percent)
-    return after?.device.id === device.id ? stateText(after) : `Set ${deviceText(device)} to ${percent}% volume`
+    return after?.device.id === device.id ? stateText(after) : `Set ${deviceText(device)} to ${percent}% Spotify volume`
   }
 
   /** The song playing now as the taste log keeps it, or why there is none to judge. */

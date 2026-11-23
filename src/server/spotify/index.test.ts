@@ -171,7 +171,7 @@ function fakeSpotify(opts: { liked?: string[];
 describe('Spotify', () => {
   it('moves the music to the phone with play --on phone', async () => {
     const s = fakeSpotify({ playing: false })
-    expect(await s.spotify.run('play --on phone')).toBe('Playing: "Plaza" by Lyst, on Chris\'s iPhone (Smartphone), at 80% volume')
+    expect(await s.spotify.run('play --on phone')).toBe('Playing: "Plaza" by Lyst, on Chris\'s iPhone (Smartphone), at 80% Spotify volume')
     expect(s.calls).toContain('PUT /me/player')
   })
 
@@ -184,7 +184,7 @@ describe('Spotify', () => {
 
   it('pauses, and says when it was already paused rather than failing', async () => {
     const s = fakeSpotify()
-    expect(await s.spotify.run('pause')).toBe('Paused: "Plaza" by Lyst, on MacBook Pro (Computer), at 60% volume')
+    expect(await s.spotify.run('pause')).toBe('Paused: "Plaza" by Lyst, on MacBook Pro (Computer), at 60% Spotify volume')
     expect(await s.spotify.run('pause')).toMatch(/^Already paused\. /)
     expect(s.calls.filter((c) => c.startsWith('PUT /me/player/pause'))).toHaveLength(1)
   })
@@ -192,14 +192,23 @@ describe('Spotify', () => {
   it('resumes, skips, and sets the volume on the device playing', async () => {
     const s = fakeSpotify({ playing: false })
     expect(await s.spotify.run('play')).toMatch(/^Playing: "Plaza"/)
-    expect(await s.spotify.run('next')).toBe('Playing: "Devil Rides Again" by Lyst, Ana, on MacBook Pro (Computer), at 60% volume')
-    expect(await s.spotify.run('volume 35')).toContain('at 35% volume')
+    expect(await s.spotify.run('next')).toBe('Playing: "Devil Rides Again" by Lyst, Ana, on MacBook Pro (Computer), at 60% Spotify volume')
+    expect(await s.spotify.run('volume 35')).toContain('at 35% Spotify volume')
   })
 
   it('names a device by a word of its name, and sends the command to it', async () => {
     const s = fakeSpotify({ active: 'phone' })
-    expect(await s.spotify.run('volume 20 --on macbook')).toBe('Set MacBook Pro (Computer) to 20% volume')
+    expect(await s.spotify.run('volume 20 --on macbook')).toBe('Set MacBook Pro (Computer) to 20% Spotify volume')
     expect(s.calls).toContain('PUT /me/player/volume @mac')
+  })
+
+  it('reads Spotify\'s own volume without changing it, on the device playing or the one named', async () => {
+    const s = fakeSpotify({ active: 'phone' })
+    expect(await s.spotify.run('volume')).toBe('Spotify\'s own volume on Chris\'s iPhone (Smartphone) is 80%')
+    expect(await s.spotify.run('volume --on macbook')).toBe('Spotify\'s own volume on MacBook Pro (Computer) is 60%')
+    expect(s.calls).not.toContain('PUT /me/player/volume')
+    const silent = fakeSpotify({ devices: [MAC, { ...PHONE, supports_volume: false }], active: 'phone' })
+    expect(await silent.spotify.run('volume')).toBe('Chris\'s iPhone (Smartphone) does not report a Spotify volume of its own.')
   })
 
   it('says when a phone will not let Spotify set its volume', async () => {
@@ -212,20 +221,20 @@ describe('Spotify', () => {
     const s = fakeSpotify({ active: '' })
     expect(await s.spotify.run('status')).toContain('Nothing is playing on any device. Spotify can play on:\n- MacBook Pro (Computer)')
     // Nothing active and nobody known to hold Control: this Mac.
-    expect(await s.spotify.run('play')).toBe('Playing: "Plaza" by Lyst, on MacBook Pro (Computer), at 60% volume')
+    expect(await s.spotify.run('play')).toBe('Playing: "Plaza" by Lyst, on MacBook Pro (Computer), at 60% Spotify volume')
   })
 
   it('takes "mac" to mean this Mac, by its computer name, when another Mac is signed in too', async () => {
     const work: FakeDevice = { id: 'work', name: 'Spare 0248-Chris Waddell', type: 'Computer', volume_percent: 50 }
     const mine: FakeDevice = { id: 'mine', name: 'Chris\u2019s MacBook Pro', type: 'Computer', volume_percent: 40 }
     const s = fakeSpotify({ devices: [work, mine, PHONE], active: 'phone', playing: false, macName: "Chris's MacBook Pro" })
-    expect(await s.spotify.run('play --on mac')).toBe('Playing: "Plaza" by Lyst, on Chris\u2019s MacBook Pro (Computer), at 40% volume')
+    expect(await s.spotify.run('play --on mac')).toBe('Playing: "Plaza" by Lyst, on Chris\u2019s MacBook Pro (Computer), at 40% Spotify volume')
     expect(s.calls).not.toContain('launch Spotify')
   })
 
   it('opens Spotify on this Mac when it is not listed, and plays there once it is', async () => {
     const s = fakeSpotify({ devices: [PHONE], active: 'phone', playing: false, launchAdds: MAC })
-    expect(await s.spotify.run('play --on laptop')).toBe('Playing: "Plaza" by Lyst, on MacBook Pro (Computer), at 60% volume')
+    expect(await s.spotify.run('play --on laptop')).toBe('Playing: "Plaza" by Lyst, on MacBook Pro (Computer), at 60% Spotify volume')
     expect(s.calls.indexOf('launch Spotify')).toBeLessThan(s.calls.indexOf('PUT /me/player'))
   })
 
@@ -254,11 +263,11 @@ describe('Spotify', () => {
 
   it('goes back to the song before, asking again when Spotify only started this one over', async () => {
     const early = fakeSpotify({ track: 1, progress: 1000 })
-    expect(await early.spotify.run('previous')).toBe('Playing: "Plaza" by Lyst, on MacBook Pro (Computer), at 60% volume')
+    expect(await early.spotify.run('previous')).toBe('Playing: "Plaza" by Lyst, on MacBook Pro (Computer), at 60% Spotify volume')
     expect(early.calls.filter((c) => c === 'POST /me/player/previous')).toHaveLength(1)
 
     const late = fakeSpotify({ track: 1, progress: 95_000 })
-    expect(await late.spotify.run('previous')).toBe('Playing: "Plaza" by Lyst, on MacBook Pro (Computer), at 60% volume')
+    expect(await late.spotify.run('previous')).toBe('Playing: "Plaza" by Lyst, on MacBook Pro (Computer), at 60% Spotify volume')
     expect(late.calls.filter((c) => c === 'POST /me/player/previous')).toHaveLength(2)
 
     const first = fakeSpotify({ track: 0, progress: 95_000 })
@@ -268,7 +277,7 @@ describe('Spotify', () => {
 
   it('starts this song over with restart, without changing the song', async () => {
     const s = fakeSpotify({ track: 1, progress: 95_000 })
-    expect(await s.spotify.run('restart')).toBe('Started over. Playing: "Devil Rides Again" by Lyst, Ana, on MacBook Pro (Computer), at 60% volume')
+    expect(await s.spotify.run('restart')).toBe('Started over. Playing: "Devil Rides Again" by Lyst, Ana, on MacBook Pro (Computer), at 60% Spotify volume')
     expect(s.calls).toContain('PUT /me/player/seek')
     expect(s.calls).not.toContain('POST /me/player/previous')
   })
@@ -300,7 +309,7 @@ describe('Spotify', () => {
 
   it('plays a searched-for song where music is playing, even over what is playing', async () => {
     const s = fakeSpotify({ active: 'phone' })
-    expect(await s.spotify.run('play --song "brightside killers"', { here: 'mac' })).toBe('Playing: "Mr. Brightside" by The Killers, on Chris\'s iPhone (Smartphone), at 80% volume')
+    expect(await s.spotify.run('play --song "brightside killers"', { here: 'mac' })).toBe('Playing: "Mr. Brightside" by The Killers, on Chris\'s iPhone (Smartphone), at 80% Spotify volume')
     expect(await s.spotify.run('play --song zzzz')).toBe('Spotify found no song for "zzzz".')
     expect(await s.spotify.run('play --song a --playlist b')).toContain('play takes --song or --playlist, not both')
   })
@@ -406,7 +415,7 @@ describe('Spotify likes and dislikes', () => {
 
 describe('commandKind', () => {
   it('calls looking a lookup and changing the music an action', () => {
-    for (const args of ['status', 'devices', '--help', '', 'play --help', 'shuffle', 'play --on "phone', 'recent', 'recent 10', 'playlists road', 'heard', 'taste', 'blocked']) expect(commandKind(args)).toBe('lookup')
+    for (const args of ['status', 'devices', '--help', '', 'play --help', 'shuffle', 'play --on "phone', 'recent', 'recent 10', 'playlists road', 'heard', 'taste', 'blocked', 'volume', 'volume --on phone']) expect(commandKind(args)).toBe('lookup')
     for (const args of ['play', 'play --on phone', 'pause', 'next', 'previous', 'restart', 'volume 40', 'VOLUME 40', 'play --song "x"', 'play --playlist road', 'like', 'dislike', 'unblock plaza']) expect(commandKind(args)).toBe('action')
   })
 })

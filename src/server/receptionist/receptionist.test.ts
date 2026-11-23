@@ -120,6 +120,8 @@ function harness(opts: {
   currentTime?: string | Error
   /** What Spotify answers every command line with. */
   spotify?: string
+  /** What device_volume answers with, given what it was asked to set. */
+  deviceVolume?: (set: number | undefined) => string
   /** Where Control speaks to begin with, in place of the recording fake. */
   speech?: SpeechBackend
   /** What the user is looking at; by default nothing has said. */
@@ -399,6 +401,10 @@ function harness(opts: {
     spotify: async (args) => {
       wire.push(`spotify ${args}`)
       return opts.spotify ?? 'Playing: "Plaza" by Lyst, on Chris\'s iPhone (Smartphone), at 50% volume'
+    },
+    deviceVolume: async (set) => {
+      wire.push(set === undefined ? 'volume' : `volume ${set}`)
+      return opts.deviceVolume?.(set) ?? (set === undefined ? 'device_volume: the Mac\'s system volume is 25%.' : `device_volume set the Mac's system volume to ${set}%.`)
     },
     userView: opts.userView ?? (() => undefined),
     spawn: (parent, title, prompt) => {
@@ -2855,6 +2861,33 @@ describe('Receptionist', () => {
     await h.receptionist.hear('thanks', 'spoken')
     await flush()
     expect(h.turns).toHaveLength(2)
+  })
+
+  it('reads the device volume as a lookup, and sets it as an action told to the model next time', async () => {
+    const h = harness({
+      deviceVolume: (set) => set === undefined ? 'device_volume: the phone\'s system volume (Phone) is 60%.' : `device_volume set the phone's system volume (Phone) to ${set}%.`,
+      replies: [
+        reply([], [{ tool: 'device_volume' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('device_volume: the phone\'s system volume (Phone) is 60%.')
+          return reply([{ from: 'control', text: 'Your phone is at 60 percent.' }])
+        },
+        reply([{ from: 'control', text: 'Phone\'s at 30 percent.' }], [{ tool: 'device_volume', set: 30 }]),
+        (turn) => {
+          expect(turn.prompt).toContain('device_volume set the phone\'s system volume (Phone) to 30%.')
+          return reply([{ from: 'control', text: 'Sure.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('how loud is my phone?', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+    await h.receptionist.hear('set it to 30', 'spoken')
+    await flush()
+    expect(h.wire).toEqual(['volume', 'volume 30'])
+    await h.receptionist.hear('thanks', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(4)
   })
 
   it('hands the model the Mac\'s clock for current_time, as a lookup, and says when it fails', async () => {

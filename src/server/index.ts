@@ -127,6 +127,8 @@ import { VoiceOperator, DISCOVERY_PATH as VOICE_OPERATOR_DISCOVERY_PATH, type Sp
 import { VoiceOperatorSubscription } from './voice-operator-subscription'
 import { parseCodexEffort, parseStatusLineEffort } from '../shared/agent-effort'
 import { LocationBroker } from './location-broker'
+import { deviceVolume, PhoneVolumeRequests, type VolumeTarget } from './device-volume'
+import { isVolumeReading } from '../shared/device-volume'
 import { ClaudeContextPercent } from './claude-context-percent'
 import { isLocationFix } from '../shared/location'
 
@@ -1171,6 +1173,33 @@ const locationBroker = new LocationBroker({
   },
 })
 
+/** Reading and setting the device's volume (`device-volume-request`) was new in v39. */
+const DEVICE_VOLUME_PROTOCOL_VERSION = 39
+
+/** The phone round trips behind Control's device_volume tool. */
+const phoneVolume = new PhoneVolumeRequests({
+  send: (clientId, requestId, set) => {
+    const client = [...clients].find((c) => c.id === clientId)
+    if (client) send(client.link, { type: 'device-volume-request', requestId, ...(set === undefined ? {} : { set }) })
+  },
+})
+
+/**
+ * Whose volume device_volume reads and sets: the device holding Control.
+ * The Mac's the server reads itself; a phone's, through its newest connection.
+ */
+function volumeTarget(): VolumeTarget {
+  const holder = stateManager.getReceptionistHolder()
+  if (!holder) return { kind: 'unavailable', reason: 'no device holds Control' }
+  if (holder.deviceId === DESKTOP_DEVICE.deviceId) return { kind: 'mac' }
+  const client = holderClients().at(-1)
+  if (!client) return { kind: 'unavailable', reason: `${holder.label}, which holds Control, is not connected` }
+  if ((client.protocolVersion ?? 0) < DEVICE_VOLUME_PROTOCOL_VERSION) {
+    return { kind: 'unavailable', reason: `the Spaceterm page on ${holder.label} is too old to read or set the volume; it needs reloading` }
+  }
+  return { kind: 'phone', label: holder.label, ask: (set) => phoneVolume.ask(client.id, set) }
+}
+
 /** Spaceterm's own headless Chrome, behind `isolated` browser cards. Started on first use. */
 const isolatedChrome = new IsolatedChrome(path.join(SOCKET_DIR, 'browser-profile'), (line) => serverLog(line))
 
@@ -1722,6 +1751,7 @@ function acceptClient(link: ClientLink): { feed(data: string | Buffer): void; cl
       speechLinks.close(client.id)
       updateReceptionistListener()
       locationBroker.disconnected(client.id)
+      phoneVolume.disconnected(client.id)
       browserManager.dropClient(client.id)
       for (const [nodeId, owner] of terminalBorrowers) {
         if (owner === client.id) returnBorrowedSize(nodeId, 'borrower disconnected')
@@ -2376,6 +2406,15 @@ function handleMessage(client: ClientConnection, msg: ClientMessage): void {
         else locationBroker.answer(client.id, msg.requestId, { ok: false, error: 'it sent a malformed position' })
       } else {
         locationBroker.answer(client.id, msg.requestId, { ok: false, error: String(msg.error) })
+      }
+      break
+    }
+
+    case 'device-volume-reply': {
+      if ('reading' in msg) {
+        phoneVolume.answer(client.id, msg.requestId, isVolumeReading(msg.reading) ? msg.reading : new Error('it sent a malformed volume'))
+      } else {
+        phoneVolume.answer(client.id, msg.requestId, new Error(String(msg.error)))
       }
       break
     }
@@ -4277,6 +4316,7 @@ async function startServer(): Promise<void> {
     currentTime: () => currentTime(),
     wakeLimit: () => readWakeLimit(),
     spotify: (args) => spotify.run(args, { here: spotifyHere() }),
+    deviceVolume: (set) => deviceVolume(volumeTarget(), set),
     log: appendReceptionistLog,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     voiceTick: () => new Promise((resolve) => setTimeout(resolve, VOICE_FOLLOW_MS)),

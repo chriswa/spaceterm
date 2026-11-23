@@ -63,6 +63,12 @@ export type ToolCall = (
   | { tool: 'backlog_next'; about?: string }
   /** A command line for Spotify playback, such as "play --on phone"; "--help" lists them: see spotify/index.ts. */
   | { tool: 'spotify'; args: string }
+  /**
+   * The system volume of the device holding Control, the phone's or the
+   * Mac's: read it, or with `set`, a percentage, set it. Not Spotify's own
+   * volume, which is spotify's: see device-volume.ts.
+   */
+  | { tool: 'device_volume'; set?: number }
 )
 
 export interface Reply {
@@ -93,7 +99,9 @@ export function isLookup(call: ToolCall): boolean {
   return call.tool === 'read' || call.tool === 'recall' || call.tool === 'list_agents' || call.tool === 'list_nodes' || call.tool === 'agent_details' || call.tool === 'find_agent' || call.tool === 'nearby' ||
     call.tool === 'agent_usage' || call.tool === 'current_time' || call.tool === 'backlog_next' ||
     // status, devices and help only look; play, pause and the rest change the music.
-    (call.tool === 'spotify' && commandKind(call.args) === 'lookup')
+    (call.tool === 'spotify' && commandKind(call.args) === 'lookup') ||
+    // Reading the volume only looks; setting it is an action.
+    (call.tool === 'device_volume' && call.set === undefined)
 }
 
 /**
@@ -143,6 +151,7 @@ export function actionHeadline(call: ToolCall): string {
     case 'refresh_clients': return 'REFRESHED EVERY PAGE'
     case 'install_phone_app': return 'STARTED INSTALLING THE IPHONE APP'
     case 'spotify': return `SPOTIFY: ${call.args}`
+    case 'device_volume': return call.set === undefined ? 'READ THE DEVICE VOLUME' : `SET THE DEVICE VOLUME TO ${call.set}%`
     default: return showToolCall(call)
   }
 }
@@ -195,7 +204,7 @@ const TOOL_NAMES: Record<ToolCall['tool'], true> = {
   spawn: true, rename_agent: true, recall: true, list_agents: true, list_nodes: true, agent_details: true, find_agent: true, nearby: true, agent_usage: true, current_time: true, force_user_camera: true,
   restart_server: true, refresh_clients: true, install_phone_app: true,
   backlog_add: true, backlog_next: true, mark_read: true,
-  spotify: true,
+  spotify: true, device_volume: true,
 }
 const TOOL_LIST = Object.keys(TOOL_NAMES).join(', ')
 
@@ -219,6 +228,14 @@ function parseToolCall(value: unknown): ToolCall {
   if (value.tool === 'spotify') {
     if (value.args !== undefined && typeof value.args !== 'string') throw new Error('"spotify" takes its command line as one string in "args", such as "play --on phone"; "--help" lists the commands')
     return { tool: 'spotify', args: (value.args ?? '').trim() }
+  }
+  if (value.tool === 'device_volume') {
+    if (value.set === undefined) return { tool: 'device_volume' }
+    const set = typeof value.set === 'string' ? Number(value.set.replace(/%$/, '')) : value.set
+    if (typeof set !== 'number' || !Number.isFinite(set) || set < 0 || set > 100) {
+      throw new Error('"device_volume" takes "set" as a percentage from 0 to 100, such as {"tool": "device_volume", "set": 40}, or no "set" to read the volume')
+    }
+    return { tool: 'device_volume', set: Math.round(set) }
   }
   if (value.tool === 'backlog_next') {
     const about = typeof value.about === 'string' ? value.about.trim() : ''

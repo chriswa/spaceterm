@@ -999,6 +999,20 @@ error rather than a stale position. `native-location-*` lines in the event
 record show each request. In Safari,
 or an app built before this, it is the browser's `navigator.geolocation`.
 
+## The phone's volume, for Control
+
+Control's `device_volume` tool reads or sets the system volume of whichever
+device holds Control (`src/server/device-volume.ts`) — separate from
+Spotify's own volume, which is the `spotify` tool's. The Mac's the server
+reads and sets itself, through AppleScript's `volume settings`. A phone's it
+asks for (`device-volume-request`, to the holder's newest connection only),
+and only the app can answer (`NativeVolume.swift`, `native-volume.ts`):
+reading is `AVAudioSession.outputVolume`; setting, which iOS has no API for,
+moves the slider of an off-screen `MPVolumeView`, added only while it sets so
+the hardware buttons keep their volume HUD, and reads the result back, so a
+change iOS ignored comes back as an error. `native-volume-*` lines in the
+event record show each one. Safari cannot do either.
+
 ## Deliberately not done (yet)
 
 - Text size is a hard-coded constant (`SCALE` in TerminalView.tsx, 0.94 —

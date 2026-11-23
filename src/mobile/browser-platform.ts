@@ -2,6 +2,7 @@ import type { PlatformApi } from '../shared/api'
 import { DEFAULT_LAUNCH_PREFS } from '../shared/launch-prefs'
 import { createGate } from './gate'
 import { currentLocation } from './native-location'
+import { deviceVolume } from './native-volume'
 
 /**
  * The host half of `window.api` in a browser. Everything server-facing is
@@ -101,6 +102,7 @@ export function browserPlatform(): PlatformApi {
     raiseWindow: () => undefined,
     onFocusRequest: () => () => undefined,
     currentLocation,
+    deviceVolume,
     perf: {
       startTrace: async () => undefined,
       stopTrace: async () => ''

@@ -322,6 +322,12 @@ export interface ReceptionistDeps {
   /** Run one `spotify` command line, such as "play --on phone", and say what happened: see spotify/index.ts. Never rejects. */
   spotify(args: string): Promise<string>
   /**
+   * The system volume of the device holding Control, read, or set to `set`
+   * percent first, and said in a line for the model: see device-volume.ts.
+   * Never rejects.
+   */
+  deviceVolume(set: number | undefined): Promise<string>
+  /**
    * What the user is looking at: the screen of the device holding Control
    * (or, failing that, the one that last moved), and the nodes nearest
    * its middle. Undefined when no screen has reported where it is.
@@ -2609,6 +2615,13 @@ export class Receptionist {
       if (call.tool === 'spotify') {
         const line = await this.spotify(call.args)
         // A look (status, devices, help) is for the model now; a change is confirmed with the actions.
+        if (isLookup(call)) results.push(line)
+        else done.push(line)
+        continue
+      }
+      if (call.tool === 'device_volume') {
+        const line = await this.deps.deviceVolume(call.set)
+        this.deps.log({ event: 'tool', tool: 'device_volume', ...(call.set === undefined ? {} : { set: call.set }), answer: line })
         if (isLookup(call)) results.push(line)
         else done.push(line)
         continue

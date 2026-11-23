@@ -230,6 +230,11 @@ export type LocationReplyMessage =
   | { type: 'location-reply'; requestId: string; fix: LocationFix }
   | { type: 'location-reply'; requestId: string; error: string }
 
+/** This device's answer to `device-volume-request`: its system volume now (after any change), or why there is none. */
+export type DeviceVolumeReplyMessage =
+  | { type: 'device-volume-reply'; requestId: string; reading: VolumeReading }
+  | { type: 'device-volume-reply'; requestId: string; error: string }
+
 export interface AttachMessage {
   type: 'attach'
   seq: number
@@ -1452,6 +1457,7 @@ export type ClientMessage =
   | PushTokenMessage
   | CanvasPauseMessage
   | LocationReplyMessage
+  | DeviceVolumeReplyMessage
   | AttachMessage
   | DetachMessage
   | DestroyMessage
@@ -1701,6 +1707,18 @@ export interface LocationRequestMessage {
   requestId: string
 }
 
+/**
+ * Control's device_volume tool, for the phone holding Control: read this
+ * device's system volume, or set it to `set` percent first, and answer with
+ * `device-volume-reply`. Sent only to the holder, on v39 or later; the Mac's
+ * volume the server reads itself. See src/server/device-volume.ts.
+ */
+export interface DeviceVolumeRequestMessage {
+  type: 'device-volume-request'
+  requestId: string
+  set?: number
+}
+
 /** To watching clients only: the system monitor, or null when mini-stats is not running (PUSH). */
 export interface SystemStatsMessage {
   type: 'system-stats'
@@ -1764,6 +1782,7 @@ import type { NodeId, PtySessionId, ClaudeSessionId } from './ids'
 import type { UsageSnapshot } from './usage-report'
 import type { SystemStatsSnapshot } from './system-stats'
 import type { LocationFix } from './location'
+import type { VolumeReading } from './device-volume'
 import type { BrowserHistoryAction, BrowserInput, BrowserProfile, BrowserStatus, BrowserViewport } from './browser'
 
 export interface SyncStateMessage {
@@ -2731,3 +2750,4 @@ export type ServerMessage =
   | ReloadPageMessage
   | ServerRestartingMessage
   | LocationRequestMessage
+  | DeviceVolumeRequestMessage

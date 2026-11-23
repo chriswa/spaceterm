@@ -12,6 +12,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     private lazy var microphone = NativeMicrophone(events: events)
     /// The phone's position, which the page asks for when an agent wants the user's.
     private lazy var location = NativeLocation(events: events)
+    /// The phone's system volume, which Control reads and sets (native-volume.ts).
+    private lazy var volume = NativeVolume(events: events)
     /// The last "dictate …" said hands-free, kept for the Action button.
     private lazy var dictation = NativeDictation(events: events)
     /// Text the page puts on the clipboard, which it has no API for over http.
@@ -65,6 +67,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             source: "window.spacetermCanQuit = true", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // Where the user is, for an agent that asked (native-location.ts).
         config.userContentController.add(location, name: "nativeLocation")
+        // The phone's volume, for Control's device_volume tool (native-volume.ts).
+        config.userContentController.addScriptMessageHandler(volume, contentWorld: .page, name: "nativeVolume")
         // Words said after "dictate", for the Action button to copy (native-dictation.ts).
         config.userContentController.add(dictation, name: "nativeDictation")
         // A terminal's buffer, copied from its action bar (native-clipboard.ts).
@@ -79,6 +83,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         webView = WKWebView(frame: .zero, configuration: config)
         microphone.webView = webView
         location.webView = webView
+        volume.webView = webView
         shortcutImport.webView = webView
         shortcutImport.presenter = self
         events.webView = webView

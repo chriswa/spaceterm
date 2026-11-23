@@ -40,6 +40,7 @@ import type { NodeId, PtySessionId } from './ids'
 import type { UsageSnapshot } from './usage-report'
 import type { SystemStatsSnapshot } from './system-stats'
 import type { LocationFix } from './location'
+import type { VolumeReading } from './device-volume'
 import type { BrowserHistoryAction, BrowserInput, BrowserStatus } from './browser'
 import type { BrowserFrameListener, BrowserWatch, BrowserWatchOptions } from './browser-watches'
 
@@ -588,6 +589,13 @@ export interface PlatformApi {
    * (`location-request`). Rejects with a reason worded for the user.
    */
   currentLocation(): Promise<LocationFix>
+  /**
+   * This device's system volume, set to `set` percent first when given, for
+   * Control's device_volume tool (`device-volume-request`). Only the phone
+   * has one: the server reads the Mac's itself. Rejects with a reason worded
+   * for the user.
+   */
+  deviceVolume?(set?: number): Promise<VolumeReading>
   perf: PerfApi
   window: Omit<WindowApi, 'onFocusNode'>
   /** Agent memory is measured by the server, not the host; see `createApi`. */
