@@ -162,7 +162,7 @@ function harness(opts: {
   unarchived?: 'ready' | 'not-ready' | 'failed'
   /** When Kevin's prompt cache goes cold (epoch ms); by default nothing is known of it. */
   kevinCacheWarmUntil?: number
-  /** This machine's limit for waking a cold agent without asking; 0 by default, as with no setting. */
+  /** This machine's limit for waking a cold agent without asking; 0 by default, so every cold agent's line says to check. */
   wakeLimit?: number
   /** How waiting goes; by default every wait is over at once. */
   sleep?: (ms: number) => Promise<void>

@@ -22,12 +22,21 @@ import { SOCKET_DIR } from '../../shared/protocol'
 
 /** Where SpacetermBar writes the setting. Other keys in it are kept as they are. */
 export const CONTROL_SETTINGS_FILE = path.join(SOCKET_DIR, 'control.json')
-/** The setting's key in that file: tokens of context, at or under which a cold agent may be woken without asking. */
+/**
+ * The setting's key in that file: tokens of context, at or under which a cold
+ * agent may be woken without asking, or `null` for no limit, when any may be.
+ */
 export const WAKE_LIMIT_KEY = 'wakeWithoutAskingTokens'
+/** No limit: Control may wake any cold agent without asking, whatever its size. Stored as `null`. */
+export const NO_WAKE_LIMIT = Number.POSITIVE_INFINITY
 /** What the menu offers. Any other non-negative number in the file is honoured too. */
-export const WAKE_LIMIT_CHOICES = [0, 100_000, 250_000, 500_000, 1_000_000] as const
-/** With no setting: ask before waking any cold agent, which is what Control did before there was one. SpacetermBar shows the same default. */
-export const DEFAULT_WAKE_LIMIT = 0
+export const WAKE_LIMIT_CHOICES = [0, 100_000, 250_000, 500_000, NO_WAKE_LIMIT] as const
+/**
+ * With no setting: no limit, so a machine that has not chosen one, or a model
+ * with a bigger context than any choice, needs nothing changed. SpacetermBar
+ * shows the same default.
+ */
+export const DEFAULT_WAKE_LIMIT = NO_WAKE_LIMIT
 /**
  * A cache with less than this left counts as cold already: a side question
  * asked now may reach it after it has gone, and then pays for the whole
@@ -35,11 +44,12 @@ export const DEFAULT_WAKE_LIMIT = 0
  */
 export const NEARLY_COLD_MS = 2 * 60_000
 
-/** The limit in the settings file's text, or the default when it is missing, unreadable or not a non-negative number. */
+/** The limit in the settings file's text: `NO_WAKE_LIMIT` for `null`, and the default when it is missing, unreadable or neither `null` nor a non-negative number. */
 export function parseWakeLimit(text: string | undefined): number {
   if (text === undefined) return DEFAULT_WAKE_LIMIT
   try {
     const value: unknown = (JSON.parse(text) as Record<string, unknown> | null)?.[WAKE_LIMIT_KEY]
+    if (value === null) return NO_WAKE_LIMIT
     return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : DEFAULT_WAKE_LIMIT
   } catch {
     return DEFAULT_WAKE_LIMIT
@@ -76,6 +86,7 @@ export function wakeWords(agent: { cacheWarmUntil?: number; cacheWarmTokens?: nu
   const ask = 'check with the user before asking it'
   const free = 'you may ask it without checking with the user'
   if (limit <= 0) return `${soon}this machine wakes no cold agent without asking, so ${ask}`
+  if (limit === NO_WAKE_LIMIT) return `${soon}this machine wakes any cold agent without asking, whatever its size, so ${free}`
   const setting = `the ${tokenWords(limit)} this machine wakes without asking`
   const tokens = agent.cacheWarmTokens
   if (tokens === undefined) return `${soon}its size is unknown, so ${ask}`

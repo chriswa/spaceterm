@@ -77,6 +77,12 @@ describe('renderRoster: what is worth checking', () => {
     expect(line('Tim')).toContain('cache: cold for 3 hours 50 minutes (40k tokens): within the 250k tokens this machine wakes without asking, so you may ask it without checking with the user')
   })
 
+  it('says a cold agent of any size may be asked when this machine has no limit', () => {
+    const a = agent('9a9a9a9a-0000-4000-8000-000000000000', { cacheWarmUntil: NOW - 230 * min, cacheWarmTokens: 667_000 })
+    expect(renderRoster([a], () => 'Emma', H, NOW, Number.POSITIVE_INFINITY))
+      .toContain('cache: cold for 3 hours 50 minutes (667k tokens): this machine wakes any cold agent without asking, whatever its size, so you may ask it without checking with the user')
+  })
+
   it('says nothing of the limit while a cache is comfortably warm', () => {
     const a = agent('56565656-0000-4000-8000-000000000000', { cacheWarmUntil: NOW + 58 * min, cacheWarmTokens: 673_000 })
     expect(renderRoster([a], () => 'Emma', H, NOW, 0)).toMatch(/cache: warm for 58 minutes more \(673k tokens\)$/)

@@ -122,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for tokens in Settings.wakeLimitChoices {
             let item = NSMenuItem(title: Self.wakeLimitTitle(tokens), action: #selector(setWakeLimit(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = tokens
+            item.representedObject = tokens.map { $0 as Any } ?? NSNull()
             item.state = tokens == current ? .on : .off
             wake.addItem(item)
         }
@@ -265,11 +265,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleStartOnLaunch() { Settings.startOnLaunch.toggle() }
 
     @objc private func setWakeLimit(_ sender: NSMenuItem) {
+        if sender.representedObject is NSNull { Settings.wakeLimit = nil; return }
         guard let tokens = sender.representedObject as? Int else { return }
         Settings.wakeLimit = tokens
     }
 
-    static func wakeLimitTitle(_ tokens: Int) -> String {
+    static func wakeLimitTitle(_ tokens: Int?) -> String {
+        guard let tokens else { return "No Limit (never ask)" }
         if tokens <= 0 { return "Never (always ask)" }
         if tokens >= 1_000_000 && tokens % 1_000_000 == 0 { return "Up to \(tokens / 1_000_000)M Tokens" }
         return "Up to \(tokens / 1000)K Tokens"

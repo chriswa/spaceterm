@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { DEFAULT_WAKE_LIMIT, NEARLY_COLD_MS, parseWakeLimit, readWakeLimit, tokenWords, WAKE_LIMIT_KEY, wakeWords } from './wake-limit'
+import { DEFAULT_WAKE_LIMIT, NEARLY_COLD_MS, NO_WAKE_LIMIT, parseWakeLimit, readWakeLimit, tokenWords, WAKE_LIMIT_KEY, wakeWords } from './wake-limit'
 
 const NOW = 1_800_000_000_000
 const min = 60_000
@@ -13,8 +13,12 @@ describe('parseWakeLimit', () => {
     expect(parseWakeLimit(JSON.stringify({ other: true, [WAKE_LIMIT_KEY]: 0 }))).toBe(0)
   })
 
-  it('falls back to asking about every cold agent when there is no usable setting', () => {
-    expect(DEFAULT_WAKE_LIMIT).toBe(0)
+  it('reads null as no limit', () => {
+    expect(parseWakeLimit(JSON.stringify({ [WAKE_LIMIT_KEY]: null }))).toBe(NO_WAKE_LIMIT)
+  })
+
+  it('falls back to no limit when there is no usable setting', () => {
+    expect(DEFAULT_WAKE_LIMIT).toBe(NO_WAKE_LIMIT)
     for (const text of [undefined, '', 'not json', 'null', '{}', JSON.stringify({ [WAKE_LIMIT_KEY]: -5 }), JSON.stringify({ [WAKE_LIMIT_KEY]: '250000' })]) {
       expect(parseWakeLimit(text)).toBe(DEFAULT_WAKE_LIMIT)
     }
@@ -28,9 +32,11 @@ describe('readWakeLimit', () => {
   it('reads the file each time, so a change in the menu applies at once', () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wake-limit-'))
     const file = path.join(dir, 'control.json')
-    expect(readWakeLimit(file)).toBe(DEFAULT_WAKE_LIMIT)
-    fs.writeFileSync(file, JSON.stringify({ [WAKE_LIMIT_KEY]: 1_000_000 }))
-    expect(readWakeLimit(file)).toBe(1_000_000)
+    expect(readWakeLimit(file)).toBe(NO_WAKE_LIMIT)
+    fs.writeFileSync(file, JSON.stringify({ [WAKE_LIMIT_KEY]: 0 }))
+    expect(readWakeLimit(file)).toBe(0)
+    fs.writeFileSync(file, JSON.stringify({ [WAKE_LIMIT_KEY]: null }))
+    expect(readWakeLimit(file)).toBe(NO_WAKE_LIMIT)
     fs.writeFileSync(file, JSON.stringify({ [WAKE_LIMIT_KEY]: 100_000 }))
     expect(readWakeLimit(file)).toBe(100_000)
   })
@@ -70,13 +76,22 @@ describe('wakeWords', () => {
     expect(words).toContain('check with the user before asking it')
   })
 
-  it('asks about every cold agent at a limit of 0, and about none under a limit of a million', () => {
+  it('asks about every cold agent at a limit of 0', () => {
     expect(wakeWords({ ...small, cacheWarmUntil: NOW - min }, NOW, 0)).toContain('wakes no cold agent without asking')
-    expect(wakeWords({ ...big, cacheWarmUntil: NOW - min }, NOW, 1_000_000)).toContain('within the 1 million tokens')
+  })
+
+  it('asks about none with no limit, whatever their size, even unknown', () => {
+    for (const agent of [{ cacheWarmTokens: 5_000_000 }, {}, small]) {
+      for (const cacheWarmUntil of [NOW - 3 * 60 * min, NOW + 30_000]) {
+        const words = wakeWords({ ...agent, cacheWarmUntil }, NOW, NO_WAKE_LIMIT)
+        expect(words).toContain('wakes any cold agent without asking, whatever its size, so you may ask it without checking with the user')
+        expect(words).not.toContain('check with the user before')
+      }
+    }
   })
 
   it('asks when the size is unknown', () => {
-    expect(wakeWords({ cacheWarmUntil: NOW - min }, NOW, 1_000_000)).toContain('size is unknown, so check with the user')
+    expect(wakeWords({ cacheWarmUntil: NOW - min }, NOW, 500_000)).toContain('size is unknown, so check with the user')
   })
 })
 

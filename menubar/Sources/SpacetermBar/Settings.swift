@@ -79,19 +79,22 @@ enum Settings {
     /// the choices and the default), so a change applies without a restart.
     static var controlSettingsPath: String { stateDirectory + "/control.json" }
     static let wakeLimitKey = "wakeWithoutAskingTokens"
-    static let wakeLimitChoices = [0, 100_000, 250_000, 500_000, 1_000_000]
-    static let defaultWakeLimit = 0
+    /// `nil` is No limit: any cold agent may be woken without asking. Stored as JSON `null`.
+    static let wakeLimitChoices: [Int?] = [0, 100_000, 250_000, 500_000, nil]
+    /// No limit when nothing is set, as the server assumes.
+    static let defaultWakeLimit: Int? = nil
 
-    static var wakeLimit: Int {
+    static var wakeLimit: Int? {
         get {
-            let value = readControlSettings()[wakeLimitKey] as? NSNumber
-            guard let value, value.intValue >= 0 else { return defaultWakeLimit }
-            return value.intValue
+            let value = readControlSettings()[wakeLimitKey]
+            if value is NSNull { return nil }
+            guard let number = value as? NSNumber, number.intValue >= 0 else { return defaultWakeLimit }
+            return number.intValue
         }
         set {
             // Other keys in the file are the server's business: kept as found.
             var settings = readControlSettings()
-            settings[wakeLimitKey] = newValue
+            settings[wakeLimitKey] = newValue.map { $0 as Any } ?? NSNull()
             guard let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) else { return }
             try? FileManager.default.createDirectory(atPath: stateDirectory, withIntermediateDirectories: true)
             try? data.write(to: URL(fileURLWithPath: controlSettingsPath), options: .atomic)
