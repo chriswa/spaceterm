@@ -76,6 +76,12 @@ export type ToolCall = (
    * dropped, since every job of Control's is kept on disk.
    */
   | { tool: 'CronCreate'; cron: string; prompt: string; recurring: boolean }
+  /**
+   * A notification on the user's phone: the agents' own Spaceterm tool, under
+   * its name and with its field, as the phone gets it from them. See
+   * `ReceptionistDeps.notifyPhone`.
+   */
+  | { tool: 'notify_user'; body: string }
   | { tool: 'CronList' }
   | { tool: 'CronDelete'; id: string }
 )
@@ -164,6 +170,7 @@ export function actionHeadline(call: ToolCall): string {
     case 'device_volume': return call.set === undefined ? 'READ THE DEVICE VOLUME' : `SET THE DEVICE VOLUME TO ${call.set}%`
     case 'CronCreate': return `SCHEDULED "${call.cron}"${call.recurring ? ' (recurring)' : ''}: ${call.prompt}`
     case 'CronDelete': return `DELETED SCHEDULED JOB ${call.id}`
+    case 'notify_user': return `NOTIFIED YOUR PHONE: ${call.body}`
     default: return showToolCall(call)
   }
 }
@@ -217,9 +224,11 @@ const TOOL_NAMES: Record<ToolCall['tool'], true> = {
   restart_server: true, refresh_clients: true, install_phone_app: true,
   backlog_add: true, backlog_next: true, mark_read: true,
   spotify: true, device_volume: true,
-  CronCreate: true, CronList: true, CronDelete: true,
+  CronCreate: true, CronList: true, CronDelete: true, notify_user: true,
 }
 const TOOL_LIST = Object.keys(TOOL_NAMES).join(', ')
+/** The longest notify_user body, as the agents' tool takes. */
+export const NOTIFY_BODY_CHARS = 800
 
 /** A node's handle as list_nodes shows it, `[node-amber-otter]`, or as a token, `{node-amber-otter}`, bare. */
 function stripBrackets(written: string): string {
@@ -249,6 +258,12 @@ function parseToolCall(value: unknown): ToolCall {
       throw new Error('"device_volume" takes "set" as a percentage from 0 to 100, such as {"tool": "device_volume", "set": 40}, or no "set" to read the volume')
     }
     return { tool: 'device_volume', set: Math.round(set) }
+  }
+  if (value.tool === 'notify_user') {
+    const body = typeof value.body === 'string' ? value.body.trim() : ''
+    if (!body) throw new Error('"notify_user" needs a "body": what the notification says, short enough to read at a glance')
+    if (body.length > NOTIFY_BODY_CHARS) throw new Error(`"notify_user" takes a "body" of at most ${NOTIFY_BODY_CHARS} characters, short enough to read at a glance`)
+    return { tool: 'notify_user', body }
   }
   if (value.tool === 'CronList') return { tool: 'CronList' }
   if (value.tool === 'CronCreate') {

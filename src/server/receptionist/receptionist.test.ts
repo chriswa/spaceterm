@@ -173,6 +173,8 @@ function harness(opts: {
   watchStore?: NameRegistryStore
   /** Where the back burner is kept, from an earlier server; by default nothing is on it. */
   burnerStore?: NameRegistryStore
+  /** How a phone notification goes; by default through Apple. */
+  notifyPhone?: { reached: boolean; outcome: string }
   /** Where cron jobs are kept, from an earlier server; by default none are scheduled. */
   cronStore?: NameRegistryStore
   /** Where the ended agents are kept, from an earlier server; by default none have ended. */
@@ -372,6 +374,10 @@ function harness(opts: {
     cronJobs: new CronJobs({ store: opts.cronStore ?? memoryStore() }),
     // Vancouver's, as the Mac says it: UTC-7.
     utcOffsetMinutes: async () => -420,
+    notifyPhone: async (body) => {
+      wire.push(`notify ${body}`)
+      return opts.notifyPhone ?? { reached: true, outcome: 'sent through Apple’s push service' }
+    },
     ended: new EndedAgents({ store: opts.endedStore ?? memoryStore() }),
     news: new PendingNews({ store: opts.newsStore ?? memoryStore() }),
     carryOver: new CarryOver({ store: opts.carryStore ?? memoryStore() }),
@@ -6364,5 +6370,68 @@ describe('Receptionist cron jobs (CronCreate, CronList, CronDelete)', () => {
     await h.receptionist.fireCronJobs(Date.now() + 2 * 60 * 60_000 - (Date.now() % (60 * 60_000)) + 7 * 60_000)
     await flush()
     expect(h.turns).toHaveLength(3)
+  })
+})
+
+describe('Receptionist notify_user', () => {
+  it('sends a notification to the phone as an action, confirmed aloud, and tells the model how it went', async () => {
+    const h = harness({
+      replies: [
+        reply([{ from: 'control', text: 'Sent to your phone.' }], [{ tool: 'notify_user', body: 'Buy milk.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('notify_user sent through Apple’s push service')
+          return reply([{ from: 'control', text: 'Sure.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('send "buy milk" to my phone', 'spoken')
+    await flush()
+    expect(h.wire).toEqual(['notify Buy milk.'])
+    expect(said(h).join(' ')).toContain('Sent to your phone.')
+    await h.receptionist.hear('thanks', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it('tells the model plainly when no phone was reached', async () => {
+    const h = harness({
+      notifyPhone: { reached: false, outcome: 'reached no phone: not through Apple (no key), and no phone is connected' },
+      replies: [
+        reply([{ from: 'control', text: 'Sent to your phone.' }], [{ tool: 'notify_user', body: 'Ping.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('notify_user FAILED, the user was not notified: it reached no phone: not through Apple (no key), and no phone is connected')
+          return reply([{ from: 'control', text: 'Actually, it did not reach your phone.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('ping my phone', 'spoken')
+    await flush()
+    await h.receptionist.hear('did it work?', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it('a reminder that fires while the user is away still reaches their phone', async () => {
+    const at = Math.ceil((Date.now() + 24 * 60 * 60_000) / 60_000) * 60_000
+    const local = new Date(at - 420 * 60_000)
+    const cron = `${local.getUTCMinutes()} ${local.getUTCHours()} ${local.getUTCDate()} ${local.getUTCMonth() + 1} *`
+    const h = harness({
+      replies: [
+        reply([], [{ tool: 'CronCreate', cron, prompt: 'Send the user a phone notification with notify_user: time to leave for the dentist.', recurring: false }]),
+        reply([{ from: 'control', text: 'I\'ll notify your phone.' }]),
+        (turn) => {
+          expect(turn.prompt).toContain('time to leave for the dentist')
+          expect(turn.prompt).toContain('THE USER IS AWAY')
+          return reply([], [{ tool: 'notify_user', body: 'Time to leave for the dentist.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('remind me on my phone when it is time for the dentist', 'spoken')
+    await flush()
+    h.receptionist.setListener(undefined)
+    await h.receptionist.fireCronJobs(at)
+    await flush()
+    expect(h.turns).toHaveLength(3)
+    expect(h.wire).toEqual(['notify Time to leave for the dentist.'])
   })
 })

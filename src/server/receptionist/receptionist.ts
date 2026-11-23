@@ -165,6 +165,12 @@ export interface ReceptionistDeps {
   backBurner: BackBurner
   /** Prompts Control scheduled with CronCreate, kept across server restarts: see cron-jobs.ts. */
   cronJobs: CronJobs
+  /**
+   * Put `body` on the user's phone, titled Control, through the same path as
+   * an agent's notify_user: Apple's push service where it can, else the phones
+   * connected now. Resolves to how it went, in words. Never rejects.
+   */
+  notifyPhone(body: string): Promise<{ reached: boolean; outcome: string }>
   /** The Mac's offset from UTC now, in minutes east, which cron jobs are scheduled in: see current-time.ts. Never rejects. */
   utcOffsetMinutes(): Promise<number>
   /** The agents known to have ended, kept across server restarts: see ended-agents.ts. */
@@ -2672,6 +2678,13 @@ export class Receptionist {
       }
       if (call.tool === 'current_time') {
         results.push(await this.currentTime())
+        continue
+      }
+      if (call.tool === 'notify_user') {
+        const { reached, outcome } = await this.deps.notifyPhone(call.body)
+        this.deps.log({ event: 'tool', tool: 'notify_user', reached, outcome })
+        this.trace('fired', `Phone notification ${reached ? 'sent' : 'reached no phone'}: ${outcome}`, call.body)
+        done.push(reached ? `notify_user ${outcome}` : `notify_user FAILED, the user was not notified: it ${outcome}`)
         continue
       }
       if (call.tool === 'CronCreate' || call.tool === 'CronList' || call.tool === 'CronDelete') {

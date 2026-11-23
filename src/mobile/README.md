@@ -319,6 +319,11 @@ the same way and says back whether a phone was reached. Unlike a prompt, it is
 shown even on the terminal you are looking at (`always`), which needs an app
 built after 2026-11-12; an older one treats it as a prompt.
 
+Control has the same tool, `notify_user`, which is how a reminder you ask it for
+reaches the phone. Its notifications are titled Control and each carries an id
+of its own (`control-…`) rather than a node's, so none replaces another and an
+agent's block clearing never takes one down. Tapping one opens the canvas.
+
 Taking a notification away from a suspended app is a quiet push, which iOS may
 delay or drop, and which never reaches an app that was swiped away, so one can
 outlast its prompt. Tapping it still opens the terminal.

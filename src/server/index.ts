@@ -25,7 +25,7 @@ import { createAgentDrivers, driverFor, type AgentDriver, type AgentLaunchSpec }
 import { REAL_AGENT_PROVISIONING } from './agent-provisioning'
 import { probeCapabilities, formatCapabilityReport, REAL_CAPABILITY_DEPS } from './capabilities'
 import { asClaudeSessionId, asNodeId, asPtySessionId, nodeIdsOf, nodeIdFromFirstPtySession, ROOT_NODE_ID, type NodeId, type PtySessionId, type ClaudeSessionId } from '../shared/ids'
-import { randomUUID } from 'crypto'
+import { randomBytes, randomUUID } from 'crypto'
 import { SessionManager } from './session-manager'
 import { LoginShellEnv } from './login-env'
 import { askEndedSession, realEndedAskDeps } from './ended-side-question'
@@ -117,6 +117,7 @@ import { REAL_MAC_IDLE, REAL_TIMERS, SkipWatcher } from './spotify/watcher'
 import { aiSpendRunner } from './ai-spend'
 import { currentTime, utcOffsetMinutes } from './receptionist/current-time'
 import { CronJobs } from './receptionist/cron-jobs'
+import { RECEPTIONIST_NAME } from './receptionist/name-voice-table'
 import { readWakeLimit } from './receptionist/wake-limit'
 import { nodesNearView, type NearbyNode } from './receptionist/nearby'
 import type { RosterAgent } from './receptionist/roster'
@@ -4216,6 +4217,11 @@ async function startServer(): Promise<void> {
     // And Control's alarms and reminders, its CronCreate jobs: a reminder is a promise to the user too.
     cronJobs: new CronJobs(),
     utcOffsetMinutes: () => utcOffsetMinutes(),
+    // Control's notify_user: the agents' path to the phone. An id of its own, never a node's: Apple
+    // collapses notifications by it, and an agent's block clearing would take Control's down with it.
+    notifyPhone: (body) => notifyPhones({
+      type: 'block-alert', nodeId: asNodeId(`control-${randomBytes(4).toString('hex')}`), kind: 'manual', title: RECEPTIONIST_NAME, body, always: true,
+    }).catch((err: unknown) => ({ reached: false, outcome: `failed: ${err instanceof Error ? err.message : String(err)}` })),
     ended: new EndedAgents(),
     news: new PendingNews(),
     // And what Control has yet to be told, such as a reply a restart cut off.

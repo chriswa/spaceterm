@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseAgentRef } from './agent-token'
-import { CONTROL, isAction, isBlocking, isLookup, letsGo, parseReply, playedLengths, redactSpoken, renderSpeech, type Speaker } from './reply'
+import { CONTROL, isAction, isBlocking, isLookup, letsGo, NOTIFY_BODY_CHARS, parseReply, playedLengths, redactSpoken, renderSpeech, type Speaker } from './reply'
 
 const KEVIN: Speaker = { name: 'Kevin', voice: 'am_michael' }
 const resolveKevin = (handle: string): Speaker | undefined => handle === 'a1' ? KEVIN : undefined
@@ -302,5 +302,18 @@ describe('parseReply: Claude Code\'s scheduling tools', () => {
     expect(() => parseReply('{"tools": [{"tool": "CronCreate", "prompt": "x"}]}')).toThrow('"CronCreate" needs a "cron"')
     expect(() => parseReply('{"tools": [{"tool": "CronCreate", "cron": "* * * * *", "prompt": "x", "recurring": "no"}]}')).toThrow('"recurring" as true or false')
     expect(() => parseReply('{"tools": [{"tool": "CronDelete"}]}')).toThrow('"CronDelete" needs the "id"')
+  })
+})
+
+describe('parseReply: notify_user', () => {
+  it('takes the agents\' notify_user, with its body, as an action that waits for nothing', () => {
+    const [call] = parseReply('{"tools": [{"tool": "notify_user", "body": " Time to leave. "}]}').tools
+    expect(call).toEqual({ tool: 'notify_user', body: 'Time to leave.' })
+    expect(isAction(call) && !isBlocking(call) && !isLookup(call)).toBe(true)
+  })
+
+  it('needs a body short enough to read at a glance', () => {
+    expect(() => parseReply('{"tools": [{"tool": "notify_user"}]}')).toThrow('"notify_user" needs a "body"')
+    expect(() => parseReply(JSON.stringify({ tools: [{ tool: 'notify_user', body: 'x'.repeat(NOTIFY_BODY_CHARS + 1) }] }))).toThrow(`at most ${NOTIFY_BODY_CHARS} characters`)
   })
 })
