@@ -188,6 +188,8 @@ export interface ReceptionistDeps {
   findAgents(query: string, agents: readonly RosterAgent[]): Promise<AgentRanking>
   /** Every live Claude Code surface, freshly read. */
   agents(): RosterAgent[]
+  /** This machine's limit, in tokens of context, for waking a cold agent without asking the user: see wake-limit.ts. Read fresh. */
+  wakeLimit(): number
   /** The transcript's recent window (`readTranscript` in agent-transcript.ts). */
   readTranscript(path: string): TranscriptMessage[]
   /** The whole transcript, for searches. */
@@ -2925,7 +2927,7 @@ export class Receptionist {
     // The cache comes with the transcript: it decides whether ask_agent is worth it.
     const cache = ended
       ? `\n${endedCacheWords(agent, Date.now())}`
-      : (agent.cacheWarmUntil !== undefined ? `\ncache: ${cacheWords(agent, Date.now())}` : '')
+      : (agent.cacheWarmUntil !== undefined ? `\ncache: ${cacheWords(agent, Date.now(), this.deps.wakeLimit())}` : '')
         + (agent.takesSideQuestions === false ? `\n${NO_SIDE_QUESTIONS}` : '')
     const asked = `${search ? ` for "${search}"` : ''}${before !== undefined ? ` before message ${before}` : ''}`
     return `read ${token}${asked}:${cache}\n${readAgent(messages, { search, before })}`
@@ -3399,7 +3401,7 @@ export class Receptionist {
   /** The list_agents tool: every live agent, a line each. */
   private listAgents(agents: readonly RosterAgent[], handles: Handles): string {
     const handleOf = (nodeId: NodeId) => handles.of(nodeId) ?? nodeId
-    return `list_agents:\n${renderRoster(agents, nodeId => this.deps.names.get(nodeId)?.name, handleOf)}`
+    return `list_agents:\n${renderRoster(agents, nodeId => this.deps.names.get(nodeId)?.name, handleOf, Date.now(), this.deps.wakeLimit())}`
   }
 
   /**
@@ -3430,7 +3432,7 @@ export class Receptionist {
     const messages = agent.transcriptPath ? this.deps.readTranscript(agent.transcriptPath) : []
     const nodes = this.deps.nodes()
     const under = pathWords(agent.nodeId, new Map(nodes.map(node => [node.id, node])), this.nodeListContext(nodes, agents, handles))
-    const details = renderAgentDetails(agent, nodeId => this.deps.names.get(nodeId)?.name, messages, nodeId => handles.of(nodeId) ?? nodeId, under || 'the top level')
+    const details = renderAgentDetails(agent, nodeId => this.deps.names.get(nodeId)?.name, messages, nodeId => handles.of(nodeId) ?? nodeId, under || 'the top level', Date.now(), this.deps.wakeLimit())
     return `agent_details:\n${details}`
   }
 

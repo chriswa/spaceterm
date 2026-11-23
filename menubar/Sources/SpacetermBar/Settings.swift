@@ -70,6 +70,40 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "StartOnLaunch") }
     }
 
+    /// How big an agent's context may be for Control to wake it from a cold
+    /// cache without checking with the user first: advice Control sees in its
+    /// cache lines, not a gate. Per machine, because what a wake costs depends
+    /// on how much Claude usage the machine has to spend. Kept in
+    /// `~/.spaceterm/control.json`, where the server reads it each time
+    /// (`src/server/receptionist/wake-limit.ts`, which must agree on the key,
+    /// the choices and the default), so a change applies without a restart.
+    static var controlSettingsPath: String { stateDirectory + "/control.json" }
+    static let wakeLimitKey = "wakeWithoutAskingTokens"
+    static let wakeLimitChoices = [0, 100_000, 250_000, 500_000, 1_000_000]
+    static let defaultWakeLimit = 0
+
+    static var wakeLimit: Int {
+        get {
+            let value = readControlSettings()[wakeLimitKey] as? NSNumber
+            guard let value, value.intValue >= 0 else { return defaultWakeLimit }
+            return value.intValue
+        }
+        set {
+            // Other keys in the file are the server's business: kept as found.
+            var settings = readControlSettings()
+            settings[wakeLimitKey] = newValue
+            guard let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) else { return }
+            try? FileManager.default.createDirectory(atPath: stateDirectory, withIntermediateDirectories: true)
+            try? data.write(to: URL(fileURLWithPath: controlSettingsPath), options: .atomic)
+        }
+    }
+
+    private static func readControlSettings() -> [String: Any] {
+        guard let data = FileManager.default.contents(atPath: controlSettingsPath),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+        return object
+    }
+
     /// Both services exit with this code to ask their supervisor for an
     /// immediate relaunch — `SERVER_RESTART_EXIT_CODE` in `src/server/relaunch.ts`
     /// (only where Node cannot relaunch in place) and `CLIENT_RESTART_EXIT_CODE` in `src/client/main/index.ts`. The

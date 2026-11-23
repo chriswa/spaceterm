@@ -4,6 +4,7 @@ import type { ClaudeState } from '../../shared/state'
 import { isToolActivity, lastAgentProse, type TranscriptMessage } from '../agent-transcript'
 import { agentToken } from './agent-token'
 import type { BlockingPrompt } from './blocked'
+import { wakeWords } from './wake-limit'
 
 /**
  * What the receptionist knows about the agents, and the transcript reading its
@@ -86,13 +87,15 @@ export function renderRoster(
   nameOf: (nodeId: NodeId) => string | undefined,
   handleOf: (nodeId: NodeId) => string,
   now = Date.now(),
+  /** This machine's limit for waking a cold agent without asking: see wake-limit.ts. Left out, the cache line does not weigh it. */
+  wakeLimit?: number,
 ): string {
   if (!agents.length) return 'No agents are running.'
   return [...agents].sort(byRelevance).map(agent => {
     const fields = [`${agentHeading(agent, nameOf, handleOf)}: ${agent.title}`]
     if (agent.unread) fields.push('UNREAD')
     fields.push(`state: ${stateWords(agent, now)}`)
-    if (agent.cacheWarmUntil !== undefined) fields.push(`cache: ${cacheWords(agent, now)}`)
+    if (agent.cacheWarmUntil !== undefined) fields.push(`cache: ${cacheWords(agent, now, wakeLimit)}`)
     return fields.join(' | ')
   }).join('\n')
 }
@@ -109,6 +112,8 @@ export function renderAgentDetails(
   /** Where it sits on the canvas, outermost first: see `pathWords`. */
   under?: string,
   now = Date.now(),
+  /** As for renderRoster. */
+  wakeLimit?: number,
 ): string {
   const lines = [`${agentHeading(agent, nameOf, handleOf)}: ${agent.title}`]
   if (agent.unread) lines.push('  UNREAD: it has news the user has not looked at')
@@ -116,7 +121,7 @@ export function renderAgentDetails(
   if (agent.cwd) lines.push(`  directory: ${path.basename(agent.cwd)}`)
   lines.push(`  state: ${stateWords(agent, now)}`)
   if (agent.lastActivityAt) lines.push(`  last active: ${ago(now - agent.lastActivityAt)} ago`)
-  if (agent.cacheWarmUntil !== undefined) lines.push(`  cache: ${cacheWords(agent, now)}`)
+  if (agent.cacheWarmUntil !== undefined) lines.push(`  cache: ${cacheWords(agent, now, wakeLimit)}`)
   if (agent.takesSideQuestions === false) lines.push(`  ${NO_SIDE_QUESTIONS}`)
   if (agent.startedAt) lines.push(`  started: ${ago(now - agent.startedAt)} ago`)
   if (agent.messagingId) lines.push(`  messaging id: ${agent.messagingId}`)
@@ -146,11 +151,18 @@ function byRelevance(a: RosterAgent, b: RosterAgent): number {
   return (b.lastActivityAt ?? b.stateSince ?? 0) - (a.lastActivityAt ?? a.stateSince ?? 0)
 }
 
-/** The agent's prompt cache, as list_agents and read report it: whether ask_agent is cheap now. */
-export function cacheWords(agent: Pick<RosterAgent, 'cacheWarmUntil' | 'cacheWarmTokens'>, now: number): string {
+/**
+ * The agent's prompt cache, as list_agents, agent_details and read report it:
+ * whether ask_agent is cheap now. Given this machine's `wakeLimit`, a cache
+ * that is cold or about to be also says whether to check with the user before
+ * asking it (wake-limit.ts).
+ */
+export function cacheWords(agent: Pick<RosterAgent, 'cacheWarmUntil' | 'cacheWarmTokens'>, now: number, wakeLimit?: number): string {
   const until = agent.cacheWarmUntil ?? 0
   const size = agent.cacheWarmTokens ? ` (${Math.round(agent.cacheWarmTokens / 1000)}k tokens)` : ''
-  return until > now ? `warm for ${ago(until - now)} more${size}` : `cold for ${ago(now - until)}${size}`
+  const words = until > now ? `warm for ${ago(until - now)} more${size}` : `cold for ${ago(now - until)}${size}`
+  const wake = wakeLimit === undefined ? undefined : wakeWords(agent, now, wakeLimit)
+  return wake ? `${words}: ${wake}` : words
 }
 
 /** What decides whether an ended agent can be asked. */

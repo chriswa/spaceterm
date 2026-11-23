@@ -97,6 +97,12 @@ starts a second one, and it never signals a process it did not start.
 - Start / Restart / Stop for the server, the client and the second client
   individually.
 - Logs — the two supervisor logs and `electron.log`, opened in Console.
+- **Control Wakes Cold Agents Without Asking** — never, or up to 100K, 250K,
+  500K or 1M tokens of context. Above it, Control checks with you before it
+  asks an agent whose prompt cache is cold or about to be, since that makes the
+  agent write its whole context to the cache again. Per machine, in
+  `~/.spaceterm/control.json`; the server reads it each time, so a change
+  applies at once (`src/server/receptionist/wake-limit.ts`).
 - **Start Spaceterm when SpacetermBar Opens** — on by default; this is what
   brings Spaceterm up at login.
 - **Open on Login** — `SMAppService.mainApp`. macOS may answer

@@ -160,6 +160,8 @@ function harness(opts: {
   unarchived?: 'ready' | 'not-ready' | 'failed'
   /** When Kevin's prompt cache goes cold (epoch ms); by default nothing is known of it. */
   kevinCacheWarmUntil?: number
+  /** This machine's limit for waking a cold agent without asking; 0 by default, as with no setting. */
+  wakeLimit?: number
   /** How waiting goes; by default every wait is over at once. */
   sleep?: (ms: number) => Promise<void>
   /** The agents as an earlier server left them; by default Kevin stopped and Sally at work. */
@@ -303,6 +305,7 @@ function harness(opts: {
       hits: [{ nodeId: SALLY_ID, probability: 0.82 }, { nodeId: KEVIN_ID, probability: 0.1 }], noneProbability: 0.08,
     })),
     agents,
+    wakeLimit: () => opts.wakeLimit ?? 0,
     readTranscript: (path) => (opts.transcripts?.[path] ?? TRANSCRIPTS[path] ?? []).slice(-2),
     readWholeTranscript: (path) => [...(EARLY[path] ?? []), ...(TRANSCRIPTS[path] ?? [])],
     session: { load: () => session, save: (next) => { session = next } },
@@ -975,6 +978,43 @@ describe('Receptionist', () => {
         reply([], [{ tool: 'read', agent: KEVIN }]),
         (turn) => {
           expect(turn.prompt).toMatch(new RegExp(`read \\{${KEVIN}\\}:\\ncache: cold for 20 minutes \\(38k tokens\\)`))
+          return reply([{ from: 'control', text: 'Summarized.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('what is Kevin up to?', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it("weighs a cold agent's size against this machine's limit wherever its cache is shown", async () => {
+    const above = 'cold for 20 minutes (38k tokens): above the 10k tokens this machine wakes without asking, so check with the user before asking it'
+    const h = harness({
+      kevinCacheWarmUntil: Date.now() - 20 * 60_000,
+      wakeLimit: 10_000,
+      replies: [
+        reply([], [{ tool: 'read', agent: KEVIN }, { tool: 'list_agents' }, { tool: 'agent_details', agent: KEVIN }]),
+        (turn) => {
+          expect(turn.prompt).toContain(`read {${KEVIN}}:\ncache: ${above}`)
+          expect(turn.prompt).toContain(`| cache: ${above}`)
+          expect(turn.prompt).toContain(`  cache: ${above}`)
+          return reply([{ from: 'control', text: 'Summarized.' }])
+        },
+      ],
+    })
+    await h.receptionist.hear('what is Kevin up to?', 'spoken')
+    await flush()
+    expect(h.turns).toHaveLength(2)
+  })
+
+  it('lets a cold agent within the limit be asked without checking', async () => {
+    const h = harness({
+      kevinCacheWarmUntil: Date.now() - 20 * 60_000,
+      wakeLimit: 250_000,
+      replies: [
+        reply([], [{ tool: 'read', agent: KEVIN }]),
+        (turn) => {
+          expect(turn.prompt).toContain('(38k tokens): within the 250k tokens this machine wakes without asking, so you may ask it without checking with the user')
           return reply([{ from: 'control', text: 'Summarized.' }])
         },
       ],

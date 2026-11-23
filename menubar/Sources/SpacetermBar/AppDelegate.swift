@@ -116,6 +116,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for problem in controller.resolved.problems { menu.addItem(header("⚠︎ ignored: " + problem)) }
         menu.addItem(.separator())
 
+        // Control.
+        let wake = NSMenu()
+        let current = Settings.wakeLimit
+        for tokens in Settings.wakeLimitChoices {
+            let item = NSMenuItem(title: Self.wakeLimitTitle(tokens), action: #selector(setWakeLimit(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = tokens
+            item.state = tokens == current ? .on : .off
+            wake.addItem(item)
+        }
+        if !Settings.wakeLimitChoices.contains(current) {
+            wake.addItem(header("Set in control.json: \(Self.wakeLimitTitle(current))"))
+        }
+        let wakeItem = NSMenuItem(title: "Control Wakes Cold Agents Without Asking", action: nil, keyEquivalent: "")
+        wakeItem.submenu = wake
+        wakeItem.toolTip = "Above this context size, Control checks with you before asking an agent whose prompt cache is cold or about to be."
+        menu.addItem(wakeItem)
+        menu.addItem(.separator())
+
         // App.
         let autoStart = add(menu, "Start Spaceterm when SpacetermBar Opens", #selector(toggleStartOnLaunch))
         autoStart.state = Settings.startOnLaunch ? .on : .off
@@ -244,6 +263,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func toggleStartOnLaunch() { Settings.startOnLaunch.toggle() }
+
+    @objc private func setWakeLimit(_ sender: NSMenuItem) {
+        guard let tokens = sender.representedObject as? Int else { return }
+        Settings.wakeLimit = tokens
+    }
+
+    static func wakeLimitTitle(_ tokens: Int) -> String {
+        if tokens <= 0 { return "Never (always ask)" }
+        if tokens >= 1_000_000 && tokens % 1_000_000 == 0 { return "Up to \(tokens / 1_000_000)M Tokens" }
+        return "Up to \(tokens / 1000)K Tokens"
+    }
 
     @objc private func toggleLoginItem() {
         if let error = LoginItem.toggle() {

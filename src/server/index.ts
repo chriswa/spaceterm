@@ -116,6 +116,7 @@ import { Spotify, type Here } from './spotify'
 import { REAL_MAC_IDLE, REAL_TIMERS, SkipWatcher } from './spotify/watcher'
 import { aiSpendRunner } from './ai-spend'
 import { currentTime } from './receptionist/current-time'
+import { readWakeLimit } from './receptionist/wake-limit'
 import { nodesNearView, type NearbyNode } from './receptionist/nearby'
 import type { RosterAgent } from './receptionist/roster'
 import { readPeerNames } from './claude-peer-names'
@@ -4274,6 +4275,7 @@ async function startServer(): Promise<void> {
     installPhoneApp: installPhoneAppForControl,
     agentUsage: aiSpendRunner(() => loginEnv.current() ?? process.env),
     currentTime: () => currentTime(),
+    wakeLimit: () => readWakeLimit(),
     spotify: (args) => spotify.run(args, { here: spotifyHere() }),
     log: appendReceptionistLog,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),

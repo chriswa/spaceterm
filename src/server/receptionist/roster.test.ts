@@ -67,11 +67,31 @@ describe('renderRoster: what is worth checking', () => {
     const a = agent('eeeeeeee-0000-4000-8000-000000000000', { cacheWarmUntil: NOW - 5 * min })
     expect(renderRoster([a], () => undefined, H, NOW)).toContain('cache: cold for 5 minutes')
   })
+
+  it("weighs a cold cache against this machine's limit for waking without asking", () => {
+    const emma = agent('12121212-0000-4000-8000-000000000000', { cacheWarmUntil: NOW - 230 * min, cacheWarmTokens: 667_000 })
+    const tim = agent('34343434-0000-4000-8000-000000000000', { cacheWarmUntil: NOW - 230 * min, cacheWarmTokens: 40_000 })
+    const text = renderRoster([emma, tim], nodeId => nodeId === emma.nodeId ? 'Emma' : 'Tim', H, NOW, 250_000)
+    const line = (name: string) => text.split('\n').find(row => row.startsWith(`{${name}:`))!
+    expect(line('Emma')).toContain('cache: cold for 3 hours 50 minutes (667k tokens): above the 250k tokens this machine wakes without asking, so check with the user before asking it')
+    expect(line('Tim')).toContain('cache: cold for 3 hours 50 minutes (40k tokens): within the 250k tokens this machine wakes without asking, so you may ask it without checking with the user')
+  })
+
+  it('says nothing of the limit while a cache is comfortably warm', () => {
+    const a = agent('56565656-0000-4000-8000-000000000000', { cacheWarmUntil: NOW + 58 * min, cacheWarmTokens: 673_000 })
+    expect(renderRoster([a], () => 'Emma', H, NOW, 0)).toMatch(/cache: warm for 58 minutes more \(673k tokens\)$/)
+  })
 })
 
 describe('renderAgentDetails', () => {
   const NOW = Date.parse('2026-10-03T12:00:00Z')
   const min = 60_000
+
+  it("weighs a cold cache against this machine's limit, as list_agents does", () => {
+    const a = agent('78787878-0000-4000-8000-000000000000', { cacheWarmUntil: NOW - 2 * min, cacheWarmTokens: 667_000 })
+    expect(renderAgentDetails(a, () => 'Emma', [], H, undefined, NOW, 250_000))
+      .toContain('  cache: cold for 2 minutes (667k tokens): above the 250k tokens this machine wakes without asking, so check with the user before asking it')
+  })
 
   it('shows the agent in depth, with the start of its last exchange', () => {
     const a = agent('11111111-0000-4000-8000-000000000000', {
